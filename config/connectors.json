@@ -1,0 +1,62 @@
+{
+  "connectors": [
+    {
+      "id": "van-unifi",
+      "type": "unifi-protect",
+      "name": "Van Unifi Protect System",
+      "description": "Communications van Unifi Protect system",
+      "config": {
+        "host": "10.0.0.1",
+        "port": 443,
+        "protocol": "https",
+        "apiKey": "6pXhUX2-hnWonI8abmazH4kGRdVLp4r8",
+        "verifySSL": false,
+        "autoDiscovery": {
+          "enabled": true,
+          "refreshInterval": 300000,
+          "createEntities": true,
+          "subscribeToEvents": true,
+          "eventTypes": [
+            "motion",
+            "smart",
+            "recording",
+            "connection"
+          ]
+        },
+        "entities": {
+          "enabled": true,
+          "autoCreate": true,
+          "autoUpdate": true,
+          "metadata": {
+            "source": "unifi-protect",
+            "connectorId": "van-unifi"
+          }
+        }
+      },
+      "capabilities": {
+        "enabled": [],
+        "disabled": []
+      }
+    },
+    {
+      "id": "mqtt",
+      "type": "mqtt",
+      "name": "Default MQTT Broker",
+      "description": "Default MQTT broker for notifications and events",
+      "config": {
+        "host": "localhost",
+        "port": 1883,
+        "protocol": "mqtt",
+        "username": "",
+        "password": ""
+      },
+      "capabilities": {
+        "enabled": [
+          "mqtt:publish",
+          "mqtt:subscribe"
+        ],
+        "disabled": []
+      }
+    }
+  ]
+}
