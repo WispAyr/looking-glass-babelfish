@@ -10,8 +10,11 @@ A comprehensive IoT and device management platform with advanced connector archi
 - **WebSocket Support**: Real-time communication and event broadcasting
 - **MQTT Integration**: Message queuing and device communication
 - **UniFi Protect Integration**: Camera management, video streaming, and motion detection
+- **Telegram Integration**: Bot messaging, notifications, and interactive keyboards
 - **Auto-Discovery**: Automatic device discovery and entity creation
 - **REST API**: Comprehensive API for system management and integration
+- **Modern UI**: Responsive web interface with cyberpunk-inspired design
+- **Mobile Support**: Fully responsive design that works on all device sizes
 
 ## Quick Start
 
@@ -73,9 +76,57 @@ npm start
 
 # Or run in development mode
 npm run dev
+
+# Build for production
+npm run build
 ```
 
 The application will be available at `http://localhost:3000`
+
+## User Interface
+
+### Design System
+
+The application features a modern, cyberpunk-inspired design system with:
+
+- **Color Palette**: Deep space blues, electric cyan accents, and neon highlights
+- **Typography**: Clean, readable fonts with proper hierarchy
+- **Layout**: Responsive grid system that adapts to all screen sizes
+- **Components**: Consistent card-based design with smooth animations
+- **Dark Theme**: Eye-friendly dark theme optimized for monitoring environments
+
+### Responsive Design
+
+The interface is fully responsive and works seamlessly across:
+
+- **Desktop**: Full-featured interface with collapsible sidebar
+- **Tablet**: Optimized layout with touch-friendly controls
+- **Mobile**: Mobile-first design with slide-out navigation menu
+
+### Key UI Features
+
+- **Collapsible Sidebar**: Save screen space by collapsing the navigation
+- **Real-time Updates**: Live data updates via WebSocket connections
+- **Interactive Cards**: Hover effects and smooth transitions
+- **Mobile Menu**: Touch-friendly navigation for mobile devices
+- **Loading States**: Smooth loading animations and skeleton screens
+- **Notifications**: Toast notifications for system events
+- **Modal Dialogs**: Clean modal system for forms and confirmations
+
+### Navigation
+
+The interface is organized into logical sections:
+
+- **Dashboard**: System overview and real-time status
+- **Devices**: Connected UniFi Protect systems
+- **Connectors**: System connectors and capabilities
+- **Events**: System events and activity monitoring
+- **Cameras**: Camera management and streams
+- **Recordings**: Video recordings and playback
+- **Flows**: Automation workflows and orchestration
+- **Rules**: Event processing rules and conditions
+- **Actions**: Available actions and execution statistics
+- **Flow Builder**: Visual flow creation and editing
 
 ## Architecture
 
@@ -86,6 +137,7 @@ The application will be available at `http://localhost:3000`
 - **ConnectorRegistry**: Manages connector instances and capabilities
 - **UniFi Protect Connector**: Integration with UniFi Protect systems
 - **MQTT Connector**: Message queuing and device communication
+- **Telegram Connector**: Bot messaging, notifications, and interactive keyboards
 
 #### Entity Management
 - **EntityManager**: Manages devices and resources as entities

@@ -100,6 +100,57 @@ Provides MQTT publish/subscribe messaging capabilities.
 }
 ```
 
+### Telegram Connector
+
+Provides integration with Telegram Bot API for messaging and notifications.
+
+**Capabilities:**
+- `telegram:send` - Send text messages, photos, documents, and locations
+- `telegram:receive` - Receive and process incoming messages
+- `telegram:chat` - Manage chat information and members
+- `telegram:media` - Download and upload files
+- `telegram:keyboard` - Send inline and reply keyboards
+- `telegram:webhook` - Manage webhook configuration
+
+**Configuration:**
+```json
+{
+  "id": "telegram-bot",
+  "type": "telegram",
+  "name": "Babelfish Bot",
+  "description": "Telegram bot for notifications",
+  "config": {
+    "token": "YOUR_BOT_TOKEN_HERE",
+    "mode": "polling",
+    "pollingInterval": 1000,
+    "pollingTimeout": 10,
+    "maxReconnectAttempts": 5
+  },
+  "capabilities": {
+    "enabled": [
+      "telegram:send",
+      "telegram:receive",
+      "telegram:keyboard"
+    ],
+    "disabled": [
+      "telegram:webhook"
+    ]
+  }
+}
+```
+
+**Webhook Mode Configuration:**
+```json
+{
+  "config": {
+    "token": "YOUR_BOT_TOKEN_HERE",
+    "mode": "webhook",
+    "webhookUrl": "https://your-domain.com/webhook",
+    "webhookPort": 8443
+  }
+}
+```
+
 ## API Examples
 
 ### Create a Connector
@@ -264,186 +315,4 @@ module.exports = MyCustomConnector;
 
 ### 2. Register the Connector
 
-```javascript
-const MyCustomConnector = require('./connectors/types/MyCustomConnector');
-connectorRegistry.registerType('my-custom', MyCustomConnector);
 ```
-
-### 3. Create an Instance
-
-```json
-{
-  "id": "my-instance",
-  "type": "my-custom",
-  "name": "My Custom Connector",
-  "config": {
-    "endpoint": "https://api.example.com",
-    "apiKey": "your-key"
-  }
-}
-```
-
-## Capability Matching
-
-The system can automatically match connectors based on their capabilities:
-
-```javascript
-// Find connectors that can publish to MQTT
-const publishers = registry.findConnectorsByCapability('mqtt:publish');
-
-// Find matches between motion detection and MQTT publishing
-const matches = registry.findCapabilityMatches('camera:event:motion', 'mqtt:publish');
-```
-
-## Event Handling
-
-Connectors emit events that can be listened to:
-
-```javascript
-// Listen for connector events
-connector.on('connected', (data) => {
-  console.log('Connector connected:', data);
-});
-
-connector.on('operation-completed', (data) => {
-  console.log('Operation completed:', data);
-});
-
-connector.on('error', (error) => {
-  console.error('Connector error:', error);
-});
-```
-
-## Performance Considerations
-
-### Rate Limiting
-
-Connectors support rate limiting to prevent overwhelming external services:
-
-```json
-{
-  "config": {
-    "rateLimit": {
-      "requests": 100,
-      "window": 60000
-    }
-  }
-}
-```
-
-### Connection Pooling
-
-Connectors automatically manage connections and implement connection pooling where appropriate.
-
-### Caching
-
-Connectors can cache frequently accessed data to improve performance.
-
-## Security
-
-### API Key Management
-
-Store API keys securely using environment variables or encrypted configuration.
-
-### SSL/TLS
-
-Connectors support SSL/TLS for secure communication:
-
-```json
-{
-  "config": {
-    "protocol": "https",
-    "verifySSL": true,
-    "ca": "/path/to/ca.crt",
-    "cert": "/path/to/client.crt",
-    "key": "/path/to/client.key"
-  }
-}
-```
-
-### Access Control
-
-Disable unnecessary capabilities to limit connector access:
-
-```json
-{
-  "capabilities": {
-    "enabled": ["read-only-capabilities"],
-    "disabled": ["admin-capabilities"]
-  }
-}
-```
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Connection Failed**
-   - Check host and port configuration
-   - Verify network connectivity
-   - Check firewall settings
-
-2. **Authentication Failed**
-   - Verify API keys or credentials
-   - Check permissions
-   - Ensure credentials are not expired
-
-3. **Capability Not Found**
-   - Check if capability is enabled
-   - Verify capability ID spelling
-   - Ensure connector supports the capability
-
-### Debug Mode
-
-Enable debug mode for detailed logging:
-
-```javascript
-connector.setDebugMode(true);
-```
-
-### Logs
-
-Check the application logs for detailed error information:
-
-```bash
-tail -f logs/app.log
-```
-
-## Future Features
-
-### Visual Programming Interface
-
-The future interface will allow users to:
-
-1. **Drag and Drop Connectors** - Visual representation of connector instances
-2. **Wire Connections** - Visual lines between connectors
-3. **Configure Pipelines** - Transform rules and filter conditions
-4. **Monitor and Debug** - Real-time data flow and performance metrics
-
-### Example Workflow
-
-```
-[Unifi Camera] → [Motion Detection] → [MQTT Broker] → [Database]
-     ↓              ↓                    ↓              ↓
-  Video Stream   Object Detection    Message Pub    Event Storage
-```
-
-## Support
-
-For issues and questions:
-
-1. Check the documentation in `docs/connectors/`
-2. Review the test script `test-connectors.js`
-3. Check the application logs
-4. Create an issue in the project repository
-
-## Contributing
-
-To add new connectors:
-
-1. Create the connector class extending `BaseConnector`
-2. Implement required methods
-3. Define capabilities
-4. Add documentation
-5. Create tests
-6. Submit a pull request 

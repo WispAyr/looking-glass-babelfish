@@ -57,6 +57,29 @@
         ],
         "disabled": []
       }
+    },
+    {
+      "id": "telegram-bot",
+      "type": "telegram",
+      "name": "Babelfish Telegram Bot",
+      "description": "Telegram bot for notifications and alerts",
+      "config": {
+        "token": "YOUR_BOT_TOKEN_HERE",
+        "mode": "polling",
+        "pollingInterval": 1000,
+        "pollingTimeout": 10,
+        "maxReconnectAttempts": 5
+      },
+      "capabilities": {
+        "enabled": [
+          "telegram:send",
+          "telegram:receive",
+          "telegram:keyboard"
+        ],
+        "disabled": [
+          "telegram:webhook"
+        ]
+      }
     }
   ]
 }
