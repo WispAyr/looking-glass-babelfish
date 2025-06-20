@@ -9,7 +9,9 @@
         "host": "10.0.0.1",
         "port": 443,
         "protocol": "https",
-        "apiKey": "6pXhUX2-hnWonI8abmazH4kGRdVLp4r8",
+        "username": "",
+        "password": "",
+        "apiKey": "6pXhUX2-hnWonI8abmazH4kGRdVLp4r",
         "verifySSL": false,
         "autoDiscovery": {
           "enabled": true,

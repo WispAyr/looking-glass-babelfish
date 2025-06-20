@@ -974,7 +974,15 @@ class UnifiProtectConnector extends BaseConnector {
       
       const response = await axios(config);
       
-      this.logger.debug(`Response status: ${response.status} for ${method} ${fullPath}`);
+      this.logger.debug(`Response status: ${response.status} for ${method} ${path}`);
+
+      // Check for expected content type
+      const contentType = response.headers['content-type'];
+      if (!contentType || !contentType.includes('application/json')) {
+        this.logger.warn(`Unexpected content type received: ${contentType}. This might indicate an invalid API key or an issue with the UniFi Protect API endpoint.`);
+        // Return a response object with null data to prevent crashes
+        return { ...response, data: null };
+      }
       
       return response;
     } catch (error) {
@@ -1166,13 +1174,17 @@ class UnifiProtectConnector extends BaseConnector {
       
       // Try to authenticate via REST API first
       const authResponse = await this.makeRequest('POST', '/auth/login', {
-        username: this.config.username || 'admin',
-        password: this.config.password || '',
+        username: this.config.username,
+        password: this.config.password,
         remember: true
       });
 
       if (authResponse.data && authResponse.data.token) {
-        this.sessionToken = authResponse.data.token;
+        const cookie = authResponse.headers['set-cookie'];
+        this.sessionToken = {
+          token: authResponse.data.token,
+          cookie: cookie
+        };
         this.sessionExpiry = Date.now() + (24 * 60 * 60 * 1000); // 24 hours
         this.logger.debug('Successfully authenticated and got session token');
         return this.sessionToken;
@@ -1211,18 +1223,21 @@ class UnifiProtectConnector extends BaseConnector {
         return;
       }
 
-      // Try a simpler approach - just use API key without complex auth
-      const authMethod = {
-        headers: {
-          'X-API-KEY': this.config.apiKey,
-          'Accept': 'application/json'
-        }
-      };
-
-      this.logger.debug(`Attempting WebSocket connection with API key`);
+      // First, get a session token
+      const authData = await this.authenticateForWebSocket();
+      
+      if (!authData || !authData.token) {
+        this.logger.error('Failed to get WebSocket session token');
+        return;
+      }
+      
+      this.logger.debug(`Attempting WebSocket connection with session token`);
       
       this.ws = new WebSocket(wsUrl, {
-        ...authMethod,
+        headers: {
+          'Cookie': authData.cookie,
+          'Authorization': `Bearer ${authData.token}`
+        },
         rejectUnauthorized: this.config.verifySSL !== false
       });
 

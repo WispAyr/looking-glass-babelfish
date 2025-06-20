@@ -9,6 +9,7 @@ const { Server } = require('socket.io');
 const winston = require('winston');
 const { v4: uuidv4 } = require('uuid');
 const moment = require('moment');
+const killPort = require('kill-port');
 
 const config = require('./config/config');
 const UnifiProtectAPI = require('./services/unifiProtectAPI');
@@ -1248,6 +1249,16 @@ eventProcessor.on('deviceStatus', (status) => {
 // Start server
 async function startServer() {
   try {
+    if (config.server.killPort) {
+      const port = config.server.port;
+      try {
+        logger.info(`Attempting to free port ${port}...`);
+        await killPort(port, 'tcp');
+        logger.info(`Port ${port} has been successfully freed.`);
+      } catch (e) {
+        logger.warn(`Could not kill port ${port}, it may have already been free. Details: ${e.message}`);
+      }
+    }
     logger.info('Starting Babelfish Looking Glass server...');
     
     // Initialize services
