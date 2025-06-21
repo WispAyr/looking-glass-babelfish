@@ -386,6 +386,211 @@ const defaultRules = [
       category: 'security',
       priority: 2
     }
+  },
+
+  // Telegram Motion Alert Rule
+  {
+    id: 'telegram-motion-alert-rule',
+    name: 'Telegram Motion Alert',
+    description: 'Send motion detection alerts to Telegram channel',
+    conditions: {
+      eventType: 'motionDetected',
+      source: 'unifi-protect-websocket'
+    },
+    actions: [
+      {
+        type: 'telegram_send',
+        parameters: {
+          connectorId: 'telegram-bot',
+          operation: 'text',
+          chatId: '@fhNYM0MnPJQ2NjE8',
+          text: '🚨 *Motion Detected* 🚨\n\n📹 Camera: {{data.cameraId}}\n📍 Location: {{data.entityId}}\n⏰ Time: {{timestamp}}\n\nMotion activity detected on your UniFi Protect system.',
+          parseMode: 'Markdown'
+        }
+      },
+      {
+        type: 'log_event',
+        parameters: {
+          level: 'info',
+          message: 'Motion alert sent to Telegram',
+          data: {
+            rule: 'telegram-motion-alert-rule',
+            eventType: '{{type}}',
+            cameraId: '{{data.cameraId}}',
+            telegramChat: '@fhNYM0MnPJQ2NjE8'
+          }
+        }
+      }
+    ],
+    metadata: {
+      enabled: true,
+      category: 'telegram',
+      priority: 2
+    }
+  },
+
+  // Telegram Smart Detect Alert Rule
+  {
+    id: 'telegram-smart-detect-alert-rule',
+    name: 'Telegram Smart Detect Alert',
+    description: 'Send smart detection alerts to Telegram channel',
+    conditions: {
+      eventType: 'smartDetected',
+      source: 'unifi-protect-websocket'
+    },
+    actions: [
+      {
+        type: 'telegram_send',
+        parameters: {
+          connectorId: 'telegram-bot',
+          operation: 'text',
+          chatId: '@fhNYM0MnPJQ2NjE8',
+          text: '🤖 *Smart Detection Alert* 🤖\n\n📹 Camera: {{data.cameraId}}\n📍 Location: {{data.entityId}}\n🔍 Detection: {{data.event.type}}\n⏰ Time: {{timestamp}}\n\nSmart detection triggered on your UniFi Protect system.',
+          parseMode: 'Markdown'
+        }
+      },
+      {
+        type: 'log_event',
+        parameters: {
+          level: 'info',
+          message: 'Smart detect alert sent to Telegram',
+          data: {
+            rule: 'telegram-smart-detect-alert-rule',
+            eventType: '{{type}}',
+            cameraId: '{{data.cameraId}}',
+            telegramChat: '@fhNYM0MnPJQ2NjE8'
+          }
+        }
+      }
+    ],
+    metadata: {
+      enabled: true,
+      category: 'telegram',
+      priority: 2
+    }
+  },
+
+  // Telegram Recording Event Rule
+  {
+    id: 'telegram-recording-event-rule',
+    name: 'Telegram Recording Event',
+    description: 'Send recording event notifications to Telegram channel',
+    conditions: {
+      eventType: 'recordingEvent',
+      source: 'unifi-protect-websocket'
+    },
+    actions: [
+      {
+        type: 'telegram_send',
+        parameters: {
+          connectorId: 'telegram-bot',
+          operation: 'text',
+          chatId: '@fhNYM0MnPJQ2NjE8',
+          text: '📹 *Recording Event* 📹\n\n📹 Camera: {{data.cameraId}}\n📍 Location: {{data.entityId}}\n🎬 Action: {{data.event.action}}\n⏰ Time: {{timestamp}}\n\nRecording event occurred on your UniFi Protect system.',
+          parseMode: 'Markdown'
+        }
+      },
+      {
+        type: 'log_event',
+        parameters: {
+          level: 'info',
+          message: 'Recording event sent to Telegram',
+          data: {
+            rule: 'telegram-recording-event-rule',
+            eventType: '{{type}}',
+            cameraId: '{{data.cameraId}}',
+            telegramChat: '@fhNYM0MnPJQ2NjE8'
+          }
+        }
+      }
+    ],
+    metadata: {
+      enabled: true,
+      category: 'telegram',
+      priority: 1
+    }
+  },
+
+  // Telegram Connection Event Rule
+  {
+    id: 'telegram-connection-event-rule',
+    name: 'Telegram Connection Event',
+    description: 'Send connection status changes to Telegram channel',
+    conditions: {
+      eventType: 'connectionEvent',
+      source: 'unifi-protect-websocket'
+    },
+    actions: [
+      {
+        type: 'telegram_send',
+        parameters: {
+          connectorId: 'telegram-bot',
+          operation: 'text',
+          chatId: '@fhNYM0MnPJQ2NjE8',
+          text: '🔌 *Connection Event* 🔌\n\n📹 Camera: {{data.cameraId}}\n📍 Location: {{data.entityId}}\n🔗 Status: {{data.event.status}}\n⏰ Time: {{timestamp}}\n\nCamera connection status changed on your UniFi Protect system.',
+          parseMode: 'Markdown'
+        }
+      },
+      {
+        type: 'log_event',
+        parameters: {
+          level: 'info',
+          message: 'Connection event sent to Telegram',
+          data: {
+            rule: 'telegram-connection-event-rule',
+            eventType: '{{type}}',
+            cameraId: '{{data.cameraId}}',
+            telegramChat: '@fhNYM0MnPJQ2NjE8'
+          }
+        }
+      }
+    ],
+    metadata: {
+      enabled: true,
+      category: 'telegram',
+      priority: 1
+    }
+  },
+
+  // Telegram Camera Added/Removed Rule
+  {
+    id: 'telegram-camera-management-rule',
+    name: 'Telegram Camera Management',
+    description: 'Send camera addition/removal notifications to Telegram channel',
+    conditions: {
+      eventType: ['cameraAdded', 'cameraRemoved'],
+      source: 'unifi-protect-websocket'
+    },
+    actions: [
+      {
+        type: 'telegram_send',
+        parameters: {
+          connectorId: 'telegram-bot',
+          operation: 'text',
+          chatId: '@fhNYM0MnPJQ2NjE8',
+          text: '📷 *Camera Management* 📷\n\n📹 Camera: {{data.cameraId}}\n📍 Location: {{data.entityId}}\n🔄 Action: {{type}}\n⏰ Time: {{timestamp}}\n\nCamera {{#if (eq type "cameraAdded")}}added to{{else}}removed from{{/if}} your UniFi Protect system.',
+          parseMode: 'Markdown'
+        }
+      },
+      {
+        type: 'log_event',
+        parameters: {
+          level: 'info',
+          message: 'Camera management event sent to Telegram',
+          data: {
+            rule: 'telegram-camera-management-rule',
+            eventType: '{{type}}',
+            cameraId: '{{data.cameraId}}',
+            telegramChat: '@fhNYM0MnPJQ2NjE8'
+          }
+        }
+      }
+    ],
+    metadata: {
+      enabled: true,
+      category: 'telegram',
+      priority: 1
+    }
   }
 ];
 

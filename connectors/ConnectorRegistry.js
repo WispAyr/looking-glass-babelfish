@@ -440,8 +440,10 @@ class ConnectorRegistry extends EventEmitter {
             const typePath = path.join(typesDir, file);
             const connectorClass = require(typePath);
             
-            // Get type from filename or metadata
-            const type = path.basename(file, '.js');
+            // Get type from filename and convert to standard format
+            const className = path.basename(file, '.js');
+            // Convert CamelCase to kebab-case (e.g., TelegramConnector -> telegram)
+            const type = className.replace(/Connector$/, '').toLowerCase();
             
             this.registerType(type, connectorClass);
           } catch (error) {

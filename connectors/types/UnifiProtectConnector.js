@@ -11,6 +11,8 @@ const axios = require('axios');
  * Provides integration with Ubiquiti's Unifi Protect video management system.
  * Supports camera management, video streaming, motion detection, and recording access.
  * Includes automatic camera discovery and entity management.
+ * 
+ * Uses API key authentication with X-API-KEY header as per UniFi Protect API v6.0.45
  */
 class UnifiProtectConnector extends BaseConnector {
   constructor(config) {
@@ -19,9 +21,17 @@ class UnifiProtectConnector extends BaseConnector {
     // API client
     this.api = null;
     
-    // Site information
-    this.siteId = 'default';
-    this.sites = [];
+    // API key authentication
+    this.apiKey = this.config.apiKey;
+    if (!this.apiKey) {
+      throw new Error('API key is required for UniFi Protect authentication');
+    }
+    
+    // Bootstrap data for UniFi Protect
+    this.bootstrapData = null;
+    this.lastUpdateId = null;
+    this.bootstrapCache = new Map();
+    this.bootstrapExpiry = 5 * 60 * 1000; // 5 minutes
     
     // Camera cache
     this.cameras = new Map();
@@ -31,20 +41,22 @@ class UnifiProtectConnector extends BaseConnector {
     // Event subscriptions
     this.eventSubscriptions = new Map();
     
-    // WebSocket connection
+    // WebSocket connection with enhanced reliability
     this.ws = null;
     this.wsConnected = false;
     this.wsReconnectAttempts = 0;
-    this.maxReconnectAttempts = 5;
-    this.reconnectDelay = 5000; // 5 seconds
+    this.maxReconnectAttempts = 10;
+    this.reconnectDelay = 1000; // Start with 1 second
+    this.maxReconnectDelay = 30000; // Max 30 seconds
     this.heartbeatInterval = 30000; // 30 seconds
     this.heartbeatTimer = null;
+    this.lastHeartbeat = Date.now();
     
-    // Session management
-    this.sessionToken = null;
-    this.sessionExpiry = null;
-    this.lastAuthAttempt = 0;
-    this.authRetryDelay = 60000; // 1 minute
+    // Event deduplication and state tracking
+    this.lastEventIds = new Map();
+    this.deviceStates = new Map();
+    this.eventQueue = [];
+    this.processingEvents = false;
     
     // Rate limiting
     this.rateLimiter = {
@@ -68,6 +80,10 @@ class UnifiProtectConnector extends BaseConnector {
     // Entity tracking
     this.discoveredEntities = new Set();
     this.entitySubscriptions = new Map();
+    
+    // Video streaming
+    this.streamSessions = new Map();
+    this.streamTimeout = 30000; // 30 seconds
   }
   
   /**
@@ -91,126 +107,33 @@ class UnifiProtectConnector extends BaseConnector {
     try {
       const { host, port, protocol } = this.config;
       
-      // Test connection by getting sites data (which we know works)
+      this.logger.debug(`Attempting to connect to UniFi Protect at ${host}`);
+      
+      // Test API key authentication by making a request to the meta info endpoint
       try {
-        this.logger.debug(`Attempting to connect to UniFi at ${host}`);
-        
-        this.logger.debug('About to make sites request...');
-        const sites = await this.makeRequest('GET', '/proxy/network/integration/v1/sites');
-        this.logger.debug('Sites request completed successfully');
-        
-        this.logger.debug('Sites response type:', typeof sites);
-        this.logger.debug('Sites response keys:', sites ? Object.keys(sites) : 'no response');
-        
-        // Safely extract response data without circular references
-        const responseData = {
-          status: sites?.status,
-          statusText: sites?.statusText,
-          data: sites?.data,
-          dataType: typeof sites?.data,
-          hasData: !!sites?.data,
-          dataKeys: sites?.data ? Object.keys(sites.data) : 'no data'
-        };
-        this.logger.debug('Sites response data:', JSON.stringify(responseData, null, 2));
-        
-        try {
-          // Handle different possible response structures
-          if (sites.data && sites.data.data) {
-            this.sites = sites.data.data;
-            this.siteId = this.sites[0]?.id || 'default';
-            this.logger.info(`Successfully connected to UniFi, found ${this.sites.length} sites`);
-          } else if (sites.data && Array.isArray(sites.data)) {
-            // Handle case where data is directly an array
-            this.sites = sites.data;
-            this.siteId = this.sites[0]?.id || 'default';
-            this.logger.info(`Successfully connected to UniFi, found ${this.sites.length} sites`);
-          } else if (Array.isArray(sites)) {
-            // Handle case where response is directly an array
-            this.sites = sites;
-            this.siteId = this.sites[0]?.id || 'default';
-            this.logger.info(`Successfully connected to UniFi, found ${this.sites.length} sites`);
-          } else {
-            this.logger.warn('No sites data found in response');
-            this.logger.debug('Sites response structure:', {
-              hasData: !!sites.data,
-              dataType: typeof sites.data,
-              responseType: typeof sites,
-              responseKeys: sites ? Object.keys(sites) : 'no response',
-              dataKeys: sites.data ? Object.keys(sites.data) : 'no data'
-            });
-            // Set a default site ID to continue
-            this.siteId = 'default';
-            this.sites = [];
-          }
-        } catch (parseError) {
-          const parseErrorMessage = parseError?.message || String(parseError);
-          this.logger.error('Error parsing sites response:', parseErrorMessage);
-          // Set defaults and continue
-          this.siteId = 'default';
-          this.sites = [];
-        }
-        
-        // Try to load cameras (may fail if Protect API not available)
-        try {
-          await this.loadCameras();
-          this.logger.info('Successfully loaded cameras');
-          
-          // Perform initial camera discovery if enabled
-          if (this.autoDiscovery.enabled) {
-            await this.performCameraDiscovery();
-          }
-        } catch (error) {
-          const errorMessage = error?.message || String(error);
-          this.logger.error('Failed to load cameras:', errorMessage);
-        }
-        
-        // Try to connect to WebSocket for real-time events
-        try {
-          await this.connectWebSocket();
-          this.logger.info('Successfully connected to WebSocket');
-        } catch (error) {
-          const errorMessage = error?.message || String(error);
-          this.logger.warn('Could not connect WebSocket (may not be available):', errorMessage);
-        }
-        
-        // Always start REST API polling as backup (WebSocket may disconnect)
-        this.startEventPolling();
-        
-        // Start auto-discovery if enabled
-        if (this.autoDiscovery.enabled) {
-          this.startAutoDiscovery();
-        }
-        
+        const response = await this.makeRequest('GET', '/proxy/protect/integration/v1/meta/info');
+        this.logger.info('Successfully authenticated with UniFi Protect API');
+        this.logger.debug('API Info:', response);
       } catch (error) {
-        // Safely extract error information without circular references
-        const errorInfo = {
-          message: error?.message || String(error),
-          name: error?.name,
-          code: error?.code,
-          status: error?.response?.status,
-          statusText: error?.response?.statusText
-        };
-        
-        this.logger.debug('Error info:', JSON.stringify(errorInfo, null, 2));
-        this.logger.debug('Error type:', typeof error);
-        this.logger.debug('Error constructor:', error?.constructor?.name);
-        
-        const errorMessage = errorInfo.message;
-        
-        // If we got a successful sites response but failed on cameras, this might be a partial success
-        if (this.sites && this.sites.length > 0) {
-          this.logger.warn(`Partial connection success - sites loaded but cameras failed: ${errorMessage}`);
-          // Don't throw error, consider this a successful connection with limited functionality
-          return;
-        }
-        
-        this.logger.error('Connection failed:', errorMessage);
-        throw new Error(`Failed to connect to Unifi Protect: ${errorMessage}`);
+        const errorMessage = error?.message || String(error);
+        this.logger.error('API key authentication failed:', errorMessage);
+        throw new Error(`Failed to authenticate with UniFi Protect API: ${errorMessage}`);
       }
-    } catch (outerError) {
-      const outerErrorMessage = outerError?.message || String(outerError);
-      this.logger.error('Outer connection error:', outerErrorMessage);
-      throw outerError;
+      
+      // Load initial camera data
+      await this.loadCameras();
+      
+      // Set up WebSocket connection for real-time updates
+      await this.connectWebSocket();
+      
+      // Start event polling as backup
+      this.startEventPolling();
+      
+      this.logger.info('UniFi Protect connection established successfully');
+      
+    } catch (error) {
+      this.logger.error('Failed to connect to UniFi Protect:', error.message);
+      throw error;
     }
   }
   
@@ -335,21 +258,39 @@ class UnifiProtectConnector extends BaseConnector {
    * Subscribe to smart detection events
    */
   async subscribeToSmartEvents(parameters) {
-    const { cameraId } = parameters;
+    const { cameraId, types = ['person', 'vehicle', 'animal'] } = parameters;
     
     if (!cameraId) {
-      throw new Error('Camera ID is required');
+      throw new Error('Camera ID is required for smart events subscription');
     }
     
-    // For now, this is handled through WebSocket events
-    // In the future, we could implement specific smart detection subscriptions
-    this.logger.debug(`Smart detection events will be handled via WebSocket for camera: ${cameraId}`);
+    const subscriptionId = `smart_${cameraId}`;
+    this.eventSubscriptions.set(subscriptionId, {
+      type: 'smart',
+      cameraId,
+      types,
+      active: true,
+      timestamp: Date.now()
+    });
     
-    return {
-      success: true,
-      message: 'Smart detection events will be handled via WebSocket',
-      cameraId
-    };
+    this.logger.info(`Subscribed to smart events for camera ${cameraId}: ${types.join(', ')}`);
+    return { subscriptionId, status: 'subscribed' };
+  }
+  
+  /**
+   * Unsubscribe from smart detection events
+   */
+  async unsubscribeFromSmartEvents(parameters) {
+    const { cameraId } = parameters;
+    const subscriptionId = `smart_${cameraId}`;
+    
+    if (this.eventSubscriptions.has(subscriptionId)) {
+      this.eventSubscriptions.delete(subscriptionId);
+      this.logger.info(`Unsubscribed from smart events for camera ${cameraId}`);
+      return { subscriptionId, status: 'unsubscribed' };
+    }
+    
+    throw new Error(`No smart events subscription found for camera ${cameraId}`);
   }
   
   /**
@@ -427,30 +368,37 @@ class UnifiProtectConnector extends BaseConnector {
   }
   
   /**
-   * Execute capability operations
+   * Execute capability
    */
   async executeCapability(capabilityId, operation, parameters) {
-    switch (capabilityId) {
-      case 'camera:management':
-        return this.executeCameraManagement(operation, parameters);
-      
-      case 'camera:video:stream':
-        return this.executeVideoStream(operation, parameters);
-      
-      case 'camera:event:motion':
-        return this.executeMotionEvents(operation, parameters);
-      
-      case 'camera:recording:management':
-        return this.executeRecordingManagement(operation, parameters);
-      
-      case 'system:info':
-        return this.executeSystemInfo(operation, parameters);
-      
-      case 'system:users':
-        return this.executeUserManagement(operation, parameters);
-      
-      default:
-        throw new Error(`Unknown capability: ${capabilityId}`);
+    try {
+      switch (capabilityId) {
+        case 'camera:management':
+          return await this.executeCameraManagement(operation, parameters);
+        case 'camera:video:stream':
+          return await this.executeVideoStream(operation, parameters);
+        case 'camera:snapshot':
+          return await this.executeCameraSnapshot(operation, parameters);
+        case 'camera:event:motion':
+          return await this.executeMotionEvents(operation, parameters);
+        case 'camera:event:smart':
+          return await this.executeSmartEvents(operation, parameters);
+        case 'camera:event:ring':
+          return await this.executeRingEvents(operation, parameters);
+        case 'camera:recording:management':
+          return await this.executeRecordingManagement(operation, parameters);
+        case 'system:info':
+          return await this.executeSystemInfo(operation, parameters);
+        case 'system:users':
+          return await this.executeUserManagement(operation, parameters);
+        case 'realtime:events':
+          return await this.executeRealtimeEvents(operation, parameters);
+        default:
+          throw new Error(`Unknown capability: ${capabilityId}`);
+      }
+    } catch (error) {
+      this.logger.error(`Error executing capability ${capabilityId}:`, error.message);
+      throw error;
     }
   }
   
@@ -479,10 +427,13 @@ class UnifiProtectConnector extends BaseConnector {
   async executeVideoStream(operation, parameters) {
     switch (operation) {
       case 'read':
-        return this.getStreamUrl(parameters);
-      
+        return await this.getStreamUrl(parameters);
+      case 'start':
+        return await this.startVideoStream(parameters);
+      case 'stop':
+        return this.stopVideoStream(parameters.sessionId);
       default:
-        throw new Error(`Unknown operation: ${operation}`);
+        throw new Error(`Unknown video stream operation: ${operation}`);
     }
   }
   
@@ -563,18 +514,14 @@ class UnifiProtectConnector extends BaseConnector {
   }
   
   /**
-   * List cameras
+   * List all cameras
    */
   async listCameras(parameters = {}) {
-    const { siteId = this.siteId } = parameters;
+    // Use the correct UniFi Protect API endpoint
+    const response = await this.makeRequest('GET', '/proxy/protect/integration/v1/cameras');
     
-    // Use the correct Unifi Protect API endpoint
-    const response = await this.makeRequest('GET', '/proxy/protect/v1/cameras');
-    
-    if (response.data && response.data.data) {
-      return response.data.data;
-    } else if (response.data && Array.isArray(response.data)) {
-      return response.data;
+    if (response && Array.isArray(response)) {
+      return response;
     } else {
       return [];
     }
@@ -590,8 +537,8 @@ class UnifiProtectConnector extends BaseConnector {
       throw new Error('Camera ID is required');
     }
     
-    const response = await this.makeRequest('GET', `/proxy/protect/v1/cameras/${cameraId}`);
-    return response.data;
+    const response = await this.makeRequest('GET', `/proxy/protect/integration/v1/cameras/${cameraId}`);
+    return response;
   }
   
   /**
@@ -604,45 +551,69 @@ class UnifiProtectConnector extends BaseConnector {
       throw new Error('Camera ID is required');
     }
     
-    if (!settings) {
-      throw new Error('Camera settings are required');
+    if (!settings || typeof settings !== 'object') {
+      throw new Error('Settings object is required');
     }
     
-    const response = await this.makeRequest('PUT', `/proxy/protect/v1/cameras/${cameraId}`, settings);
-    
-    // Update local cache
-    if (response.data) {
-      this.cameras.set(cameraId, {
-        ...response.data,
-        lastUpdated: Date.now()
-      });
-    }
-    
-    return response.data;
+    const response = await this.makeRequest('PATCH', `/proxy/protect/integration/v1/cameras/${cameraId}`, settings);
+    return response;
   }
   
   /**
-   * Get video stream URL
+   * Get video stream URL for camera
    */
   async getStreamUrl(parameters) {
-    const { cameraId, quality = '1080p', type = 'live' } = parameters;
+    const { cameraId, quality = 'high', format = 'rtsps' } = parameters;
     
     if (!cameraId) {
-      throw new Error('Camera ID is required');
+      throw new Error('Camera ID is required for stream URL');
     }
     
-    // Use the correct Unifi Protect API endpoint for video streams
-    const response = await this.makeRequest('GET', `/proxy/protect/v1/cameras/${cameraId}/stream?quality=${quality}&type=${type}`);
+    const camera = this.cameras.get(cameraId) || this.getCachedDevice('cameras', cameraId);
+    if (!camera) {
+      throw new Error(`Camera not found: ${cameraId}`);
+    }
     
-    if (response.data && response.data.url) {
-      return {
-        url: response.data.url,
-        quality,
-        type,
-        cameraId
-      };
-    } else {
-      throw new Error('No stream URL available');
+    try {
+      if (format === 'rtsps') {
+        return await this.getRtspsStreamUrl(camera, quality);
+      } else {
+        throw new Error(`Unsupported stream format: ${format}. Only 'rtsps' is supported.`);
+      }
+    } catch (error) {
+      this.logger.error(`Failed to get stream URL for camera ${cameraId}:`, error.message);
+      throw error;
+    }
+  }
+  
+  /**
+   * Get RTSPS stream URL using the new API
+   */
+  async getRtspsStreamUrl(camera, quality) {
+    const qualityMap = {
+      low: 'low',
+      medium: 'medium', 
+      high: 'high',
+      package: 'package'
+    };
+    
+    const streamQuality = qualityMap[quality] || 'high';
+    
+    try {
+      // Request RTSPS stream using the new API endpoint
+      const response = await this.makeRequest('POST', `/v1/cameras/${camera.id}/rtsps-stream`, {
+        qualities: [streamQuality]
+      });
+      
+      if (response && response[streamQuality]) {
+        this.logger.debug(`Generated RTSPS URL for camera ${camera.id}: ${response[streamQuality]}`);
+        return response[streamQuality];
+      } else {
+        throw new Error(`No RTSPS stream URL available for quality: ${streamQuality}`);
+      }
+    } catch (error) {
+      this.logger.error(`Failed to get RTSPS stream for camera ${camera.id}:`, error.message);
+      throw error;
     }
   }
   
@@ -873,51 +844,19 @@ class UnifiProtectConnector extends BaseConnector {
    */
   async loadCameras() {
     try {
-      this.logger.debug(`Loading cameras for site: ${this.siteId}`);
-      
-      // Use the correct Unifi Protect API endpoint for cameras
-      const response = await this.makeRequest('GET', '/proxy/protect/v1/cameras');
-      
-      this.logger.debug('Cameras response:', JSON.stringify(response.data, null, 2));
-      
-      // Update cache
-      if (response.data && response.data.data) {
-        response.data.data.forEach(camera => {
+      const camerasResponse = await this.makeRequest('GET', '/proxy/protect/integration/v1/cameras');
+      if (camerasResponse && Array.isArray(camerasResponse)) {
+        camerasResponse.forEach(camera => {
           this.cameras.set(camera.id, {
             ...camera,
             lastUpdated: Date.now()
           });
         });
-        this.logger.info(`Loaded ${response.data.data.length} cameras`);
-      } else if (response.data && Array.isArray(response.data)) {
-        // Handle case where data is directly an array
-        response.data.forEach(camera => {
-          this.cameras.set(camera.id, {
-            ...camera,
-            lastUpdated: Date.now()
-          });
-        });
-        this.logger.info(`Loaded ${response.data.length} cameras`);
-      } else {
-        this.logger.warn('No camera data found in response');
-        this.logger.debug('Response structure:', {
-          hasData: !!response.data,
-          dataType: typeof response.data,
-          dataKeys: response.data ? Object.keys(response.data) : 'no data'
-        });
+        this.logger.info(`Loaded ${camerasResponse.length} cameras from API`);
       }
-      
-      return response.data;
     } catch (error) {
       const errorMessage = error?.message || String(error);
-      this.logger.error(`Failed to load cameras for site ${this.siteId}:`, errorMessage);
-      
-      // Log additional error details for debugging
-      if (error?.response) {
-        this.logger.error(`HTTP ${error.response.status} error:`, error.response.data);
-      }
-      
-      throw error;
+      this.logger.warn('Could not load cameras:', errorMessage);
     }
   }
   
@@ -925,72 +864,107 @@ class UnifiProtectConnector extends BaseConnector {
    * Make HTTP request to Unifi Protect API
    */
   async makeRequest(method, path, data = null, headers = {}) {
+    await this.checkRateLimit();
+    
+    const { host, port, protocol, verifySSL } = this.config;
+    
+    // Build URL
+    const baseUrl = `${protocol}://${host}:${port}`;
+    const url = `${baseUrl}${path}`;
+    
+    // Set up request options with API key authentication
+    const options = {
+      method,
+      url,
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'X-API-KEY': this.apiKey,
+        ...headers
+      },
+      httpsAgent: new https.Agent({
+        rejectUnauthorized: verifySSL
+      }),
+      timeout: 30000,
+      validateStatus: (status) => status < 500 // Accept 4xx errors for debugging
+    };
+    
+    // Add request body if provided
+    if (data) {
+      options.data = data;
+    }
+    
     try {
-      // Check rate limiting
-      await this.checkRateLimit();
-      
-      // Build the full URL
-      const baseUrl = `${this.config.protocol}://${this.config.host}:${this.config.port}`;
-      
-      // Use the correct base path from documentation
-      const apiBasePath = '/proxy/network/integration/v1';
-      
-      // Handle path construction - if path already includes the base, use it as is
-      let fullPath;
-      if (path.startsWith('/proxy/network/integration/v1')) {
-        fullPath = path;
-      } else if (path.startsWith('/proxy/')) {
-        // If it's a different proxy path, use it as is
-        fullPath = path;
-      } else {
-        // Otherwise, append to the base path
-        fullPath = path.startsWith('/') ? `${apiBasePath}${path}` : `${apiBasePath}/${path}`;
-      }
-      
-      const url = `${baseUrl}${fullPath}`;
-      
-      // Prepare request configuration
-      const config = {
-        method: method.toUpperCase(),
-        url,
-        timeout: this.config.timeout || 10000,
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-          'X-API-KEY': this.config.apiKey,
-          ...headers
-        },
-        httpsAgent: new https.Agent({
-          rejectUnauthorized: this.config.verifySSL !== false
-        })
-      };
-
-      // Add data for POST/PUT/PATCH requests
-      if (data && ['POST', 'PUT', 'PATCH'].includes(config.method)) {
-        config.data = data;
-      }
-
       this.logger.debug(`Making ${method} request to: ${url}`);
+      this.logger.debug(`Headers:`, { 
+        'X-API-KEY': this.apiKey ? `${this.apiKey.substring(0, 8)}...` : 'Missing',
+        'Content-Type': options.headers['Content-Type'],
+        'Accept': options.headers['Accept']
+      });
       
-      const response = await axios(config);
+      const response = await axios(options);
       
-      this.logger.debug(`Response status: ${response.status} for ${method} ${path}`);
-
-      // Check for expected content type
-      const contentType = response.headers['content-type'];
-      if (!contentType || !contentType.includes('application/json')) {
-        this.logger.warn(`Unexpected content type received: ${contentType}. This might indicate an invalid API key or an issue with the UniFi Protect API endpoint.`);
-        // Return a response object with null data to prevent crashes
-        return { ...response, data: null };
+      this.logger.debug(`Response status: ${response.status}`);
+      
+      // Log response structure for debugging
+      if (response.data && typeof response.data === 'object') {
+        const keys = Object.keys(response.data);
+        this.logger.debug(`Response keys: ${keys.join(', ')}`);
       }
       
-      return response;
+      return response.data;
+      
     } catch (error) {
+      // Handle specific error cases
       if (error.response) {
-        this.logger.error(`HTTP ${error.response.status} error for ${method} ${path}: ${error.response.data}`);
-      } else {
-        this.logger.error(`Request failed for ${method} ${path}: ${error.message}`);
+        const { status, statusText, data } = error.response;
+        
+        this.logger.error(`API request failed: ${status} ${statusText}`);
+        this.logger.debug(`Response data:`, data);
+        
+        // Handle authentication errors
+        if (status === 401) {
+          this.logger.error('Authentication failed - check API key');
+          this.logger.error(`URL attempted: ${url}`);
+          throw new Error(`Authentication failed (401): ${statusText} - Check API key`);
+        }
+        
+        // Handle not found errors
+        if (status === 404) {
+          this.logger.error('Endpoint not found - check if UniFi Protect is installed');
+          this.logger.error(`URL attempted: ${url}`);
+          throw new Error(`Endpoint not found (404): ${statusText} - UniFi Protect may not be installed`);
+        }
+        
+        // Handle rate limiting
+        if (status === 429) {
+          this.logger.warn('Rate limit exceeded, retrying...');
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          return this.makeRequest(method, path, data, headers);
+        }
+        
+        throw new Error(`API request failed: ${status} ${statusText}`);
       }
+      
+      // Handle network errors
+      if (error.code === 'ECONNREFUSED') {
+        this.logger.error('Connection refused - check if UniFi Protect is running');
+        this.logger.error(`Host: ${host}:${port}`);
+        throw new Error('Connection refused - UniFi Protect may not be running');
+      }
+      
+      if (error.code === 'ENOTFOUND') {
+        this.logger.error('Host not found - check UniFi Protect host configuration');
+        this.logger.error(`Host: ${host}`);
+        throw new Error('Host not found - check UniFi Protect host configuration');
+      }
+      
+      if (error.code === 'ECONNRESET') {
+        this.logger.error('Connection reset - check network connectivity');
+        throw new Error('Connection reset - check network connectivity');
+      }
+      
+      this.logger.error('Request failed:', error.message);
       throw error;
     }
   }
@@ -1042,15 +1016,30 @@ class UnifiProtectConnector extends BaseConnector {
       {
         id: 'camera:video:stream',
         name: 'Video Stream',
-        description: 'Stream video from camera',
+        description: 'Stream video from camera with RTSP and HTTP support',
         category: 'camera',
-        operations: ['read'],
+        operations: ['read', 'start', 'stop'],
         dataTypes: ['video/rtsp', 'video/mp4', 'video/h264'],
         events: ['stream-started', 'stream-stopped', 'stream-error'],
         parameters: {
           cameraId: { type: 'string', required: true },
           quality: { type: 'string', enum: ['low', 'medium', 'high'] },
-          format: { type: 'string', enum: ['rtsp', 'mp4'] }
+          format: { type: 'string', enum: ['rtsp', 'http'] },
+          duration: { type: 'number', min: 1, max: 3600 }
+        },
+        requiresConnection: true
+      },
+      {
+        id: 'camera:snapshot',
+        name: 'Camera Snapshot',
+        description: 'Get still image from camera',
+        category: 'camera',
+        operations: ['read'],
+        dataTypes: ['image/jpeg', 'image/png'],
+        events: [],
+        parameters: {
+          cameraId: { type: 'string', required: true },
+          quality: { type: 'string', enum: ['low', 'medium', 'high'] }
         },
         requiresConnection: true
       },
@@ -1064,8 +1053,34 @@ class UnifiProtectConnector extends BaseConnector {
         events: ['motion-detected', 'motion-ended'],
         parameters: {
           cameraId: { type: 'string', required: true },
-          sensitivity: { type: 'number', min: 0, max: 100 },
-          area: { type: 'object' }
+          sensitivity: { type: 'number', min: 0, max: 100 }
+        },
+        requiresConnection: true
+      },
+      {
+        id: 'camera:event:smart',
+        name: 'Smart Detection Events',
+        description: 'Subscribe to smart detection events (person, vehicle, etc.)',
+        category: 'camera',
+        operations: ['subscribe', 'unsubscribe'],
+        dataTypes: ['application/json'],
+        events: ['smart-detected', 'smart-ended'],
+        parameters: {
+          cameraId: { type: 'string', required: true },
+          types: { type: 'array', items: { type: 'string', enum: ['person', 'vehicle', 'animal'] } }
+        },
+        requiresConnection: true
+      },
+      {
+        id: 'camera:event:ring',
+        name: 'Doorbell Ring Events',
+        description: 'Subscribe to doorbell ring events',
+        category: 'camera',
+        operations: ['subscribe', 'unsubscribe'],
+        dataTypes: ['application/json'],
+        events: ['ring-detected'],
+        parameters: {
+          cameraId: { type: 'string', required: true }
         },
         requiresConnection: true
       },
@@ -1076,11 +1091,11 @@ class UnifiProtectConnector extends BaseConnector {
         category: 'camera',
         operations: ['list', 'get', 'download', 'delete'],
         dataTypes: ['video/mp4', 'application/json'],
-        events: ['recording-completed', 'recording-deleted'],
+        events: ['recording-started', 'recording-stopped'],
         parameters: {
           cameraId: { type: 'string', required: false },
-          startTime: { type: 'string', required: false },
-          endTime: { type: 'string', required: false },
+          startTime: { type: 'string', format: 'date-time' },
+          endTime: { type: 'string', format: 'date-time' },
           type: { type: 'string', enum: ['motion', 'continuous', 'timelapse'] }
         },
         requiresConnection: true
@@ -1103,10 +1118,24 @@ class UnifiProtectConnector extends BaseConnector {
         category: 'system',
         operations: ['list', 'get', 'create', 'update', 'delete'],
         dataTypes: ['application/json'],
-        events: [],
+        events: ['user-added', 'user-updated', 'user-deleted'],
         parameters: {
           userId: { type: 'string', required: false },
           userData: { type: 'object', required: false }
+        },
+        requiresConnection: true
+      },
+      {
+        id: 'realtime:events',
+        name: 'Real-time Events',
+        description: 'Subscribe to all real-time events from UniFi Protect',
+        category: 'events',
+        operations: ['subscribe', 'unsubscribe'],
+        dataTypes: ['application/json'],
+        events: ['motion', 'smart', 'ring', 'recording', 'connection', 'nvr', 'sensor'],
+        parameters: {
+          eventTypes: { type: 'array', items: { type: 'string' } },
+          deviceIds: { type: 'array', items: { type: 'string' } }
         },
         requiresConnection: true
       }
@@ -1153,62 +1182,8 @@ class UnifiProtectConnector extends BaseConnector {
   }
 
   /**
-   * Authenticate and get session token for WebSocket
-   */
-  async authenticateForWebSocket() {
-    // Check if we have a valid session token
-    if (this.sessionToken && this.sessionExpiry && Date.now() < this.sessionExpiry) {
-      return this.sessionToken;
-    }
-
-    // Rate limit auth attempts
-    if (Date.now() - this.lastAuthAttempt < this.authRetryDelay) {
-      this.logger.debug('Skipping auth attempt due to rate limiting');
-      return this.sessionToken;
-    }
-
-    this.lastAuthAttempt = Date.now();
-
-    try {
-      this.logger.debug('Authenticating for WebSocket connection...');
-      
-      // Try to authenticate via REST API first
-      const authResponse = await this.makeRequest('POST', '/auth/login', {
-        username: this.config.username,
-        password: this.config.password,
-        remember: true
-      });
-
-      if (authResponse.data && authResponse.data.token) {
-        const cookie = authResponse.headers['set-cookie'];
-        this.sessionToken = {
-          token: authResponse.data.token,
-          cookie: cookie
-        };
-        this.sessionExpiry = Date.now() + (24 * 60 * 60 * 1000); // 24 hours
-        this.logger.debug('Successfully authenticated and got session token');
-        return this.sessionToken;
-      }
-    } catch (error) {
-      this.logger.debug('REST API authentication failed, trying API key only:', error.message);
-    }
-
-    // If REST auth fails, try to validate API key
-    try {
-      const testResponse = await this.makeRequest('GET', `/sites/${this.siteId}/cameras?limit=1`);
-      if (testResponse.status === 200) {
-        this.logger.debug('API key validation successful');
-        return this.config.apiKey; // Use API key as fallback
-      }
-    } catch (error) {
-      this.logger.debug('API key validation failed:', error.message);
-    }
-
-    return null;
-  }
-
-  /**
    * Connect to UniFi Protect WebSocket for real-time events
+   * Only start REST API polling if WebSocket is not available
    */
   async connectWebSocket() {
     if (this.wsConnected) {
@@ -1219,59 +1194,48 @@ class UnifiProtectConnector extends BaseConnector {
       const wsUrl = await this.getWebSocketUrl();
       
       if (!wsUrl) {
-        this.logger.warn('No WebSocket URL available for UniFi Protect');
-        return;
-      }
-
-      // First, get a session token
-      const authData = await this.authenticateForWebSocket();
-      
-      if (!authData || !authData.token) {
-        this.logger.error('Failed to get WebSocket session token');
+        this.logger.info('WebSocket not available - real-time events disabled, falling back to REST API polling');
+        this.wsConnected = false;
+        this.startEventPolling(); // Only start polling if WebSocket is not available
         return;
       }
       
-      this.logger.debug(`Attempting WebSocket connection with session token`);
+      // Set up headers with API key authentication
+      // Include additional headers for proper WebSocket handshake
+      const headers = {
+        'X-API-KEY': this.apiKey,
+        'Upgrade': 'websocket',
+        'Connection': 'Upgrade',
+        'Sec-WebSocket-Version': '13',
+        'Sec-WebSocket-Key': Buffer.from(Math.random().toString()).toString('base64')
+      };
+      
+      this.logger.debug(`Attempting WebSocket connection to: ${wsUrl}`);
+      this.logger.debug('Using headers:', headers);
       
       this.ws = new WebSocket(wsUrl, {
-        headers: {
-          'Cookie': authData.cookie,
-          'Authorization': `Bearer ${authData.token}`
-        },
-        rejectUnauthorized: this.config.verifySSL !== false
+        headers,
+        rejectUnauthorized: false,
+        followRedirects: true,
+        handshakeTimeout: 10000
       });
-
-      // Set up event handlers
+      
       this.setupWebSocketHandlers();
-      
-      // Wait for connection or failure
-      await this.waitForWebSocketConnection();
-      
-      if (this.wsConnected) {
-        this.logger.info(`WebSocket connected successfully`);
-        return;
-      }
-      
-      // If not connected, close and log
-      if (this.ws) {
-        this.ws.close();
-        this.ws = null;
-      }
-      
-      this.logger.warn('WebSocket connection failed - will rely on REST API polling');
-      
     } catch (error) {
-      const errorMessage = error?.message || String(error);
-      this.logger.error('Failed to connect WebSocket:', errorMessage);
+      this.logger.error('Error connecting to WebSocket:', error.message);
+      this.wsConnected = false;
+      this.startEventPolling(); // Only start polling if WebSocket fails
     }
   }
 
   /**
    * Set up WebSocket event handlers
+   * Enhanced to handle HTTP to WebSocket protocol switching
    */
   setupWebSocketHandlers() {
     this.ws.on('open', () => {
-      this.logger.info('WebSocket connected to UniFi Protect');
+      this.logger.info('WebSocket connected to UniFi Protect successfully');
+      this.logger.debug('WebSocket connection established - protocol switching completed');
       this.wsConnected = true;
       this.wsReconnectAttempts = 0;
       
@@ -1286,11 +1250,10 @@ class UnifiProtectConnector extends BaseConnector {
 
     this.ws.on('message', (data) => {
       try {
-        const message = JSON.parse(data.toString());
-        this.handleWebSocketMessage(message);
+        this.handleWebSocketMessage(data);
       } catch (error) {
         const errorMessage = error?.message || String(error);
-        this.logger.error('Error parsing WebSocket message:', errorMessage);
+        this.logger.error('Error handling WebSocket message:', errorMessage);
       }
     });
 
@@ -1301,11 +1264,13 @@ class UnifiProtectConnector extends BaseConnector {
       
       // Handle specific error codes
       if (code === 4001) {
-        this.logger.warn('Access key invalid - clearing session token and will retry with fresh auth');
-        this.sessionToken = null;
-        this.sessionExpiry = null;
+        this.logger.warn('Access key invalid - check API key configuration');
       } else if (code === 1000) {
         this.logger.info('WebSocket closed normally');
+      } else if (code === 101) {
+        this.logger.info('HTTP 101 Switching Protocols - this is expected during handshake');
+      } else if (code === 302) {
+        this.logger.info('HTTP 302 Redirect - this is expected for WebSocket endpoints');
       } else {
         this.logger.warn(`WebSocket closed with unexpected code: ${code}`);
       }
@@ -1323,10 +1288,25 @@ class UnifiProtectConnector extends BaseConnector {
     this.ws.on('error', (error) => {
       const errorMessage = error?.message || String(error);
       this.logger.error('WebSocket error:', errorMessage);
+      
+      // Log additional error details for debugging
+      if (error.code) {
+        this.logger.debug(`WebSocket error code: ${error.code}`);
+      }
+      if (error.errno) {
+        this.logger.debug(`WebSocket error number: ${error.errno}`);
+      }
+      
       this.emit('websocket:error', { 
         connectorId: this.id, 
         error: errorMessage
       });
+    });
+
+    // Add upgrade event handler for protocol switching
+    this.ws.on('upgrade', (response) => {
+      this.logger.debug('WebSocket upgrade response received');
+      this.logger.debug(`Upgrade status: ${response.statusCode} ${response.statusMessage}`);
     });
   }
 
@@ -1364,47 +1344,216 @@ class UnifiProtectConnector extends BaseConnector {
   /**
    * Handle WebSocket message
    */
-  handleWebSocketMessage(message) {
-    // Handle different message types
-    if (message.action === 'update') {
-      this.handleWebSocketUpdate(message);
-    } else if (message.action === 'add') {
-      this.handleWebSocketAdd(message);
-    } else if (message.action === 'remove') {
-      this.handleWebSocketRemove(message);
-    } else if (message.action === 'pong') {
-      // Heartbeat response
-      this.logger.debug('Heartbeat response received');
-    } else {
-      this.logger.debug(`Unknown message type: ${message.action}`);
+  handleWebSocketMessage(data) {
+    try {
+      let message;
+      
+      // Check if this is binary data (UniFi Protect protocol)
+      if (Buffer.isBuffer(data) || data instanceof Uint8Array) {
+        this.logger.debug(`Received binary WebSocket message (${data.length} bytes)`);
+        message = this.decodeBinaryMessage(data);
+        
+        if (!message) {
+          // Only log if it's a substantial message (not just noise)
+          if (data.length > 16) {
+            this.logger.debug('Failed to decode binary message - first 32 bytes:', Buffer.from(data).toString('hex').substring(0, 64));
+          }
+          return;
+        }
+        
+        // Log successful binary message parsing
+        this.logger.info(`Successfully parsed binary message: ${message.action || 'unknown'} - ${JSON.stringify(message).substring(0, 200)}...`);
+      } else {
+        // Handle text messages
+        const dataString = data.toString();
+        
+        // Skip empty or whitespace-only messages
+        if (!dataString.trim()) {
+          return;
+        }
+        
+        // Skip heartbeat messages to reduce log noise
+        if (dataString.includes('"service":"babelfish"')) {
+          this.logger.debug('Received heartbeat message');
+          return;
+        }
+        
+        // Try to parse as JSON
+        try {
+          message = JSON.parse(dataString);
+          this.logger.info(`Successfully parsed JSON message: ${message.action || 'unknown'} - ${JSON.stringify(message).substring(0, 200)}...`);
+        } catch (error) {
+          // Only log JSON parse errors for actual text data that looks like it should be JSON
+          // Skip binary data that was converted to string or other non-JSON text
+          if (dataString.length < 1000 && 
+              !dataString.includes('\x00') && 
+              !dataString.includes('\\x') &&
+              (dataString.startsWith('{') || dataString.startsWith('['))) {
+            this.logger.debug('Failed to parse message as JSON:', dataString.substring(0, 100));
+          }
+          return;
+        }
+      }
+      
+      // Only process messages that have a known action
+      if (message && message.action) {
+        if (message.action === 'update') {
+          this.handleWebSocketUpdate(message);
+        } else if (message.action === 'add') {
+          this.handleWebSocketAdd(message);
+        } else if (message.action === 'remove') {
+          this.handleWebSocketRemove(message);
+        } else if (message.action === 'pong') {
+          // Heartbeat response
+          this.logger.debug('Heartbeat response received');
+        } else {
+          this.logger.info(`Unknown message type: ${message.action} - ${JSON.stringify(message).substring(0, 200)}...`);
+        }
+      } else if (message) {
+        // Only log if the message is not a known event and has content
+        this.logger.info(`Unhandled WebSocket message: ${JSON.stringify(message).substring(0, 200)}...`);
+      }
+    } catch (error) {
+      const errorMessage = error?.message || String(error);
+      this.logger.error('Error handling WebSocket message:', errorMessage);
     }
   }
 
   /**
-   * Handle WebSocket update messages
+   * Handle WebSocket update messages with enhanced state management
    */
   handleWebSocketUpdate(message) {
+    const deviceId = message.id;
+    const modelKey = message.modelKey;
+    const eventId = message.newUpdateId;
+    
+    // Check for duplicate events
+    if (this.isDuplicateEvent(deviceId, eventId)) {
+      this.logger.debug(`Skipping duplicate event for ${deviceId}: ${eventId}`);
+      return;
+    }
+    
+    // Update device state
+    const updatedState = this.updateDeviceState(deviceId, message.data);
+    
     const event = {
       connectorId: this.id,
-      type: message.newUpdateId,
+      type: 'update',
+      modelKey: modelKey,
+      deviceId: deviceId,
+      eventId: eventId,
       timestamp: new Date().toISOString(),
-      data: message.data || message,
+      data: message.data,
+      state: updatedState,
       source: 'unifi-protect-websocket'
     };
 
-    this.logger.info(`UniFi event received: ${event.type}`);
+    this.logger.info(`UniFi ${modelKey} update: ${deviceId}`);
     
-    // Process event based on type
-    this.processWebSocketEvent(event);
+    // Queue event for processing
+    this.queueEvent(event);
     
     // Emit the event
     this.emit('event', event);
-    
-    // Emit specific event types
-    this.emit(`event:${event.type}`, event);
-    
-    // Emit connector-specific events
+    this.emit(`event:${modelKey}`, event);
     this.emit(`connector:${this.id}:event`, event);
+    
+    // Handle specific modelKey events
+    switch (modelKey) {
+      case 'camera':
+        this.handleCameraUpdate(event);
+        break;
+      case 'event':
+        this.handleEventUpdate(event);
+        break;
+      case 'nvr':
+        this.handleNvrUpdate(event);
+        break;
+      case 'sensor':
+        this.handleSensorUpdate(event);
+        break;
+      default:
+        this.logger.debug(`Unhandled modelKey update: ${modelKey}`);
+    }
+  }
+  
+  /**
+   * Handle camera-specific updates
+   */
+  handleCameraUpdate(event) {
+    const cameraData = event.data;
+    
+    // Check for motion events
+    if (cameraData.lastMotion) {
+      const motionEvent = {
+        ...event,
+        type: 'motion',
+        motionData: {
+          timestamp: cameraData.lastMotion,
+          cameraId: event.deviceId,
+          cameraName: cameraData.name
+        }
+      };
+      
+      this.emit('event:motion', motionEvent);
+      this.logger.info(`Motion detected on camera: ${cameraData.name || event.deviceId}`);
+    }
+    
+    // Check for doorbell rings
+    if (cameraData.lastRing) {
+      const ringEvent = {
+        ...event,
+        type: 'ring',
+        ringData: {
+          timestamp: cameraData.lastRing,
+          cameraId: event.deviceId,
+          cameraName: cameraData.name
+        }
+      };
+      
+      this.emit('event:ring', ringEvent);
+      this.logger.info(`Doorbell ring on camera: ${cameraData.name || event.deviceId}`);
+    }
+    
+    // Check for smart detection events
+    if (cameraData.lastSmartDetectZone) {
+      const smartEvent = {
+        ...event,
+        type: 'smart',
+        smartData: {
+          timestamp: cameraData.lastSmartDetectZone,
+          cameraId: event.deviceId,
+          cameraName: cameraData.name
+        }
+      };
+      
+      this.emit('event:smart', smartEvent);
+      this.logger.info(`Smart detection on camera: ${cameraData.name || event.deviceId}`);
+    }
+  }
+  
+  /**
+   * Handle event updates (Protect events list)
+   */
+  handleEventUpdate(event) {
+    this.emit('event:protect', event);
+    this.logger.debug(`Protect event update: ${event.eventId}`);
+  }
+  
+  /**
+   * Handle NVR updates
+   */
+  handleNvrUpdate(event) {
+    this.emit('event:nvr', event);
+    this.logger.debug(`NVR update: ${event.deviceId}`);
+  }
+  
+  /**
+   * Handle sensor updates
+   */
+  handleSensorUpdate(event) {
+    this.emit('event:sensor', event);
+    this.logger.debug(`Sensor update: ${event.deviceId}`);
   }
 
   /**
@@ -1742,36 +1891,61 @@ class UnifiProtectConnector extends BaseConnector {
   }
 
   /**
-   * Schedule WebSocket reconnect
+   * Schedule WebSocket reconnection with exponential backoff
    */
   scheduleWebSocketReconnect() {
-    // Don't reconnect if we've reached max attempts
     if (this.wsReconnectAttempts >= this.maxReconnectAttempts) {
-      this.logger.warn('Max WebSocket reconnect attempts reached - relying on REST API polling');
+      this.logger.error('Max WebSocket reconnection attempts reached');
       return;
     }
-
-    this.wsReconnectAttempts++;
     
-    // Use longer delays for WebSocket reconnection since REST API polling is working
-    const baseDelay = this.reconnectDelay * 2; // 10 seconds base
-    const maxDelay = 300000; // 5 minutes max
-    const delay = Math.min(baseDelay * Math.pow(2, this.wsReconnectAttempts - 1), maxDelay);
+    // Calculate delay with exponential backoff
+    const delay = Math.min(
+      this.reconnectDelay * Math.pow(2, this.wsReconnectAttempts),
+      this.maxReconnectDelay
+    );
     
-    // Add jitter to prevent thundering herd
-    const jitter = Math.random() * 0.1 * delay; // 10% jitter
-    const finalDelay = delay + jitter;
+    this.logger.info(`Scheduling WebSocket reconnection in ${delay}ms (attempt ${this.wsReconnectAttempts + 1}/${this.maxReconnectAttempts})`);
     
-    this.logger.info(`Scheduling WebSocket reconnect in ${Math.round(finalDelay)}ms (attempt ${this.wsReconnectAttempts}/${this.maxReconnectAttempts})`);
-    
-    setTimeout(() => {
-      // Reset reconnect attempts if we've been connected for a while
-      if (this.wsConnected) {
-        this.wsReconnectAttempts = 0;
-      } else {
-        this.connectWebSocket();
+    setTimeout(async () => {
+      this.wsReconnectAttempts++;
+      try {
+        await this.connectWebSocket();
+      } catch (error) {
+        this.logger.error('WebSocket reconnection failed:', error.message);
+        this.scheduleWebSocketReconnect();
       }
-    }, finalDelay);
+    }, delay);
+  }
+  
+  /**
+   * Process event queue to handle events in order
+   */
+  async processEventQueue() {
+    if (this.processingEvents || this.eventQueue.length === 0) {
+      return;
+    }
+    
+    this.processingEvents = true;
+    
+    while (this.eventQueue.length > 0) {
+      const event = this.eventQueue.shift();
+      try {
+        await this.processWebSocketEvent(event);
+      } catch (error) {
+        this.logger.error('Error processing event from queue:', error.message);
+      }
+    }
+    
+    this.processingEvents = false;
+  }
+  
+  /**
+   * Add event to processing queue
+   */
+  queueEvent(event) {
+    this.eventQueue.push(event);
+    this.processEventQueue();
   }
 
   /**
@@ -1787,20 +1961,26 @@ class UnifiProtectConnector extends BaseConnector {
   }
 
   /**
-   * Get WebSocket URL for UniFi Protect
+   * Get WebSocket URL for real-time updates
+   * Based on community findings: use port 80, http protocol, and "integration" path
    */
   async getWebSocketUrl() {
+    // According to community findings, the correct endpoint is:
+    // http://unifi/proxy/protect/integration/v1/subscribe/events (port 80, not 443)
+    // Use "integration" (not "integrations") in the path
     const endpoints = [
-      `/proxy/protect/ws/updates`,
-      `/proxy/protect/ws`,
-      `/proxy/protect/v1/ws`,
-      `/proxy/network/ws`,
-      `/ws/protect`
+      `/proxy/protect/integration/v1/subscribe/events`,  // Primary endpoint (correct path)
+      `/proxy/protect/integration/v1/subscribe/devices`, // Alternative endpoint
+      `/proxy/protect/v1/subscribe/events`,             // Fallback (old path)
+      `/proxy/protect/v1/subscribe/devices`,            // Fallback (old path)
+      `/proxy/protect/ws/protect`                       // Legacy endpoint
     ];
 
     for (const endpoint of endpoints) {
       try {
-        const url = `${this.config.protocol === 'https' ? 'wss' : 'ws'}://${this.config.host}:${this.config.port}${endpoint}`;
+        // Force HTTP protocol and port 80 for WebSocket connections
+        // This is based on community findings that WebSocket only works on port 80
+        const url = `ws://${this.config.host}:80${endpoint}`;
         this.logger.debug(`Trying WebSocket endpoint: ${url}`);
         
         const isAvailable = await this.testWebSocketEndpoint(url);
@@ -1810,7 +1990,7 @@ class UnifiProtectConnector extends BaseConnector {
         }
       } catch (error) {
         const errorMessage = error && typeof error === 'object' && error.message ? error.message : String(error);
-        this.logger.debug(`WebSocket endpoint ${endpoint} not available: ${errorMessage}`);
+        this.logger.debug(`WebSocket endpoint ${endpoint} failed: ${errorMessage}`);
       }
     }
 
@@ -1820,14 +2000,24 @@ class UnifiProtectConnector extends BaseConnector {
 
   /**
    * Test if WebSocket endpoint is available
+   * Updated to handle HTTP to WebSocket protocol switching
    */
   async testWebSocketEndpoint(url) {
     return new Promise((resolve) => {
+      // Set up headers with API key authentication and WebSocket handshake
+      const headers = {
+        'X-API-KEY': this.apiKey,
+        'Upgrade': 'websocket',
+        'Connection': 'Upgrade',
+        'Sec-WebSocket-Version': '13',
+        'Sec-WebSocket-Key': Buffer.from(Math.random().toString()).toString('base64')
+      };
+      
       const ws = new WebSocket(url, {
-        headers: {
-          'X-API-KEY': this.config.apiKey
-        },
-        rejectUnauthorized: this.config.verifySSL !== false
+        headers,
+        rejectUnauthorized: false, // Disable SSL verification for self-signed certs
+        followRedirects: true,     // Follow HTTP redirects during handshake
+        handshakeTimeout: 5000     // 5 second timeout for testing
       });
 
       const timeout = setTimeout(() => {
@@ -1841,9 +2031,21 @@ class UnifiProtectConnector extends BaseConnector {
         resolve(true);
       });
 
-      ws.on('error', () => {
+      ws.on('error', (error) => {
         clearTimeout(timeout);
+        this.logger.debug(`WebSocket test failed for ${url}: ${error.message}`);
         resolve(false);
+      });
+
+      ws.on('close', (code, reason) => {
+        clearTimeout(timeout);
+        // Accept 101 Switching Protocols as success
+        if (code === 101) {
+          resolve(true);
+        } else {
+          this.logger.debug(`WebSocket test closed with code ${code}: ${reason}`);
+          resolve(false);
+        }
       });
     });
   }
@@ -1893,9 +2095,14 @@ class UnifiProtectConnector extends BaseConnector {
 
   /**
    * Start REST API polling for events as fallback
+   * Only called if WebSocket is not available or fails
    */
   startEventPolling() {
-    this.logger.info('Starting REST API event polling');
+    if (this.wsConnected) {
+      this.logger.info('WebSocket is connected, not starting REST API polling');
+      return;
+    }
+    this.logger.info('Starting REST API event polling (WebSocket not available)');
     
     // Poll for events every 10 seconds (more frequent than before)
     this.eventPollingInterval = setInterval(async () => {
@@ -1913,41 +2120,13 @@ class UnifiProtectConnector extends BaseConnector {
 
   /**
    * Poll for events via REST API
+   * Note: Events endpoint is not available in current API version (404 error)
+   * Real-time events are only available via WebSocket subscriptions
    */
   async pollForEvents() {
-    try {
-      // Use the correct Unifi Protect API endpoint for events
-      const events = await this.makeRequest('GET', '/proxy/protect/v1/events?limit=10');
-      
-      if (events.data && events.data.data) {
-        for (const event of events.data.data) {
-          this.handleRestEvent(event);
-        }
-      } else if (events.data && Array.isArray(events.data)) {
-        // Handle case where data is directly an array
-        for (const event of events.data) {
-          this.handleRestEvent(event);
-        }
-      }
-    } catch (error) {
-      // If Protect events API fails, try Network API for device events
-      try {
-        const devices = await this.makeRequest('GET', '/proxy/network/integration/v1/devices');
-        if (devices.data && devices.data.data) {
-          for (const device of devices.data.data) {
-            this.handleDeviceEvent(device);
-          }
-        } else if (devices.data && Array.isArray(devices.data)) {
-          // Handle case where data is directly an array
-          for (const device of devices.data) {
-            this.handleDeviceEvent(device);
-          }
-        }
-      } catch (deviceError) {
-        const deviceErrorMessage = deviceError?.message || String(deviceError);
-        this.logger.debug('Could not poll for device events:', deviceErrorMessage);
-      }
-    }
+    // Events endpoint is not available in the current API version
+    // Real-time events are only available via WebSocket subscriptions
+    this.logger.debug('Events polling disabled - endpoint not available in current API version');
   }
 
   /**
@@ -1975,11 +2154,922 @@ class UnifiProtectConnector extends BaseConnector {
       type: 'device_status',
       timestamp: new Date().toISOString(),
       data: device,
-      source: 'unifi-network-rest'
+      source: 'unifi-protect-rest'
     };
     
     this.emit('connector:event', eventData);
     this.logger.debug(`Device event received: ${device.name || device.id}`);
+  }
+
+  /**
+   * Authenticate and get bootstrap data for UniFi Protect
+   */
+  async authenticateAndGetBootstrap() {
+    try {
+      this.logger.debug('Authenticating with UniFi and checking for Protect...');
+      
+      // Check if we have valid cached bootstrap data
+      const cached = this.bootstrapCache.get('data');
+      if (cached && Date.now() - cached.timestamp < this.bootstrapExpiry) {
+        this.logger.info('Using cached bootstrap data');
+        this.bootstrapData = cached.data;
+        this.lastUpdateId = cached.data.lastUpdateId;
+        return cached.data;
+      }
+      
+      // Step 0: Try session-based authentication first (new method)
+      try {
+        this.logger.debug('Step 0: Trying session-based authentication...');
+        const sessionResult = await this.authenticateWithSession();
+        if (sessionResult) {
+          this.logger.info('✅ Session-based authentication successful');
+          this.cacheBootstrapData(sessionResult);
+          return sessionResult;
+        }
+      } catch (sessionError) {
+        const sessionErrorMessage = sessionError?.message || String(sessionError);
+        this.logger.debug('Session-based authentication failed:', sessionErrorMessage);
+      }
+      
+      // Step 1: Check if session token is provided in config (for UDM Pro)
+      if (this.config.sessionToken) {
+        this.logger.debug('Step 1: Using provided session token for UDM Pro...');
+        this.sessionToken = this.config.sessionToken;
+        this.sessionExpiry = Date.now() + (24 * 60 * 60 * 1000); // 24 hours
+        this.udmPro = true;
+        
+        // Try to get the bootstrap JSON with the session token
+        try {
+          const bootstrapResponse = await this.makeRequest('GET', '/proxy/protect/integrations/v1/bootstrap', null, {
+            'Authorization': `Bearer ${this.sessionToken}`
+          });
+          
+          if (bootstrapResponse && bootstrapResponse.accessKey) {
+            this.logger.info('✅ Successfully obtained Protect bootstrap data with session token');
+            this.cacheBootstrapData(bootstrapResponse);
+            return bootstrapResponse;
+          } else {
+            this.logger.warn('Bootstrap response missing accessKey with session token');
+          }
+        } catch (error) {
+          this.logger.debug('Session token authentication failed:', error.message);
+        }
+      }
+      
+      // Step 2: Get Bootstrap JSON - this is the key step for UniFi Protect
+      // According to the documentation, this should be the first step
+      try {
+        this.logger.debug('Step 2: Getting bootstrap JSON from UniFi Protect...');
+        const bootstrapResponse = await this.makeRequest('GET', '/proxy/protect/api/bootstrap');
+        
+        if (bootstrapResponse && bootstrapResponse.accessKey) {
+          this.logger.info('✅ UniFi Protect bootstrap successful');
+          this.logger.debug('Bootstrap data contains:', {
+            accessKey: bootstrapResponse.accessKey ? 'Present' : 'Missing',
+            lastUpdateId: bootstrapResponse.lastUpdateId || 'None',
+            cameras: bootstrapResponse.cameras?.length || 0,
+            nvr: bootstrapResponse.nvr ? 'Present' : 'Missing'
+          });
+          
+          this.cacheBootstrapData(bootstrapResponse);
+          return bootstrapResponse;
+        } else {
+          this.logger.warn('Bootstrap response missing accessKey - Protect may not be available');
+        }
+      } catch (bootstrapError) {
+        const bootstrapErrorMessage = bootstrapError?.message || String(bootstrapError);
+        this.logger.debug('Bootstrap authentication failed:', bootstrapErrorMessage);
+      }
+      
+      // Step 2b: Try Protect meta/info endpoint as alternative
+      try {
+        this.logger.debug('Step 2b: Trying Protect meta/info endpoint...');
+        const metaResponse = await this.makeRequest('GET', '/proxy/protect/v1/meta/info');
+        
+        if (metaResponse && metaResponse.version) {
+          this.logger.info('✅ UniFi Protect meta/info successful');
+          this.logger.debug('Meta info contains:', {
+            version: metaResponse.version,
+            server: metaResponse.server,
+            apiVersion: metaResponse.apiVersion
+          });
+          
+          // Create a minimal bootstrap from meta info
+          const metaBootstrap = {
+            accessKey: this.config.apiKey,
+            lastUpdateId: null,
+            cameras: [],
+            nvr: metaResponse,
+            protectAvailable: true,
+            networkOnly: false,
+            udmPro: true,
+            metaInfo: metaResponse
+          };
+          
+          this.cacheBootstrapData(metaBootstrap);
+          return metaBootstrap;
+        } else {
+          this.logger.warn('Meta info response missing version - Protect may not be available');
+        }
+      } catch (metaError) {
+        const metaErrorMessage = metaError?.message || String(metaError);
+        this.logger.debug('Meta info authentication failed:', metaErrorMessage);
+      }
+      
+      // Step 2c: Try Protect subscribe/devices endpoint as alternative
+      try {
+        this.logger.debug('Step 2c: Trying Protect subscribe/devices endpoint...');
+        const subscribeResponse = await this.makeRequest('GET', '/proxy/protect/v1/subscribe/devices');
+        
+        if (subscribeResponse && Array.isArray(subscribeResponse)) {
+          this.logger.info('✅ UniFi Protect subscribe/devices successful');
+          this.logger.debug('Subscribe devices contains:', {
+            deviceCount: subscribeResponse.length,
+            devices: subscribeResponse.map(d => ({ id: d.id, type: d.type, name: d.name }))
+          });
+          
+          // Create a minimal bootstrap from subscribe devices
+          const subscribeBootstrap = {
+            accessKey: this.config.apiKey,
+            lastUpdateId: null,
+            cameras: subscribeResponse.filter(d => d.type === 'camera'),
+            nvr: null,
+            protectAvailable: true,
+            networkOnly: false,
+            udmPro: true,
+            subscribeDevices: subscribeResponse
+          };
+          
+          this.cacheBootstrapData(subscribeBootstrap);
+          return subscribeBootstrap;
+        } else {
+          this.logger.warn('Subscribe devices response not an array - Protect may not be available');
+        }
+      } catch (subscribeError) {
+        const subscribeErrorMessage = subscribeError?.message || String(subscribeError);
+        this.logger.debug('Subscribe devices authentication failed:', subscribeErrorMessage);
+      }
+      
+      // Step 3: Try UDM Pro specific authentication (session-based)
+      try {
+        this.logger.debug('Step 3: Trying UDM Pro session-based authentication...');
+        
+        // First, try to get a session token
+        const loginResponse = await this.makeRequest('POST', '/api/auth/login', {
+          username: this.config.username,
+          password: this.config.password,
+          remember: true
+        });
+        
+        if (loginResponse && loginResponse.data && loginResponse.data.mfaCookie) {
+          this.logger.info('UDM Pro detected - 2FA authentication required');
+          this.logger.warn('2FA authentication is required for UDM Pro Protect access');
+          this.logger.warn('Please complete 2FA authentication manually in the web interface');
+          this.logger.warn('Then use session-based authentication for Protect API access');
+          
+          // Store the MFA cookie for potential future use
+          this.mfaCookie = loginResponse.data.mfaCookie;
+          
+          // For now, we'll fall back to Network API only
+          this.logger.info('Falling back to Network API only due to 2FA requirement');
+        } else if (loginResponse && loginResponse.token) {
+          this.logger.info('Successfully logged in to UDM Pro');
+          this.sessionToken = loginResponse.token;
+          this.sessionExpiry = Date.now() + (24 * 60 * 60 * 1000); // 24 hours
+          
+          // Extract cookies from response headers if available
+          if (loginResponse.headers && loginResponse.headers['set-cookie']) {
+            this.cookies = loginResponse.headers['set-cookie'];
+          }
+          
+          // Now try to get the bootstrap JSON with the session token
+          const bootstrapResponse = await this.makeRequest('GET', '/proxy/protect/api/bootstrap', null, {
+            'Authorization': `Bearer ${this.sessionToken}`
+          });
+          
+          if (bootstrapResponse && bootstrapResponse.accessKey) {
+            this.logger.info('Successfully obtained bootstrap data via UDM Pro session');
+            this.cacheBootstrapData(bootstrapResponse);
+            return bootstrapResponse;
+          } else {
+            this.logger.warn('Bootstrap response missing accessKey after UDM Pro login');
+          }
+        } else {
+          this.logger.debug('UDM Pro login failed');
+        }
+      } catch (error) {
+        const errorMessage = error?.message || String(error);
+        this.logger.debug('UDM Pro session authentication failed:', errorMessage);
+      }
+      
+      // Step 4: If Protect fails, try Network API
+      try {
+        this.logger.debug('Step 4: Trying Network API...');
+        const networkTest = await this.makeRequest('GET', '/proxy/network/integration/v1/sites');
+        
+        if (networkTest && networkTest.data) {
+          this.logger.info('✅ Network API accessible - UniFi Network Controller detected');
+          
+          // Create a minimal bootstrap for Network API only
+          const networkBootstrap = {
+            accessKey: this.config.apiKey,
+            lastUpdateId: null,
+            cameras: [],
+            nvr: null,
+            sites: networkTest.data,
+            protectAvailable: false,
+            networkOnly: true,
+            udmPro: true,
+            requires2FA: this.mfaCookie ? true : false
+          };
+          
+          this.cacheBootstrapData(networkBootstrap);
+          return networkBootstrap;
+        }
+      } catch (networkError) {
+        this.logger.debug('Network API test failed:', networkError.message);
+      }
+      
+      this.logger.error('All authentication methods failed');
+      return null;
+    } catch (error) {
+      this.logger.error('Authentication failed:', error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Decode binary WebSocket message according to UniFi Protect protocol
+   * Based on https://github.com/hjdhjd/unifi-protect
+   */
+  decodeBinaryMessage(data) {
+    try {
+      // Convert Buffer to Uint8Array for easier manipulation
+      const buffer = Buffer.isBuffer(data) ? new Uint8Array(data) : new Uint8Array(data);
+      
+      this.logger.debug(`Decoding binary message of length: ${buffer.length}`);
+      
+      if (buffer.length < 8) {
+        this.logger.debug('Message too short to be valid');
+        return null;
+      }
+      
+      // Try to parse as simple JSON first (some messages are just JSON)
+      try {
+        const jsonString = new TextDecoder().decode(buffer);
+        const jsonMessage = JSON.parse(jsonString);
+        this.logger.debug('Message was simple JSON format');
+        return jsonMessage;
+      } catch (error) {
+        // Not JSON, continue with binary protocol parsing
+      }
+      
+      // Parse first header frame (8 bytes)
+      const header1 = this.parseHeaderFrame(buffer, 0);
+      if (!header1) {
+        this.logger.debug('Failed to parse first header frame');
+        return null;
+      }
+      
+      this.logger.debug(`Header 1: type=${header1.packetType}, format=${header1.payloadFormat}, size=${header1.payloadSize}`);
+      
+      // Parse action frame
+      const actionFrameStart = 8;
+      const actionFrameEnd = actionFrameStart + header1.payloadSize;
+      
+      if (buffer.length < actionFrameEnd) {
+        this.logger.debug('Message too short for action frame');
+        return null;
+      }
+      
+      const actionFrame = this.parseActionFrame(buffer, actionFrameStart, header1.payloadSize);
+      if (!actionFrame) {
+        this.logger.debug('Failed to parse action frame');
+        return null;
+      }
+      
+      // Check if there's a second header frame
+      if (buffer.length < actionFrameEnd + 8) {
+        // Single frame message
+        this.logger.debug('Single frame message detected');
+        const result = {
+          action: actionFrame.action,
+          id: actionFrame.id,
+          modelKey: actionFrame.modelKey,
+          newUpdateId: actionFrame.newUpdateId,
+          data: actionFrame.data || actionFrame
+        };
+        this.logger.debug(`Single frame message parsed: ${result.action} - ${result.modelKey || 'unknown'}`);
+        return result;
+      }
+      
+      // Parse second header frame
+      const header2 = this.parseHeaderFrame(buffer, actionFrameEnd);
+      if (!header2) {
+        this.logger.debug('Failed to parse second header frame');
+        return null;
+      }
+      
+      this.logger.debug(`Header 2: type=${header2.packetType}, format=${header2.payloadFormat}, size=${header2.payloadSize}`);
+      
+      // Parse data frame
+      const dataFrameStart = actionFrameEnd + 8;
+      const dataFrame = this.parseDataFrame(buffer, dataFrameStart, header2);
+      if (!dataFrame) {
+        this.logger.debug('Failed to parse data frame');
+        return null;
+      }
+      
+      const result = {
+        action: actionFrame.action,
+        id: actionFrame.id,
+        modelKey: actionFrame.modelKey,
+        newUpdateId: actionFrame.newUpdateId,
+        data: dataFrame
+      };
+      
+      this.logger.debug(`Multi-frame message parsed: ${result.action} - ${result.modelKey || 'unknown'} - data size: ${JSON.stringify(dataFrame).length}`);
+      return result;
+      
+    } catch (error) {
+      this.logger.error('Error decoding binary message:', error.message);
+      return null;
+    }
+  }
+  
+  /**
+   * Parse header frame (8 bytes)
+   */
+  parseHeaderFrame(buffer, offset) {
+    if (buffer.length < offset + 8) return null;
+    
+    const packetType = buffer[offset];
+    const payloadFormat = buffer[offset + 1];
+    const deflated = buffer[offset + 2];
+    const unknown = buffer[offset + 3];
+    
+    // Payload size (4 bytes, big endian)
+    const payloadSize = (buffer[offset + 4] << 24) | 
+                       (buffer[offset + 5] << 16) | 
+                       (buffer[offset + 6] << 8) | 
+                       buffer[offset + 7];
+    
+    return {
+      packetType,
+      payloadFormat,
+      deflated: deflated === 1,
+      unknown,
+      payloadSize
+    };
+  }
+  
+  /**
+   * Parse action frame
+   */
+  parseActionFrame(buffer, offset, size) {
+    try {
+      const payload = buffer.slice(offset, offset + size);
+      const jsonString = new TextDecoder().decode(payload);
+      
+      this.logger.debug(`Action frame JSON (${jsonString.length} chars): ${jsonString.substring(0, 200)}...`);
+      
+      const parsed = JSON.parse(jsonString);
+      
+      // Handle different action frame formats
+      if (parsed.action) {
+        this.logger.debug(`Action frame parsed: ${parsed.action} - ${parsed.modelKey || 'unknown'} - ${parsed.id || 'no-id'}`);
+        return parsed;
+      } else if (parsed.newUpdateId) {
+        // Some messages only have newUpdateId
+        const result = {
+          action: 'update',
+          newUpdateId: parsed.newUpdateId,
+          ...parsed
+        };
+        this.logger.debug(`Action frame parsed (newUpdateId): update - ${parsed.newUpdateId}`);
+        return result;
+      } else if (parsed.modelKey) {
+        // Some messages have modelKey but no action
+        const result = {
+          action: 'update',
+          modelKey: parsed.modelKey,
+          ...parsed
+        };
+        this.logger.debug(`Action frame parsed (modelKey): update - ${parsed.modelKey}`);
+        return result;
+      } else {
+        // Generic message
+        const result = {
+          action: 'message',
+          data: parsed
+        };
+        this.logger.debug(`Action frame parsed (generic): message - ${JSON.stringify(parsed).substring(0, 100)}...`);
+        return result;
+      }
+    } catch (error) {
+      this.logger.error('Error parsing action frame:', error.message);
+      this.logger.debug('Raw action frame data:', buffer.slice(offset, offset + Math.min(size, 100)));
+      return null;
+    }
+  }
+  
+  /**
+   * Parse data frame
+   */
+  parseDataFrame(buffer, offset, header) {
+    try {
+      const payload = buffer.slice(offset, offset + header.payloadSize);
+      
+      // Handle compression
+      let data = payload;
+      if (header.deflated) {
+        const zlib = require('zlib');
+        data = zlib.inflateSync(payload);
+      }
+      
+      // Parse based on payload format
+      switch (header.payloadFormat) {
+        case 1: // JSON
+          const jsonString = new TextDecoder().decode(data);
+          return JSON.parse(jsonString);
+        case 2: // UTF8 string
+          return new TextDecoder().decode(data);
+        case 3: // Node Buffer
+          return data;
+        default:
+          this.logger.warn(`Unknown payload format: ${header.payloadFormat}`);
+          return null;
+      }
+    } catch (error) {
+      this.logger.error('Error parsing data frame:', error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Cache bootstrap data and initialize device states
+   */
+  cacheBootstrapData(bootstrapData) {
+    if (!bootstrapData) return;
+    
+    this.bootstrapData = bootstrapData;
+    this.lastUpdateId = bootstrapData.lastUpdateId;
+    this.bootstrapCache.set('data', {
+      data: bootstrapData,
+      timestamp: Date.now()
+    });
+    
+    // Cache individual devices by modelKey and id
+    const modelKeys = ['cameras', 'nvr', 'sensors', 'users', 'bridges', 'lights', 'liveviews', 'viewers'];
+    
+    modelKeys.forEach(key => {
+      if (bootstrapData[key]) {
+        const devices = Array.isArray(bootstrapData[key]) ? bootstrapData[key] : [bootstrapData[key]];
+        devices.forEach(device => {
+          const cacheKey = `${key}:${device.id}`;
+          this.bootstrapCache.set(cacheKey, {
+            data: device,
+            timestamp: Date.now()
+          });
+          
+          // Initialize device state
+          this.deviceStates.set(device.id, {
+            ...device,
+            lastUpdate: Date.now(),
+            lastEventId: null
+          });
+          
+          // Cache cameras separately for easy access
+          if (key === 'cameras') {
+            this.cameras.set(device.id, {
+              ...device,
+              lastUpdated: Date.now()
+            });
+          }
+        });
+      }
+    });
+    
+    this.logger.info(`Cached bootstrap data with ${this.bootstrapCache.size} entries`);
+  }
+  
+  /**
+   * Get cached device data
+   */
+  getCachedDevice(modelKey, deviceId) {
+    const cacheKey = `${modelKey}:${deviceId}`;
+    const cached = this.bootstrapCache.get(cacheKey);
+    
+    if (cached && Date.now() - cached.timestamp < this.bootstrapExpiry) {
+      return cached.data;
+    }
+    
+    return null;
+  }
+  
+  /**
+   * Update device state from WebSocket event
+   */
+  updateDeviceState(deviceId, updateData) {
+    const currentState = this.deviceStates.get(deviceId);
+    if (!currentState) return;
+    
+    const updatedState = {
+      ...currentState,
+      ...updateData,
+      lastUpdate: Date.now()
+    };
+    
+    this.deviceStates.set(deviceId, updatedState);
+    
+    // Update camera cache if it's a camera
+    if (this.cameras.has(deviceId)) {
+      this.cameras.set(deviceId, {
+        ...updatedState,
+        lastUpdated: Date.now()
+      });
+    }
+    
+    return updatedState;
+  }
+  
+  /**
+   * Check if event is duplicate
+   */
+  isDuplicateEvent(deviceId, eventId) {
+    const lastEventId = this.lastEventIds.get(deviceId);
+    if (lastEventId === eventId) {
+      return true;
+    }
+    
+    this.lastEventIds.set(deviceId, eventId);
+    return false;
+  }
+
+  /**
+   * Start video stream session
+   */
+  async startVideoStream(parameters) {
+    const { cameraId, quality = 'high', format = 'rtsp', duration = 30 } = parameters;
+    
+    const streamUrl = await this.getStreamUrl({ cameraId, quality, format, duration });
+    
+    const sessionId = `stream_${cameraId}_${Date.now()}`;
+    const session = {
+      id: sessionId,
+      cameraId: cameraId,
+      url: streamUrl,
+      format: format,
+      quality: quality,
+      startTime: Date.now(),
+      duration: duration,
+      active: true
+    };
+    
+    this.streamSessions.set(sessionId, session);
+    
+    // Auto-cleanup session after duration
+    setTimeout(() => {
+      this.stopVideoStream(sessionId);
+    }, duration * 1000);
+    
+    this.logger.info(`Started video stream session ${sessionId} for camera ${cameraId}`);
+    
+    this.emit('stream:started', session);
+    return session;
+  }
+  
+  /**
+   * Stop video stream session
+   */
+  stopVideoStream(sessionId) {
+    const session = this.streamSessions.get(sessionId);
+    if (!session) {
+      this.logger.warn(`Stream session not found: ${sessionId}`);
+      return;
+    }
+    
+    session.active = false;
+    session.endTime = Date.now();
+    this.streamSessions.delete(sessionId);
+    
+    this.logger.info(`Stopped video stream session ${sessionId}`);
+    this.emit('stream:stopped', session);
+  }
+  
+  /**
+   * Get active stream sessions
+   */
+  getActiveStreams() {
+    return Array.from(this.streamSessions.values()).filter(session => session.active);
+  }
+  
+  /**
+   * Get camera snapshot
+   */
+  async getCameraSnapshot(parameters) {
+    const { cameraId, highQuality = 'false' } = parameters;
+    
+    if (!cameraId) {
+      throw new Error('Camera ID is required for snapshot');
+    }
+    
+    try {
+      const response = await this.makeRequest('GET', `/proxy/protect/integration/v1/cameras/${cameraId}/snapshot?highQuality=${highQuality}`, null, {
+        'Accept': 'image/jpeg'
+      });
+      
+      if (response) {
+        this.logger.debug(`Got snapshot for camera ${cameraId}`);
+        return response;
+      } else {
+        throw new Error('No snapshot data in response');
+      }
+    } catch (error) {
+      this.logger.error(`Failed to get snapshot for camera ${cameraId}:`, error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Execute camera snapshot operations
+   */
+  async executeCameraSnapshot(operation, parameters) {
+    switch (operation) {
+      case 'read':
+        return await this.getCameraSnapshot(parameters);
+      default:
+        throw new Error(`Unknown snapshot operation: ${operation}`);
+    }
+  }
+  
+  /**
+   * Execute smart detection events
+   */
+  async executeSmartEvents(operation, parameters) {
+    switch (operation) {
+      case 'subscribe':
+        return await this.subscribeToSmartEvents(parameters);
+      case 'unsubscribe':
+        return await this.unsubscribeFromSmartEvents(parameters);
+      default:
+        throw new Error(`Unknown smart events operation: ${operation}`);
+    }
+  }
+  
+  /**
+   * Execute doorbell ring events
+   */
+  async executeRingEvents(operation, parameters) {
+    switch (operation) {
+      case 'subscribe':
+        return await this.subscribeToRingEvents(parameters);
+      case 'unsubscribe':
+        return await this.unsubscribeFromRingEvents(parameters);
+      default:
+        throw new Error(`Unknown ring events operation: ${operation}`);
+    }
+  }
+  
+  /**
+   * Execute real-time events
+   */
+  async executeRealtimeEvents(operation, parameters) {
+    switch (operation) {
+      case 'subscribe':
+        return await this.subscribeToRealtimeEvents(parameters);
+      case 'unsubscribe':
+        return await this.unsubscribeFromRealtimeEvents(parameters);
+      default:
+        throw new Error(`Unknown realtime events operation: ${operation}`);
+    }
+  }
+  
+  /**
+   * Subscribe to doorbell ring events
+   */
+  async subscribeToRingEvents(parameters) {
+    const { cameraId } = parameters;
+    
+    if (!cameraId) {
+      throw new Error('Camera ID is required for ring events subscription');
+    }
+    
+    const subscriptionId = `ring_${cameraId}`;
+    this.eventSubscriptions.set(subscriptionId, {
+      type: 'ring',
+      cameraId,
+      active: true,
+      timestamp: Date.now()
+    });
+    
+    this.logger.info(`Subscribed to ring events for camera ${cameraId}`);
+    return { subscriptionId, status: 'subscribed' };
+  }
+  
+  /**
+   * Unsubscribe from doorbell ring events
+   */
+  async unsubscribeFromRingEvents(parameters) {
+    const { cameraId } = parameters;
+    const subscriptionId = `ring_${cameraId}`;
+    
+    if (this.eventSubscriptions.has(subscriptionId)) {
+      this.eventSubscriptions.delete(subscriptionId);
+      this.logger.info(`Unsubscribed from ring events for camera ${cameraId}`);
+      return { subscriptionId, status: 'unsubscribed' };
+    }
+    
+    throw new Error(`No ring events subscription found for camera ${cameraId}`);
+  }
+  
+  /**
+   * Subscribe to real-time events
+   */
+  async subscribeToRealtimeEvents(parameters) {
+    const { eventTypes = ['motion', 'smart', 'ring', 'recording', 'connection'], deviceIds = [] } = parameters;
+    
+    const subscriptionId = `realtime_${Date.now()}`;
+    this.eventSubscriptions.set(subscriptionId, {
+      type: 'realtime',
+      eventTypes,
+      deviceIds,
+      active: true,
+      timestamp: Date.now()
+    });
+    
+    this.logger.info(`Subscribed to real-time events: ${eventTypes.join(', ')}`);
+    return { subscriptionId, status: 'subscribed' };
+  }
+  
+  /**
+   * Unsubscribe from real-time events
+   */
+  async unsubscribeFromRealtimeEvents(parameters) {
+    const { subscriptionId } = parameters;
+    
+    if (this.eventSubscriptions.has(subscriptionId)) {
+      this.eventSubscriptions.delete(subscriptionId);
+      this.logger.info(`Unsubscribed from real-time events: ${subscriptionId}`);
+      return { subscriptionId, status: 'unsubscribed' };
+    }
+    
+    throw new Error(`No real-time events subscription found: ${subscriptionId}`);
+  }
+
+  /**
+   * Handle 2FA authentication for UDM Pro
+   * This method can be called after initial login to complete 2FA
+   */
+  async complete2FA(authenticatorId, code) {
+    try {
+      this.logger.debug('Completing 2FA authentication...');
+      
+      const response = await this.makeRequest('POST', '/api/auth/mfa', {
+        authenticatorId: authenticatorId,
+        code: code
+      });
+      
+      if (response && response.token) {
+        this.logger.info('✅ 2FA authentication successful');
+        this.sessionToken = response.token;
+        this.sessionExpiry = Date.now() + (24 * 60 * 60 * 1000); // 24 hours
+        this.requires2FA = false;
+        
+        // Now try to get Protect bootstrap data
+        const bootstrapResponse = await this.makeRequest('GET', '/proxy/protect/api/bootstrap', null, {
+          'Authorization': `Bearer ${this.sessionToken}`
+        });
+        
+        if (bootstrapResponse && bootstrapResponse.accessKey) {
+          this.logger.info('Successfully obtained Protect bootstrap data after 2FA');
+          this.cacheBootstrapData(bootstrapResponse);
+          return bootstrapResponse;
+        }
+      }
+      
+      return null;
+    } catch (error) {
+      this.logger.error('2FA authentication failed:', error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Get available 2FA authenticators for UDM Pro
+   */
+  async get2FAAuthenticators() {
+    try {
+      const response = await this.makeRequest('POST', '/api/auth/login', {
+        username: this.config.username,
+        password: this.config.password,
+        remember: true
+      });
+      
+      if (response && response.data && response.data.authenticators) {
+        return response.data.authenticators;
+      }
+      
+      return [];
+    } catch (error) {
+      this.logger.error('Failed to get 2FA authenticators:', error.message);
+      return [];
+    }
+  }
+
+  /**
+   * Session-based authentication using cookies and CSRF tokens
+   * This method mimics the browser authentication flow
+   */
+  async authenticateWithSession() {
+    try {
+      this.logger.debug('Attempting session-based authentication...');
+      
+      const { host, port, protocol, username, password } = this.config;
+      const baseUrl = `${protocol}://${host}:${port}`;
+      
+      // Step 1: Get CSRF token
+      this.logger.debug('Step 1: Getting CSRF token...');
+      const csrfResponse = await axios.get(`${baseUrl}/api/auth/csrf`, {
+        httpsAgent: new https.Agent({ rejectUnauthorized: this.config.verifySSL }),
+        timeout: 10000,
+        validateStatus: (status) => status < 500
+      });
+      
+      if (!csrfResponse.data || !csrfResponse.data.csrfToken) {
+        throw new Error('Failed to get CSRF token');
+      }
+      
+      const csrfToken = csrfResponse.data.csrfToken;
+      this.logger.debug('CSRF token obtained');
+      
+      // Step 2: Login with username/password
+      this.logger.debug('Step 2: Logging in with credentials...');
+      const loginResponse = await axios.post(`${baseUrl}/api/auth/login`, {
+        username: username,
+        password: password,
+        remember: true
+      }, {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': csrfToken
+        },
+        httpsAgent: new https.Agent({ rejectUnauthorized: this.config.verifySSL }),
+        timeout: 10000,
+        validateStatus: (status) => status < 500
+      });
+      
+      if (!loginResponse.data || !loginResponse.data.token) {
+        throw new Error('Login failed - no token received');
+      }
+      
+      const sessionToken = loginResponse.data.token;
+      this.logger.debug('Login successful, session token obtained');
+      
+      // Step 3: Extract cookies from response
+      const cookies = loginResponse.headers['set-cookie'] || [];
+      const cookieHeader = cookies.map(cookie => cookie.split(';')[0]).join('; ');
+      
+      // Step 4: Test Protect API access with session
+      this.logger.debug('Step 3: Testing Protect API access...');
+      const protectTest = await axios.get(`${baseUrl}/proxy/protect/api/bootstrap`, {
+        headers: {
+          'Authorization': `Bearer ${sessionToken}`,
+          'X-CSRF-Token': csrfToken,
+          'Cookie': cookieHeader,
+          'Accept': 'application/json'
+        },
+        httpsAgent: new https.Agent({ rejectUnauthorized: this.config.verifySSL }),
+        timeout: 10000,
+        validateStatus: (status) => status < 500
+      });
+      
+      if (protectTest.data && protectTest.data.accessKey) {
+        this.logger.info('✅ Session-based authentication successful for Protect API');
+        
+        // Store session data for future requests
+        this.sessionToken = sessionToken;
+        this.sessionExpiry = Date.now() + (24 * 60 * 60 * 1000); // 24 hours
+        this.cookies = cookieHeader;
+        this.csrfToken = csrfToken;
+        
+        return {
+          ...protectTest.data,
+          sessionToken,
+          cookies: cookieHeader,
+          csrfToken,
+          protectAvailable: true,
+          networkOnly: false,
+          udmPro: true
+        };
+      } else {
+        throw new Error('Protect API test failed - no accessKey in response');
+      }
+      
+    } catch (error) {
+      this.logger.debug('Session-based authentication failed:', error.message);
+      throw error;
+    }
   }
 }
 

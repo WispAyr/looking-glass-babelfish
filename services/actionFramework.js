@@ -41,6 +41,7 @@ class ActionFramework {
     this.registerAction('send_email', this.sendEmail.bind(this));
     this.registerAction('send_sms', this.sendSMS.bind(this));
     this.registerAction('slack_notify', this.slackNotify.bind(this));
+    this.registerAction('telegram_send', this.telegramSend.bind(this));
     
     // Connector Actions
     this.registerAction('connector_execute', this.connectorExecute.bind(this));
@@ -246,6 +247,73 @@ class ActionFramework {
       channel: channel || '#general',
       timestamp: new Date().toISOString()
     };
+  }
+  
+  /**
+   * Telegram Send Action
+   */
+  async telegramSend(action, context) {
+    const { connectorId, operation, chatId, text, photo, document, location, parseMode, keyboard } = action.parameters || {};
+    
+    if (!connectorId) {
+      throw new Error('Telegram send requires connectorId');
+    }
+    
+    if (!operation) {
+      throw new Error('Telegram send requires operation');
+    }
+    
+    const connector = context.connectors?.get(connectorId);
+    if (!connector) {
+      throw new Error(`Telegram connector not found: ${connectorId}`);
+    }
+    
+    // Prepare parameters based on operation
+    const parameters = {
+      chatId,
+      parseMode
+    };
+    
+    switch (operation) {
+      case 'text':
+        if (!text) {
+          throw new Error('Text operation requires text parameter');
+        }
+        parameters.text = text;
+        break;
+      case 'photo':
+        if (!photo) {
+          throw new Error('Photo operation requires photo parameter');
+        }
+        parameters.photo = photo;
+        if (text) parameters.caption = text;
+        break;
+      case 'document':
+        if (!document) {
+          throw new Error('Document operation requires document parameter');
+        }
+        parameters.document = document;
+        if (text) parameters.caption = text;
+        break;
+      case 'location':
+        if (!location || !location.latitude || !location.longitude) {
+          throw new Error('Location operation requires latitude and longitude');
+        }
+        parameters.latitude = location.latitude;
+        parameters.longitude = location.longitude;
+        break;
+      default:
+        throw new Error(`Unknown Telegram operation: ${operation}`);
+    }
+    
+    // Add keyboard if provided
+    if (keyboard) {
+      parameters.reply_markup = keyboard;
+    }
+    
+    this.logger.debug(`Sending Telegram message: ${operation} to ${chatId}`);
+    
+    return await connector.execute('telegram:send', operation, parameters);
   }
   
   /**

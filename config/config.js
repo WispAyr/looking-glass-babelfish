@@ -20,7 +20,7 @@ const config = {
       host: process.env.UNIFI_HOST || '10.0.0.1',
       port: process.env.UNIFI_PORT || 443,
       protocol: process.env.UNIFI_PROTOCOL || 'https',
-      apiKey: process.env.UNIFI_API_KEY || '6pXhUX2-hnWonI8abmazH4kGRdVLp4r8',
+      apiKey: process.env.UNIFI_API_KEY || 'wye3aapIuxAz2omKg4WFdCSncRBfSzPx',
       username: process.env.UNIFI_USERNAME,
       password: process.env.UNIFI_PASSWORD,
       verifySSL: process.env.UNIFI_VERIFY_SSL !== 'false',
@@ -35,7 +35,7 @@ const config = {
         host: '10.0.0.1',
         port: 443,
         protocol: 'https',
-        apiKey: '6pXhUX2-hnWonI8abmazH4kGRdVLp4r8',
+        apiKey: 'wye3aapIuxAz2omKg4WFdCSncRBfSzPx',
         verifySSL: false,
         description: 'Primary Unifi Protect system in communications van'
       }
@@ -155,6 +155,57 @@ const config = {
     }
   },
 
+  // Analytics and Zone Management Configuration
+  analytics: {
+    enabled: process.env.ANALYTICS_ENABLED !== 'false',
+    zoneManager: {
+      enabled: process.env.ZONE_MANAGER_ENABLED !== 'false',
+      maxZones: parseInt(process.env.ZONE_MANAGER_MAX_ZONES) || 100,
+      maxZoneCameras: parseInt(process.env.ZONE_MANAGER_MAX_CAMERAS) || 50,
+      analyticsRetention: parseInt(process.env.ZONE_ANALYTICS_RETENTION) || 1000
+    },
+    analyticsEngine: {
+      enabled: process.env.ANALYTICS_ENGINE_ENABLED !== 'false',
+      maxEvents: parseInt(process.env.ANALYTICS_MAX_EVENTS) || 10000,
+      maxPlateTracking: parseInt(process.env.ANALYTICS_MAX_PLATES) || 1000,
+      speedCalculation: {
+        enabled: process.env.SPEED_CALCULATION_ENABLED !== 'false',
+        minTimeBetweenDetections: parseInt(process.env.SPEED_MIN_TIME) || 1000, // 1 second
+        maxTimeBetweenDetections: parseInt(process.env.SPEED_MAX_TIME) || 300000 // 5 minutes
+      },
+      peopleCounting: {
+        enabled: process.env.PEOPLE_COUNTING_ENABLED !== 'false',
+        maxOccupancyHistory: parseInt(process.env.OCCUPANCY_HISTORY_MAX) || 1000
+      }
+    },
+    plateRecognition: {
+      enabled: process.env.PLATE_RECOGNITION_ENABLED !== 'false',
+      confidenceThreshold: parseFloat(process.env.PLATE_CONFIDENCE_THRESHOLD) || 0.8,
+      maxTrackingTime: parseInt(process.env.PLATE_MAX_TRACKING_TIME) || 3600000 // 1 hour
+    }
+  },
+
+  // Dashboard Configuration
+  dashboard: {
+    enabled: process.env.DASHBOARD_ENABLED !== 'false',
+    refreshInterval: parseInt(process.env.DASHBOARD_REFRESH_INTERVAL) || 5000,
+    maxEvents: parseInt(process.env.DASHBOARD_MAX_EVENTS) || 100,
+    maxAlerts: parseInt(process.env.DASHBOARD_MAX_ALERTS) || 50,
+    retentionHours: parseInt(process.env.DASHBOARD_RETENTION_HOURS) || 24,
+    realTimeUpdates: {
+      enabled: process.env.DASHBOARD_REALTIME_ENABLED !== 'false',
+      maxSubscribers: parseInt(process.env.DASHBOARD_MAX_SUBSCRIBERS) || 100
+    },
+    speedAlerts: {
+      enabled: process.env.SPEED_ALERTS_ENABLED !== 'false',
+      threshold: parseFloat(process.env.SPEED_ALERT_THRESHOLD) || 100, // km/h
+      severity: {
+        high: parseFloat(process.env.SPEED_ALERT_HIGH) || 120,
+        medium: parseFloat(process.env.SPEED_ALERT_MEDIUM) || 100
+      }
+    }
+  },
+
   // Database Configuration (for future use)
   database: {
     enabled: process.env.DB_ENABLED === 'true',
@@ -172,10 +223,14 @@ if (config.server.environment === 'production') {
   config.security.helmet.enabled = true;
   config.logging.level = 'warn';
   config.cache.enabled = true;
+  config.analytics.enabled = true;
+  config.dashboard.enabled = true;
 } else if (config.server.environment === 'development') {
   config.security.helmet.enabled = false;
   config.logging.level = 'debug';
   config.cache.enabled = false;
+  config.analytics.enabled = true;
+  config.dashboard.enabled = true;
 }
 
 module.exports = config; 

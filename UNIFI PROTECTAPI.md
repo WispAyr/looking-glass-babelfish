@@ -1,343 +1,252 @@
-UNIFI PROTECTAPI
+# UniFi Protect API Documentation
 
-API KEY 6pXhUX2-hnWonI8abmazH4kGRdVLp4r8
+## System Information
+- **Host**: 10.0.0.1 (Communications Van)
+- **API Key**: `wye3aapIuxAz2omKg4WFdCSncRBfSzPx`
+- **Protocol**: HTTPS (port 443)
+- **SSL Verification**: Disabled (self-signed certificate)
 
-running on 10.0.0.1 in the communications van
+## Authentication
 
+The UniFi Protect API uses API key authentication with the `X-API-KEY` header. The API key should be included in all requests.
 
+**Headers Required:**
+```
+X-API-KEY: wye3aapIuxAz2omKg4WFdCSncRBfSzPx
+Accept: application/json
+Content-Type: application/json
+```
 
-Example
-curl -k -X GET 'https://10.0.0.1/proxy/network/integration/v1/sites' \
- -H 'X-API-KEY: YOUR_API_KEY' \
- -H 'Accept: application/json'
+## Base URL
 
+**Important**: The correct base path for the new UniFi Protect API is:
+```
+https://10.0.0.1/proxy/protect/integration/v1/
+```
 
-const express = require('express');
-const cors = require('cors');
-const { exec } = require('child_process');
-const { promisify } = require('util');
-const http = require('http');
-const WebSocket = require('ws');
-const path = require('path');
-const { serverConfig } = require('./config');
-const { testConnection, getTables, getTableStructure, executeQuery } = require('./database');
+**Note**: Use "integration" (singular), not "integrations" (plural) as used in the Network API.
 
-const execAsync = promisify(exec);
-const app = express();
+## Available Endpoints
 
-// Create HTTP server
-const server = http.createServer(app);
+### 1. Application Information
+- **GET** `/proxy/protect/integration/v1/meta/info`
+  - Returns application version information
+  - Response: `{"applicationVersion": "6.0.45"}`
 
-// Create WebSocket server
-const wss = new WebSocket.Server({ server });
+### 2. Camera Management
+- **GET** `/proxy/protect/integration/v1/cameras`
+  - Returns list of all cameras
+  - Response: Array of camera objects
 
-// Log management
-const logs = [];
-const MAX_LOGS = 1000;
+- **GET** `/proxy/protect/integration/v1/cameras/{id}`
+  - Returns specific camera details
+  - Parameters: `id` (camera ID)
 
-function addLog(level, message, data = null) {
-    const logEntry = {
-        timestamp: new Date().toISOString(),
-        level,
-        message,
-        data
-    };
-    
-    logs.push(logEntry);
-    
-    // Keep only the last MAX_LOGS entries
-    if (logs.length > MAX_LOGS) {
-        logs.shift();
-    }
-    
-    // Broadcast to all connected WebSocket clients
-    wss.clients.forEach(client => {
-        if (client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify(logEntry));
-        }
-    });
-    
-    // Also log to console
-    console.log(`[${level.toUpperCase()}] ${message}`, data || '');
+- **PATCH** `/proxy/protect/integration/v1/cameras/{id}`
+  - Update camera settings
+  - Parameters: `id` (camera ID)
+  - Body: Camera settings object
+
+### 3. Camera Streams
+- **POST** `/proxy/protect/integration/v1/cameras/{id}/rtsps-stream`
+  - Create RTSPS stream URLs
+  - Parameters: `id` (camera ID)
+  - Body: `{"qualities": ["high", "medium", "low", "package"]}`
+
+- **GET** `/proxy/protect/integration/v1/cameras/{id}/rtsps-stream`
+  - Get existing RTSPS stream URLs
+  - Parameters: `id` (camera ID)
+
+- **DELETE** `/proxy/protect/integration/v1/cameras/{id}/rtsps-stream`
+  - Remove RTSPS streams
+  - Parameters: `id` (camera ID), `qualities` (query parameter)
+
+### 4. Camera Snapshots
+- **GET** `/proxy/protect/integration/v1/cameras/{id}/snapshot`
+  - Get camera snapshot image
+  - Parameters: `id` (camera ID)
+  - Query: `highQuality` (true/false, default: false)
+
+### 5. Camera PTZ Control
+- **POST** `/proxy/protect/integration/v1/cameras/{id}/ptz/patrol/start/{slot}`
+  - Start PTZ patrol
+  - Parameters: `id` (camera ID), `slot` (0-4)
+
+- **POST** `/proxy/protect/integration/v1/cameras/{id}/ptz/patrol/stop`
+  - Stop PTZ patrol
+  - Parameters: `id` (camera ID)
+
+- **POST** `/proxy/protect/integration/v1/cameras/{id}/ptz/goto/{slot}`
+  - Move to PTZ preset
+  - Parameters: `id` (camera ID), `slot` (preset number)
+
+### 6. Camera Talkback
+- **POST** `/proxy/protect/integration/v1/cameras/{id}/talkback-session`
+  - Create talkback session
+  - Parameters: `id` (camera ID)
+
+### 7. Camera Microphone
+- **POST** `/proxy/protect/integration/v1/cameras/{id}/disable-mic-permanently`
+  - Permanently disable microphone
+  - Parameters: `id` (camera ID)
+
+### 8. Lights
+- **GET** `/proxy/protect/integration/v1/lights`
+  - Get all lights
+
+- **GET** `/proxy/protect/integration/v1/lights/{id}`
+  - Get specific light details
+  - Parameters: `id` (light ID)
+
+- **PATCH** `/proxy/protect/integration/v1/lights/{id}`
+  - Update light settings
+  - Parameters: `id` (light ID)
+
+### 9. Sensors
+- **GET** `/proxy/protect/integration/v1/sensors`
+  - Get all sensors
+
+- **GET** `/proxy/protect/integration/v1/sensors/{id}`
+  - Get specific sensor details
+  - Parameters: `id` (sensor ID)
+
+- **PATCH** `/proxy/protect/integration/v1/sensors/{id}`
+  - Update sensor settings
+  - Parameters: `id` (sensor ID)
+
+### 10. NVR Information
+- **GET** `/proxy/protect/integration/v1/nvrs`
+  - Get NVR details
+
+### 11. Viewers
+- **GET** `/proxy/protect/integration/v1/viewers`
+  - Get all viewers
+
+- **GET** `/proxy/protect/integration/v1/viewers/{id}`
+  - Get specific viewer details
+  - Parameters: `id` (viewer ID)
+
+- **PATCH** `/proxy/protect/integration/v1/viewers/{id}`
+  - Update viewer settings
+  - Parameters: `id` (viewer ID)
+
+### 12. Live Views
+- **GET** `/proxy/protect/integration/v1/liveviews`
+  - Get all live views
+
+- **GET** `/proxy/protect/integration/v1/liveviews/{id}`
+  - Get specific live view details
+  - Parameters: `id` (live view ID)
+
+- **PATCH** `/proxy/protect/integration/v1/liveviews/{id}`
+  - Update live view configuration
+  - Parameters: `id` (live view ID)
+
+- **POST** `/proxy/protect/integration/v1/liveviews`
+  - Create new live view
+
+### 13. Chimes
+- **GET** `/proxy/protect/integration/v1/chimes`
+  - Get all chimes
+
+- **GET** `/proxy/protect/integration/v1/chimes/{id}`
+  - Get specific chime details
+  - Parameters: `id` (chime ID)
+
+- **PATCH** `/proxy/protect/integration/v1/chimes/{id}`
+  - Update chime settings
+  - Parameters: `id` (chime ID)
+
+### 14. Alarm Manager
+- **POST** `/proxy/protect/integration/v1/alarm-manager/webhook/{id}`
+  - Send webhook to alarm manager
+  - Parameters: `id` (alarm trigger ID)
+
+### 15. Device Asset Files
+- **GET** `/proxy/protect/integration/v1/files/{fileType}`
+  - Get device asset files
+  - Parameters: `fileType` (e.g., "animations")
+
+- **POST** `/proxy/protect/integration/v1/files/{fileType}`
+  - Upload device asset file
+  - Parameters: `fileType` (e.g., "animations")
+  - Body: multipart/form-data
+
+## WebSocket Endpoints
+
+### Real-time Updates
+**Note**: WebSocket endpoints may require different authentication than REST API endpoints.
+
+The following WebSocket endpoints are documented:
+- **WebSocket** `/proxy/protect/v1/subscribe/devices`
+  - Subscribe to device changes
+  - Returns 302 redirect when accessed via HTTP (expected for WebSocket)
+
+- **WebSocket** `/proxy/protect/v1/subscribe/events`
+  - Subscribe to Protect events
+  - Returns 302 redirect when accessed via HTTP (expected for WebSocket)
+
+**Testing**: These endpoints return 302 redirects when accessed via HTTP, which is expected behavior for WebSocket endpoints. They should work when accessed via WebSocket protocol (wss://).
+
+## Event Handling
+
+**WebSocket Events**: The API documentation shows that real-time events are available via WebSocket subscriptions.
+
+**Event Types**: Based on the documentation, events include:
+- Motion events
+- Smart detection events  
+- Ring events (doorbells)
+- Recording events
+- Connection events
+
+**Note**: WebSocket connections may require session-based authentication rather than API key authentication.
+
+## Testing Examples
+
+### Test Connection
+```bash
+curl -k -H "X-API-KEY: wye3aapIuxAz2omKg4WFdCSncRBfSzPx" \
+     -H "Accept: application/json" \
+     https://10.0.0.1/proxy/protect/integration/v1/meta/info
+```
+
+### Get Cameras
+```bash
+curl -k -H "X-API-KEY: wye3aapIuxAz2omKg4WFdCSncRBfSzPx" \
+     -H "Accept: application/json" \
+     https://10.0.0.1/proxy/protect/integration/v1/cameras
+```
+
+### Get Camera Snapshot
+```bash
+curl -k -H "X-API-KEY: wye3aapIuxAz2omKg4WFdCSncRBfSzPx" \
+     -H "Accept: image/jpeg" \
+     https://10.0.0.1/proxy/protect/integration/v1/cameras/{cameraId}/snapshot
+```
+
+## Notes
+
+1. **Events Endpoint**: The `/events` endpoint appears to be unavailable in the current API version (404 error). Real-time events may only be available via WebSocket subscriptions.
+
+2. **SSL Certificate**: The system uses a self-signed certificate, so SSL verification should be disabled in client applications.
+
+3. **Rate Limiting**: The API includes rate limiting headers. Respect the rate limits to avoid being blocked.
+
+4. **API Version**: This documentation is based on UniFi Protect API version 6.0.45.
+
+## Error Responses
+
+Common error responses:
+- **404**: Endpoint not found
+- **401**: Unauthorized (invalid API key)
+- **500**: Internal server error
+
+Error response format:
+```json
+{
+  "error": "Error message",
+  "name": "ERROR_TYPE",
+  "entity": "entity_type",
+  "id": "entity_id"
 }
-
-// WebSocket connection handling
-wss.on('connection', (ws) => {
-    console.log('🔌 WebSocket client connected');
-    
-    // Send existing logs to new client
-    ws.send(JSON.stringify({ type: 'init', logs }));
-    
-    ws.on('close', () => {
-        console.log('🔌 WebSocket client disconnected');
-    });
-});
-
-// Middleware
-app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// Serve static files
-app.use(express.static(path.join(__dirname, 'public')));
-
-// Aggressive port clearing function
-async function clearPort(port) {
-    try {
-        addLog('info', `Clearing port ${port}...`);
-        
-        // Find processes using the port
-        const { stdout } = await execAsync(`lsof -ti:${port}`);
-        
-        if (stdout.trim()) {
-            const pids = stdout.trim().split('\n');
-            addLog('info', `Found ${pids.length} process(es) using port ${port}: ${pids.join(', ')}`);
-            
-            // Kill all processes using the port
-            for (const pid of pids) {
-                try {
-                    await execAsync(`kill -9 ${pid}`);
-                    addLog('info', `Killed process ${pid}`);
-                } catch (err) {
-                    addLog('warn', `Failed to kill process ${pid}: ${err.message}`);
-                }
-            }
-            
-            // Wait a moment for processes to fully terminate
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            addLog('info', `Port ${port} cleared successfully`);
-        } else {
-            addLog('info', `Port ${port} is already free`);
-        }
-    } catch (error) {
-        // If lsof fails, it usually means no processes are using the port
-        addLog('info', `Port ${port} appears to be free (no processes found)`);
-    }
-}
-
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'OK',
-    timestamp: new Date().toISOString(),
-    service: 'ParkWise Automations Server',
-    port: serverConfig.port
-  });
-});
-
-// Get logs endpoint
-app.get('/api/logs', (req, res) => {
-    res.json({
-        success: true,
-        logs: logs
-    });
-});
-
-// Clear logs endpoint
-app.post('/api/logs/clear', (req, res) => {
-    logs.length = 0;
-    addLog('info', 'Logs cleared');
-    res.json({
-        success: true,
-        message: 'Logs cleared'
-    });
-});
-
-// Test database connection
-app.get('/api/db/test', async (req, res) => {
-  try {
-    const isConnected = await testConnection();
-    addLog('info', `Database connection test: ${isConnected ? 'SUCCESS' : 'FAILED'}`);
-    res.json({
-      success: isConnected,
-      message: isConnected ? 'Database connection successful' : 'Database connection failed'
-    });
-  } catch (error) {
-    addLog('error', 'Database connection test failed', error.message);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Get all tables
-app.get('/api/db/tables', async (req, res) => {
-  try {
-    const result = await getTables();
-    if (result.success) {
-      addLog('info', `Retrieved ${result.data.length} tables from database`);
-      res.json({
-        success: true,
-        tables: result.data
-      });
-    } else {
-      addLog('error', 'Failed to get tables', result.error);
-      res.status(500).json({
-        success: false,
-        error: result.error
-      });
-    }
-  } catch (error) {
-    addLog('error', 'Error getting tables', error.message);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Get table structure
-app.get('/api/db/tables/:tableName/structure', async (req, res) => {
-  try {
-    const { tableName } = req.params;
-    const result = await getTableStructure(tableName);
-    if (result.success) {
-      addLog('info', `Retrieved structure for table: ${tableName}`);
-      res.json({
-        success: true,
-        tableName,
-        structure: result.data
-      });
-    } else {
-      addLog('error', `Failed to get structure for table ${tableName}`, result.error);
-      res.status(500).json({
-        success: false,
-        error: result.error
-      });
-    }
-  } catch (error) {
-    addLog('error', `Error getting table structure for ${req.params.tableName}`, error.message);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Execute custom query (for development/testing)
-app.post('/api/db/query', async (req, res) => {
-  try {
-    const { sql, params = [] } = req.body;
-    
-    if (!sql) {
-      return res.status(400).json({
-        success: false,
-        error: 'SQL query is required'
-      });
-    }
-    
-    addLog('info', 'Executing custom query', { sql: sql.substring(0, 100) + '...' });
-    const result = await executeQuery(sql, params);
-    res.json(result);
-  } catch (error) {
-    addLog('error', 'Error executing custom query', error.message);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Event generation endpoints
-app.post('/api/events/generate', async (req, res) => {
-  try {
-    const { startDate, endDate, clearFlaggedEvents = false } = req.body;
-    
-    if (!startDate || !endDate) {
-      return res.status(400).json({
-        success: false,
-        error: 'startDate and endDate are required'
-      });
-    }
-    
-    addLog('info', 'Starting event generation', { startDate, endDate, clearFlaggedEvents });
-    
-    // Import the event generation module
-    const { generateParkingEvents } = require('./eventGeneration');
-    
-    const events = await generateParkingEvents(startDate, endDate, clearFlaggedEvents, (progress) => {
-      addLog('info', `Event generation progress: ${progress}%`);
-    });
-    
-    addLog('info', 'Event generation completed', { eventsGenerated: events ? events.length : 0 });
-    
-    res.json({
-      success: true,
-      eventsGenerated: events ? events.length : 0,
-      events: events
-    });
-  } catch (error) {
-    addLog('error', 'Event generation failed', error.message);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Smart event generation endpoint
-app.post('/api/events/generate-smart', async (req, res) => {
-  try {
-    const { startDate, endDate, dryRun = true } = req.body;
-    
-    if (!startDate || !endDate) {
-      return res.status(400).json({
-        success: false,
-        error: 'startDate and endDate are required'
-      });
-    }
-    
-    addLog('info', 'Starting smart event generation', { startDate, endDate, dryRun });
-    
-    // Import the smart event generation module
-    const { generateParkingEventsSmart } = require('./eventGeneration');
-    
-    const summary = await generateParkingEventsSmart(startDate, endDate, dryRun, (progress, message) => {
-      addLog('info', message || `Smart event generation progress: ${progress}%`);
-    });
-    
-    addLog('info', 'Smart event generation completed', summary);
-    
-    res.json({
-      success: true,
-      summary: summary
-    });
-  } catch (error) {
-    addLog('error', 'Smart event generation failed', error.message);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Start server
-async function startServer() {
-  try {
-    // Aggressively clear port 4000 before starting
-    await clearPort(serverConfig.port);
-    
-    // Test database connection on startup
-    addLog('info', 'Testing database connection...');
-    const dbConnected = await testConnection();
-    
-    if (!dbConnected) {
-      addLog('error', 'Failed to connect to database. Server will start but database features may not work.');
-    }
-    
-    server.listen(serverConfig.port, () => {
-      addLog('info', `ParkWise Automations Server running on port ${serverConfig.port}`);
-      addLog('info', `Environment: ${serverConfig.nodeEnv}`);
-      addLog('info', `Health check: http://localhost:${serverConfig.port}/health`);
-      addLog('info', `Database test: http://localhost:${serverConfig.port}/api/db/test`);
-      addLog('info', `Event generation: http://localhost:${serverConfig.port}/api/events/generate`);
-      addLog('info', `Web UI: http://localhost:${serverConfig.port}`);
-    });
-  } catch (error) {
-    addLog('error', 'Failed to start server', error.message);
-    process.exit(1);
-  }
-}
-
-startServer(); 
+``` 

@@ -9,9 +9,7 @@
         "host": "10.0.0.1",
         "port": 443,
         "protocol": "https",
-        "username": "",
-        "password": "",
-        "apiKey": "6pXhUX2-hnWonI8abmazH4kGRdVLp4r",
+        "apiKey": "wye3aapIuxAz2omKg4WFdCSncRBfSzPx",
         "verifySSL": false,
         "autoDiscovery": {
           "enabled": true,
@@ -28,11 +26,36 @@
         "entities": {
           "enabled": true,
           "autoCreate": true,
-          "autoUpdate": true,
-          "metadata": {
-            "source": "unifi-protect",
-            "connectorId": "van-unifi"
+          "syncInterval": 60000
+        },
+        "events": {
+          "enabled": true,
+          "types": [
+            "motion",
+            "smart",
+            "recording",
+            "connection"
+          ],
+          "webSocket": {
+            "enabled": true,
+            "reconnectInterval": 5000,
+            "maxReconnectAttempts": 10
+          },
+          "polling": {
+            "enabled": true,
+            "interval": 30000
           }
+        },
+        "streaming": {
+          "enabled": true,
+          "defaultQuality": "high",
+          "defaultFormat": "rtsps",
+          "maxConcurrentStreams": 5
+        },
+        "recording": {
+          "enabled": true,
+          "downloadPath": "./recordings",
+          "maxStorageGB": 10
         }
       },
       "capabilities": {
@@ -58,29 +81,6 @@
           "mqtt:subscribe"
         ],
         "disabled": []
-      }
-    },
-    {
-      "id": "telegram-bot",
-      "type": "telegram",
-      "name": "Babelfish Telegram Bot",
-      "description": "Telegram bot for notifications and alerts",
-      "config": {
-        "token": "YOUR_BOT_TOKEN_HERE",
-        "mode": "polling",
-        "pollingInterval": 1000,
-        "pollingTimeout": 10,
-        "maxReconnectAttempts": 5
-      },
-      "capabilities": {
-        "enabled": [
-          "telegram:send",
-          "telegram:receive",
-          "telegram:keyboard"
-        ],
-        "disabled": [
-          "telegram:webhook"
-        ]
       }
     }
   ]

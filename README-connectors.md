@@ -72,6 +72,70 @@ Integrates with Ubiquiti's Unifi Protect video management system.
 }
 ```
 
+### ANKKE DVR Connector
+
+Integrates with ANKKE DVR systems for camera management, video streaming, and recording.
+
+**Capabilities:**
+- `ankke:camera` - Camera management (list, info, enable/disable, snapshots)
+- `ankke:stream` - Video streaming (start/stop, list, URL generation)
+- `ankke:recording` - Recording management (start/stop, list, download/delete)
+- `ankke:motion` - Motion detection (enable/disable, configure, status)
+- `ankke:ptz` - PTZ control (move, stop, preset, zoom)
+- `ankke:event` - Event management (list, subscribe/unsubscribe)
+- `ankke:system` - System management (info, reboot, config)
+
+**Configuration:**
+```json
+{
+  "id": "ankke-dvr-1",
+  "type": "ankke-dvr",
+  "name": "ANKKE DVR System",
+  "config": {
+    "host": "192.168.1.100",
+    "port": 80,
+    "protocol": "http",
+    "username": "admin",
+    "password": "password",
+    "timeout": 10000,
+    "maxReconnectAttempts": 5,
+    "reconnectInterval": 30000
+  }
+}
+```
+
+### Hikvision Connector
+
+Integrates with Hikvision IP cameras, DVRs, and NVRs using ISAPI REST API.
+
+**Capabilities:**
+- `hikvision:camera` - Camera management (list, info, enable/disable, snapshots, config)
+- `hikvision:stream` - Video streaming (start/stop, list, URL, config)
+- `hikvision:recording` - Recording management (start/stop, list, download/delete, schedule)
+- `hikvision:motion` - Motion detection (enable/disable, configure, status, areas)
+- `hikvision:ptz` - PTZ control (move, stop, preset, goto, zoom, list-presets)
+- `hikvision:event` - Event management (list, subscribe/unsubscribe, triggers)
+- `hikvision:system` - System management (info, reboot, config, network, users)
+
+**Configuration:**
+```json
+{
+  "id": "hikvision-1",
+  "type": "hikvision",
+  "name": "Hikvision System",
+  "config": {
+    "host": "192.168.1.100",
+    "port": 80,
+    "protocol": "http",
+    "username": "admin",
+    "password": "password",
+    "timeout": 15000,
+    "maxReconnectAttempts": 5,
+    "reconnectInterval": 30000
+  }
+}
+```
+
 ### MQTT Connector
 
 Provides MQTT publish/subscribe messaging capabilities.
@@ -150,6 +214,18 @@ Provides integration with Telegram Bot API for messaging and notifications.
   }
 }
 ```
+
+### LLM Connector
+
+Large Language Model integration for autonomous system interaction.
+
+**Capabilities:**
+- Multi-provider LLM support (OpenAI, Anthropic, local models)
+- Function calling for autonomous operations
+- Application capability discovery and exposure
+- Conversation management and context awareness
+
+**Documentation:** [LLM Connector](docs/connectors/llm.md)
 
 ## API Examples
 

@@ -71,10 +71,30 @@ class MQTTBroker extends EventEmitter {
   setupEventHandlers() {
     this.client.on('message', (topic, message) => {
       try {
-        const data = JSON.parse(message.toString());
+        const messageString = message.toString();
+        
+        // Skip empty messages
+        if (!messageString.trim()) {
+          return;
+        }
+        
+        // Try to parse as JSON
+        let data;
+        try {
+          data = JSON.parse(messageString);
+        } catch (error) {
+          // If it's not JSON, treat it as a plain text message
+          this.logger.debug(`Received non-JSON MQTT message from ${topic}: ${messageString.substring(0, 100)}`);
+          data = {
+            type: 'text',
+            content: messageString,
+            timestamp: new Date().toISOString()
+          };
+        }
+        
         this.handleIncomingMessage(topic, data);
       } catch (error) {
-        this.logger.error(`Failed to parse MQTT message from ${topic}:`, error);
+        this.logger.error(`Failed to process MQTT message from ${topic}:`, error);
       }
     });
   }

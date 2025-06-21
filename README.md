@@ -1,29 +1,72 @@
-# Babelfish Looking Glass
+# Bablefish Looking Glass
 
-A comprehensive IoT and device management platform with advanced connector architecture, event processing, and automated entity discovery.
+A comprehensive IoT and automation platform that integrates multiple systems and protocols into a unified interface. Built with Node.js and designed for real-time monitoring, automation, and control of diverse IoT devices and services.
 
-## Features
+## 🚀 Key Features
 
-- **Connector Architecture**: Modular connector system for integrating with various IoT devices and services
-- **Event Processing**: Real-time event processing with rule engine and action framework
-- **Entity Management**: Automatic discovery and management of devices and resources
-- **WebSocket Support**: Real-time communication and event broadcasting
-- **MQTT Integration**: Message queuing and device communication
-- **UniFi Protect Integration**: Camera management, video streaming, and motion detection
-- **Telegram Integration**: Bot messaging, notifications, and interactive keyboards
-- **Auto-Discovery**: Automatic device discovery and entity creation
-- **REST API**: Comprehensive API for system management and integration
-- **Modern UI**: Responsive web interface with cyberpunk-inspired design
-- **Mobile Support**: Fully responsive design that works on all device sizes
+### 🔌 **Multi-Protocol Connectors**
+- **UniFi Protect**: Real-time video streaming, motion detection, smart detection, doorbell rings
+- **MQTT**: IoT device communication and automation
+- **Telegram**: Real-time notifications and alerts via Telegram Bot API
+- **LLM**: AI-powered automation and decision making
+- **Hikvision**: IP camera integration
+- **Ankke DVR**: Digital video recorder support
 
-## Quick Start
+### 📹 **Advanced Video & Security**
+- **Real-time Video Streaming**: RTSP and HTTP video streams from UniFi Protect cameras
+- **Motion Detection**: Instant notifications for motion events
+- **Smart Detection**: Person, vehicle, and animal detection
+- **Doorbell Integration**: Real-time doorbell ring notifications
+- **Recording Management**: Access and manage video recordings
+- **Camera Snapshots**: Get still images from cameras
+
+### 🎯 **Zone Management & Analytics**
+- **Multi-Zone Monitoring**: Define zones and assign cameras for area-specific monitoring
+- **Cross-Zone Tracking**: Track objects and people moving between zones
+- **Speed Calculations**: Automatic speed calculation for vehicles crossing zones
+- **People Counting**: Real-time occupancy tracking per zone
+- **Plate Recognition**: Vehicle tracking with license plate detection
+- **Derived Context**: Intelligent analytics from camera events
+
+### 📊 **Single Pane of Glass Dashboard**
+- **Unified Monitoring**: All zones, cameras, and analytics in one interface
+- **Real-time Updates**: Live data updates via Server-Sent Events
+- **Speed Violations**: Automatic alerts for speeding vehicles
+- **Occupancy Monitoring**: Live people counts across all zones
+- **Event History**: Comprehensive event logging and analysis
+- **Mobile Responsive**: Works on all devices
+
+### 🔄 **Real-time Events & Automation**
+- **WebSocket Binary Protocol**: High-performance real-time event streaming
+- **Event Deduplication**: Prevents duplicate event processing
+- **Automatic Reconnection**: Exponential backoff reconnection strategy
+- **Session Management**: Automatic session handling and token refresh
+- **Bootstrap Caching**: Efficient device state management
+
+### 🏗️ **Architecture & Scalability**
+- **Modular Connector System**: Easy to add new protocols and devices
+- **Entity Management**: Automatic device discovery and entity creation
+- **Flow Orchestration**: Complex automation workflows
+- **Event Bus**: Centralized event distribution
+- **Rule Engine**: Configurable automation rules
+
+## 🚐 Communications Van Integration
+
+The platform is specifically designed for communications van deployments with:
+
+- **UniFi Protect Integration**: Full integration with UniFi Protect video management
+- **Real-time Monitoring**: Live video feeds and event notifications
+- **Mobile-Ready**: Responsive web interface for mobile devices
+- **Offline Capable**: Local processing and caching
+- **Multi-Camera Support**: Manage multiple cameras simultaneously
+- **Zone-Based Analytics**: Context-aware monitoring for complex deployments
+
+## 🛠️ Quick Start
 
 ### Prerequisites
-
-- Node.js 16+ 
+- Node.js 18+ 
 - npm or yarn
-- UniFi Protect system (optional)
-- MQTT broker (optional)
+- UniFi Protect system (optional, for video features)
 
 ### Installation
 
@@ -44,28 +87,32 @@ nano .env
 
 ### Configuration
 
-Edit the `.env` file with your settings:
+Edit `.env` to configure your connectors:
 
-```bash
-# Server Configuration
-PORT=3000
-NODE_ENV=development
-
+```env
 # UniFi Protect Configuration
-UNIFI_HOST=192.168.1.1
-UNIFI_PORT=443
-UNIFI_API_KEY=your-api-key-here
-UNIFI_VERIFY_SSL=false
+UNIFI_PROTECT_HOST=10.0.0.1
+UNIFI_PROTECT_API_KEY=your-api-key-here
+UNIFI_PROTECT_USERNAME=your-username
+UNIFI_PROTECT_PASSWORD=your-password
 
 # MQTT Configuration
-MQTT_ENABLED=true
-MQTT_HOST=localhost
-MQTT_PORT=1883
+MQTT_BROKER_URL=mqtt://localhost:1883
+MQTT_USERNAME=your-mqtt-username
+MQTT_PASSWORD=your-mqtt-password
 
-# Entity Management
-ENTITIES_ENABLED=true
-ENTITY_AUTO_DISCOVERY_ENABLED=true
-ENTITY_DISCOVERY_REFRESH_INTERVAL=300000
+# Analytics Configuration
+ANALYTICS_ENABLED=true
+ZONE_MANAGER_ENABLED=true
+ANALYTICS_ENGINE_ENABLED=true
+SPEED_CALCULATION_ENABLED=true
+PEOPLE_COUNTING_ENABLED=true
+
+# Dashboard Configuration
+DASHBOARD_ENABLED=true
+DASHBOARD_REFRESH_INTERVAL=5000
+SPEED_ALERTS_ENABLED=true
+SPEED_ALERT_THRESHOLD=100
 ```
 
 ### Running the Application
@@ -76,369 +123,324 @@ npm start
 
 # Or run in development mode
 npm run dev
-
-# Build for production
-npm run build
 ```
 
 The application will be available at `http://localhost:3000`
 
-## User Interface
+## 🎯 Zone Management & Analytics
 
-### Design System
+The platform provides sophisticated zone-based monitoring and analytics:
 
-The application features a modern, cyberpunk-inspired design system with:
+### Creating Zones
+```javascript
+// Create a zone
+const zone = await zoneManager.createZone({
+  name: 'Entry Zone',
+  type: 'entry',
+  description: 'Main entry point to the facility',
+  location: { x: 0, y: 0 },
+  active: true
+});
 
-- **Color Palette**: Deep space blues, electric cyan accents, and neon highlights
-- **Typography**: Clean, readable fonts with proper hierarchy
-- **Layout**: Responsive grid system that adapts to all screen sizes
-- **Components**: Consistent card-based design with smooth animations
-- **Dark Theme**: Eye-friendly dark theme optimized for monitoring environments
-
-### Responsive Design
-
-The interface is fully responsive and works seamlessly across:
-
-- **Desktop**: Full-featured interface with collapsible sidebar
-- **Tablet**: Optimized layout with touch-friendly controls
-- **Mobile**: Mobile-first design with slide-out navigation menu
-
-### Key UI Features
-
-- **Collapsible Sidebar**: Save screen space by collapsing the navigation
-- **Real-time Updates**: Live data updates via WebSocket connections
-- **Interactive Cards**: Hover effects and smooth transitions
-- **Mobile Menu**: Touch-friendly navigation for mobile devices
-- **Loading States**: Smooth loading animations and skeleton screens
-- **Notifications**: Toast notifications for system events
-- **Modal Dialogs**: Clean modal system for forms and confirmations
-
-### Navigation
-
-The interface is organized into logical sections:
-
-- **Dashboard**: System overview and real-time status
-- **Devices**: Connected UniFi Protect systems
-- **Connectors**: System connectors and capabilities
-- **Events**: System events and activity monitoring
-- **Cameras**: Camera management and streams
-- **Recordings**: Video recordings and playback
-- **Flows**: Automation workflows and orchestration
-- **Rules**: Event processing rules and conditions
-- **Actions**: Available actions and execution statistics
-- **Flow Builder**: Visual flow creation and editing
-
-## Architecture
-
-### Core Components
-
-#### Connector System
-- **BaseConnector**: Abstract base class for all connectors
-- **ConnectorRegistry**: Manages connector instances and capabilities
-- **UniFi Protect Connector**: Integration with UniFi Protect systems
-- **MQTT Connector**: Message queuing and device communication
-- **Telegram Connector**: Bot messaging, notifications, and interactive keyboards
-
-#### Entity Management
-- **EntityManager**: Manages devices and resources as entities
-- **Auto-Discovery**: Automatic device discovery and entity creation
-- **Entity Events**: Real-time entity lifecycle events
-
-#### Event Processing
-- **EventBus**: Central event routing and normalization
-- **RuleEngine**: Configurable rule processing and action execution
-- **ActionFramework**: Extensible action system
-- **FlowOrchestrator**: Coordinates event flows and rule execution
-
-#### Services
-- **Cache**: In-memory caching system
-- **MQTTBroker**: MQTT message broker
-- **EventProcessor**: Event filtering and processing
-
-### Entity Management System
-
-The platform includes a comprehensive entity management system that automatically discovers and manages devices and resources:
-
-#### Features
-- **Automatic Discovery**: Automatically discover devices from connected systems
-- **Entity Creation**: Create entities for discovered devices with metadata
-- **Event Integration**: Subscribe to device events and update entities
-- **Lifecycle Management**: Handle entity creation, updates, and deletion
-- **Real-time Updates**: WebSocket events for entity changes
-
-#### Entity Types
-- **Cameras**: UniFi Protect cameras with motion detection and recording
-- **Devices**: IoT devices and sensors
-- **Services**: External services and APIs
-- **Resources**: System resources and configurations
-
-#### Auto-Discovery
-- **Periodic Discovery**: Regular discovery of new devices
-- **Event-Driven Discovery**: Discovery triggered by system events
-- **Manual Discovery**: On-demand discovery via API
-- **Configuration-Based**: Discovery rules based on connector configuration
-
-## API Reference
-
-### Entity Management
-
-#### Get All Entities
-```http
-GET /api/entities
+// Assign cameras to zones
+await zoneManager.assignCameraToZone('camera-001', zone.id, {
+  coverage: 0.8
+});
 ```
 
-Query Parameters:
-- `type` - Filter by entity type
-- `source` - Filter by source
-- `connectorId` - Filter by connector ID
-- `status` - Filter by status
-- `limit` - Limit number of results
+### Speed Calculations
+The system automatically calculates vehicle speeds when the same plate is detected in different zones:
 
-#### Get Entity by ID
-```http
-GET /api/entities/{id}
+```javascript
+// Speed calculation is triggered automatically
+analyticsEngine.on('speed:calculated', (data) => {
+  console.log(`Vehicle ${data.plateNumber} speed: ${data.speedKmh} km/h`);
+  console.log(`From ${data.zone1Id} to ${data.zone2Id}`);
+});
 ```
 
-#### Create Entity
-```http
-POST /api/entities
-Content-Type: application/json
+### People Counting
+Real-time occupancy tracking per zone:
 
-{
-  "type": "camera",
-  "name": "Front Door Camera",
-  "description": "Camera monitoring front door",
-  "data": {
-    "capabilities": ["motion", "recording"],
-    "settings": {}
-  },
-  "metadata": {
-    "source": "unifi-protect",
-    "connectorId": "unifi-protect"
-  }
-}
+```javascript
+// People count updates
+analyticsEngine.on('people:counted', (data) => {
+  console.log(`Zone ${data.zoneId}: ${data.count} people`);
+});
 ```
 
-#### Update Entity
-```http
-PUT /api/entities/{id}
-Content-Type: application/json
+## 📊 Dashboard Interface
 
-{
-  "status": "connected",
-  "data": {
-    "lastEvent": "2024-01-15T10:30:00Z"
-  }
-}
+Access the unified monitoring dashboard at `http://localhost:3000/dashboard.html`
+
+### Features
+- **Overview Cards**: Total zones, cameras, people count, speed violations
+- **Zone Monitoring**: Real-time status and analytics for each zone
+- **Recent Events**: Live event feed from all cameras
+- **Active Alerts**: Speed violations and other alerts
+- **Speed Violations**: Recent vehicle speed calculations
+- **Real-time Updates**: Live data via Server-Sent Events
+
+### API Endpoints
+
+#### Zone Management
+- `GET /api/analytics/zones` - List all zones
+- `POST /api/analytics/zones` - Create a new zone
+- `GET /api/analytics/zones/:id` - Get zone details
+- `PUT /api/analytics/zones/:id` - Update zone
+- `POST /api/analytics/zones/:id/cameras/:cameraId` - Assign camera to zone
+
+#### Analytics
+- `GET /api/analytics` - Get all analytics data
+- `GET /api/analytics/cameras/:id` - Get camera analytics
+- `GET /api/analytics/zones/:id` - Get zone analytics
+- `GET /api/analytics/speed` - Get speed calculations
+- `GET /api/analytics/plates/:plateNumber` - Get plate tracking data
+
+#### Dashboard
+- `GET /api/analytics/dashboard` - Get dashboard data
+- `GET /api/analytics/dashboard/overview` - Get overview statistics
+- `GET /api/analytics/dashboard/zones` - Get zones data
+- `GET /api/analytics/dashboard/cameras` - Get cameras data
+- `GET /api/analytics/dashboard/events` - Get recent events
+- `GET /api/analytics/dashboard/alerts` - Get active alerts
+- `GET /api/analytics/dashboard/realtime` - Real-time updates (SSE)
+
+## 📹 UniFi Protect Integration
+
+The UniFi Protect connector provides comprehensive integration with Ubiquiti's video management system:
+
+### Real-time Video Streaming
+```javascript
+// Get RTSP stream URL
+const rtspUrl = await connector.getStreamUrl({
+  cameraId: 'camera-id',
+  quality: 'high',
+  format: 'rtsp'
+});
+
+// Get HTTP stream URL
+const httpUrl = await connector.getStreamUrl({
+  cameraId: 'camera-id',
+  quality: 'medium',
+  format: 'http',
+  duration: 60
+});
 ```
 
-#### Delete Entity
-```http
-DELETE /api/entities/{id}
+### Real-time Events
+```javascript
+// Subscribe to motion events
+connector.on('event:motion', (event) => {
+  console.log('Motion detected:', event.motionData);
+});
+
+// Subscribe to doorbell rings
+connector.on('event:ring', (event) => {
+  console.log('Doorbell ring:', event.ringData);
+});
+
+// Subscribe to smart detection
+connector.on('event:smart', (event) => {
+  console.log('Smart detection:', event.smartData);
+});
 ```
 
-#### Entity Statistics
-```http
-GET /api/entities/stats
+### Camera Management
+```javascript
+// List all cameras
+const cameras = await connector.listCameras();
+
+// Get camera details
+const camera = await connector.getCamera({ cameraId: 'camera-id' });
+
+// Get camera snapshot
+const snapshot = await connector.getCameraSnapshot({
+  cameraId: 'camera-id',
+  quality: 'high'
+});
 ```
 
-#### Discovery Management
-```http
-POST /api/entities/discovery
-POST /api/entities/discovery/start
-POST /api/entities/discovery/stop
+## 📱 Telegram Integration
+
+The Telegram connector provides real-time notifications and alerts via Telegram Bot API:
+
+### Setup
+1. Create a Telegram bot via [@BotFather](https://t.me/botfather)
+2. Add the bot to your channel: `@fhNYM0MnPJQ2NjE8`
+3. Configure the bot token in `config/connectors.json`
+
+### Automatic Notifications
+The system automatically sends notifications for:
+- **Motion Detection**: Real-time motion alerts with camera details
+- **Smart Detection**: Person, vehicle, and animal detection alerts
+- **Recording Events**: Video recording start/stop notifications
+- **Connection Events**: Camera online/offline status changes
+- **Camera Management**: Camera addition/removal notifications
+
+### Message Format
+```javascript
+// Motion detection alert
+🚨 *Motion Detected* 🚨
+
+📹 Camera: Front Door Camera
+📍 Location: Front Door
+⏰ Time: 2025-01-20 15:30:00
+
+Motion activity detected on your UniFi Protect system.
+
+// Smart detection alert
+🤖 *Smart Detection Alert* 🤖
+
+📹 Camera: Backyard Camera
+📍 Location: Backyard
+🔍 Detection: Person
+⏰ Time: 2025-01-20 15:30:00
+
+Smart detection triggered on your UniFi Protect system.
 ```
+
+### Testing Integration
+```bash
+# Test Telegram integration
+node test-telegram-integration.js
+```
+
+### Manual Message Sending
+```javascript
+// Send text message
+await telegramConnector.execute('telegram:send', 'text', {
+  chatId: '@fhNYM0MnPJQ2NjE8',
+  text: 'Test message from Babelfish',
+  parseMode: 'Markdown'
+});
+
+// Send photo with caption
+await telegramConnector.execute('telegram:send', 'photo', {
+  chatId: '@fhNYM0MnPJQ2NjE8',
+  photo: 'https://example.com/image.jpg',
+  caption: 'Camera snapshot'
+});
+```
+
+## 🔧 API Endpoints
 
 ### Connector Management
+- `GET /api/connectors` - List all connectors
+- `POST /api/connectors/:id/connect` - Connect to a specific connector
+- `POST /api/connectors/:id/disconnect` - Disconnect from a connector
+- `GET /api/connectors/:id/status` - Get connector status
 
-#### Get All Connectors
-```http
-GET /api/connectors
-```
+### Capability Execution
+- `POST /api/connectors/:id/capabilities/:capability` - Execute a capability
+- `GET /api/connectors/:id/capabilities` - List available capabilities
 
-#### Get Connector by ID
-```http
-GET /api/connectors/{id}
-```
+### Entity Management
+- `GET /api/entities` - List all entities
+- `GET /api/entities/:id` - Get specific entity
+- `POST /api/entities/discovery` - Trigger entity discovery
 
-#### Create Connector
-```http
-POST /api/connectors
-Content-Type: application/json
+### Real-time Events
+- `GET /api/events` - WebSocket endpoint for real-time events
 
-{
-  "id": "unifi-protect",
-  "type": "unifi-protect",
-  "name": "UniFi Protect System",
-  "config": {
-    "host": "192.168.1.1",
-    "apiKey": "your-api-key"
-  }
-}
-```
+## 🧪 Testing
 
-### Event Management
-
-#### Get Events
-```http
-GET /api/events
-```
-
-#### Get Event Filters
-```http
-GET /api/events/filters
-```
-
-## WebSocket Events
-
-The application provides real-time WebSocket events for monitoring system state:
-
-### Entity Events
-- `entityCreated` - New entity created
-- `entityUpdated` - Entity updated
-- `entityDeleted` - Entity deleted
-
-### Camera Events
-- `motionDetected` - Motion detected on camera
-- `smartDetected` - Smart detection on camera
-- `recordingEvent` - Recording event on camera
-- `connectionEvent` - Connection event on camera
-- `cameraAdded` - New camera added
-- `cameraRemoved` - Camera removed
-
-### Discovery Events
-- `discoveryCompleted` - Device discovery completed
-- `discoveryError` - Discovery error occurred
-
-### Connector Events
-- `connectorEvent` - General connector event
-- `connectorWebSocketConnected` - Connector WebSocket connected
-- `connectorWebSocketDisconnected` - Connector WebSocket disconnected
-- `connectorWebSocketError` - Connector WebSocket error
-
-## Configuration
-
-### Connector Configuration
-
-Connectors are configured in `config/connectors.json`:
-
-```json
-{
-  "connectors": [
-    {
-      "id": "unifi-protect",
-      "type": "unifi-protect",
-      "name": "UniFi Protect System",
-      "config": {
-        "host": "192.168.1.1",
-        "apiKey": "your-api-key",
-        "autoDiscovery": {
-          "enabled": true,
-          "createEntities": true,
-          "subscribeToEvents": true
-        }
-      }
-    }
-  ]
-}
-```
-
-### Environment Variables
-
-Key environment variables:
-
+### Run All Tests
 ```bash
-# Server
-PORT=3000
-NODE_ENV=development
-
-# UniFi Protect
-UNIFI_HOST=192.168.1.1
-UNIFI_API_KEY=your-api-key
-
-# MQTT
-MQTT_ENABLED=true
-MQTT_HOST=localhost
-
-# Entity Management
-ENTITIES_ENABLED=true
-ENTITY_AUTO_DISCOVERY_ENABLED=true
+npm test
 ```
 
-## Development
-
-### Project Structure
-
-```
-bablefish-lookingglass/
-├── config/                 # Configuration files
-├── connectors/            # Connector implementations
-├── docs/                  # Documentation
-├── routes/                # API routes
-├── services/              # Core services
-├── logs/                  # Application logs
-├── server.js             # Main application entry
-└── package.json          # Dependencies and scripts
-```
-
-### Adding New Connectors
-
-1. Create connector class extending `BaseConnector`
-2. Implement required methods
-3. Register connector type in `ConnectorRegistry`
-4. Add configuration to `config/connectors.json`
-
-### Adding New Entity Types
-
-1. Define entity structure in `EntityManager`
-2. Implement entity creation logic
-3. Add event handling for entity lifecycle
-4. Update API endpoints if needed
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Connection Errors**: Check network connectivity and credentials
-2. **Entity Discovery**: Verify auto-discovery is enabled in connector config
-3. **WebSocket Issues**: Check firewall settings and WebSocket support
-4. **API Errors**: Verify API endpoints and authentication
-
-### Debug Mode
-
-Enable debug logging:
-
+### Test Zone Analytics
 ```bash
-# Set environment variable
-DEBUG=true npm start
-
-# Or enable in code
-connector.setDebugMode(true);
+# Test the new zone management and analytics system
+node test-zone-analytics.js
 ```
 
-### Health Check
-
-Check system health:
-
+### Test Specific Connectors
 ```bash
-curl http://localhost:3000/health
+# Test UniFi Protect integration
+node test-unifi-protect-mock.js
+
+# Test MQTT flow
+node test-mqtt-flow.js
+
+# Test LLM connector
+node test-llm-connector.js
 ```
 
-## Contributing
+### Web Interface Demo
+Access the UniFi Protect demo interface at:
+```
+http://localhost:3000
+```
+
+Access the unified dashboard at:
+```
+http://localhost:3000/dashboard.html
+```
+
+## 📚 Documentation
+
+- [Connector Architecture](./docs/connector-architecture.md)
+- [Flow System](./docs/flow-system.md)
+- [MQTT Flow](./docs/mqtt-flow.md)
+- [Connector Documentation](./docs/connectors/)
+
+## 🤝 Contributing
 
 1. Fork the repository
-2. Create feature branch
-3. Make changes
-4. Add tests
-5. Submit pull request
+2. Create a feature branch
+3. Make your changes
+4. Add tests for new functionality
+5. Submit a pull request
 
-## License
+## 📄 License
 
-[License information]
+This project is licensed under the MIT License - see the LICENSE file for details.
 
-## Support
+## 🙏 Acknowledgments
 
-For support and questions:
-- Create an issue in the repository
-- Check the documentation in `/docs`
-- Review configuration examples 
+- [hjdhjd/unifi-protect](https://github.com/hjdhjd/unifi-protect) - UniFi Protect API implementation
+- [UniFi Protect Updates API](https://github.com/hjdhjd/unifi-protect/blob/main/README.md) - Binary protocol documentation
+
+## Features
+
+- **Multi-Connector Support**: UniFi Protect, Hikvision, Ankke DVR, MQTT, Telegram, and LLM connectors
+- **Real-time Event Processing**: WebSocket-based real-time event handling with automatic reconnection
+- **Smart Detection Analytics**: Advanced analytics for person, vehicle, animal, package, and face detection
+- **Zone Management**: Define and manage monitoring zones with camera assignments
+- **Analytics Engine**: Speed calculations, people counting, cross-zone tracking, and pattern recognition
+- **MQTT Integration**: Publish events to MQTT topics for external system integration
+- **Dashboard Service**: Real-time dashboard with comprehensive monitoring data
+- **Rule Engine**: Configurable rules for event processing and automation
+- **Entity Management**: Automatic camera discovery and entity creation
+- **REST API**: Comprehensive API for data access and system management
+- **Event Deduplication**: Prevents duplicate event processing
+- **Session Management**: Automatic session handling and reconnection
+- **Bootstrap Caching**: Efficient device state management
+
+## Smart Events Integration
+
+The application provides comprehensive smart events integration with UniFi Protect cameras, offering advanced analytics and real-time processing for smart detection events.
+
+### Smart Detection Types
+- **Person Detection**: Human detection with confidence scoring and tracking
+- **Vehicle Detection**: Car, truck, motorcycle detection with tracking
+- **Animal Detection**: Pet and wildlife detection
+- **Package Detection**: Package and object detection
+- **Face Detection**: Facial recognition and detection
+
+### Key Features
+- **Confidence Analysis**: Track detection confidence levels and identify anomalies
+- **Pattern Recognition**: Identify unusual detection patterns and frequency
+- **Cross-Zone Tracking**: Track objects moving between monitoring zones
+- **Real-time Alerts**: Immediate notifications for smart events and patterns
+- **Historical Analytics**: Store and analyze detection history and trends
+- **MQTT Integration**: Publish smart events to MQTT for external processing
+
+### API Endpoints
+- `GET /api/analytics/smart-detections` - Get smart detection analytics
+- `GET /api/analytics/smart-detections/{cameraId}` - Get camera-specific analytics
+- `GET /api/analytics/smart-patterns` - Get pattern analysis
+
+For detailed information about smart events integration, see [Smart Events Documentation](docs/smart-events.md). 

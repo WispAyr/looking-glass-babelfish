@@ -4,6 +4,11 @@ The Telegram Connector provides integration with the Telegram Bot API, enabling 
 
 ## Overview
 
+
+@TACAMOBOT
+You can use this token to access HTTP API:
+6730537017:AAGnK4toKXph8kodfSE80ms
+
 The Telegram Connector supports:
 - Text messaging
 - Media sharing (photos, documents)
