@@ -1,6 +1,125 @@
-# Bablefish Looking Glass
+# Babelfish Looking Glass
 
-A comprehensive IoT and automation platform that integrates multiple systems and protocols into a unified interface. Built with Node.js and designed for real-time monitoring, automation, and control of diverse IoT devices and services.
+## Overview
+
+Babelfish Looking Glass is a modular, real-time spatial visualization and event orchestration platform. It integrates a wide variety of systems (cameras, IoT, analytics, messaging, etc.) into a unified map-based interface, enabling live monitoring, automation, and analytics across physical and digital environments.
+
+---
+
+## Purpose
+
+- **Unify disparate systems** (security, IoT, analytics, messaging, etc.) into a single, extensible platform
+- **Visualize spatial data** and real-time events on interactive maps
+- **Automate workflows** and event-driven actions across connectors
+- **Enable rapid integration** of new systems via a connector architecture
+- **Provide a modern, web-based GUI** for operators and analysts
+
+---
+
+## High-Level Architecture
+
+```
++-------------------+      +-------------------+      +-------------------+
+|   Connectors      | <--> |   Map System      | <--> |   Web GUI         |
+| (Cameras, IoT,    |      | (Spatial, Events, |      | (User Interface,  |
+|  Analytics, etc.) |      |  Integration)     |      |  Real-Time, API)  |
++-------------------+      +-------------------+      +-------------------+
+```
+
+- **Connectors**: Modular adapters for external systems (see below)
+- **Map System**: Central spatial context, real-time event bus, and orchestration
+- **Web GUI**: Modern web interface, now implemented as a connector
+- **APIs**: REST and WebSocket endpoints for integration and automation
+
+---
+
+## Key Components
+
+### 1. Connector System
+- **Purpose**: Integrate external systems (cameras, MQTT, LLMs, Telegram, etc.)
+- **Pattern**: Each connector is a class extending `BaseConnector`, with capability definitions
+- **Auto-discovery**: New connectors are auto-registered from the `connectors/types/` directory
+- **Examples**: `UnifiProtectConnector`, `MqttConnector`, `LLMConnector`, `TelegramConnector`, `WebGuiConnector`, `MapConnector`
+
+### 2. Map System
+- **Purpose**: Provide spatial context, visualization, and event integration
+- **Features**: Drag-and-drop elements, real-time event overlays, zone/line/camera management
+- **Connector**: Implemented as `MapConnector`, auto-registers with all other connectors
+- **Integration**: Managed by `MapIntegrationService`
+
+### 3. Web GUI (as a Connector)
+- **Purpose**: Provide the main user interface for the platform
+- **Pattern**: Implemented as `WebGuiConnector`, auto-registers with maps and other connectors
+- **Features**: Page/component management, real-time updates, theming, navigation
+- **Endpoints**: `/`, `/map/{map-id}`, `/api/gui/*`, WebSocket for real-time UI
+
+### 4. Event & Flow System
+- **Purpose**: Orchestrate automation, rules, and event-driven actions
+- **Components**: `EventBus`, `RuleEngine`, `ActionFramework`, `FlowOrchestrator`
+- **Features**: Rule-based automation, event publishing, action execution, flow orchestration
+
+### 5. Analytics & Monitoring
+- **Purpose**: Provide analytics, dashboards, and monitoring
+- **Components**: `AnalyticsEngine`, `DashboardService`, `ZoneManager`
+- **Features**: Real-time and historical analytics, dashboard widgets, zone-based metrics
+
+### 6. API & Integration
+- **REST API**: `/api/*` for all system operations
+- **Map API**: `/api/map/*` for spatial and connector management
+- **Analytics API**: `/api/analytics/*` for analytics endpoints
+- **WebSocket**: Real-time event and UI updates
+
+---
+
+## Directory Structure (Key Parts)
+
+- `connectors/` — All connector types and registry
+- `services/` — Core services (map, analytics, event bus, etc.)
+- `routes/` — API route handlers
+- `config/` — Configuration files and defaults
+- `docs/` — In-depth documentation for subsystems
+- `examples/` — Example scripts for integration and automation
+- `public/` — Static files for the web interface
+- `test-*.js` — Test scripts for connectors and features
+
+---
+
+## Extending the Platform
+
+- **Add a new connector**: Create a new file in `connectors/types/`, export a class extending `BaseConnector`, and define capabilities/metadata
+- **Add a new map**: Instantiate a new `MapConnector` with a unique ID
+- **Add a new UI page/component**: Use the `WebGuiConnector` API to create pages/components
+- **Add automation**: Define new rules in the `RuleEngine` or flows in the `FlowOrchestrator`
+
+---
+
+## Documentation
+
+- See `docs/connector-map-relationship.md` for the connector-map relationship and auto-registration system
+- See `docs/` for subsystem details (analytics, flow, smart events, etc.)
+
+---
+
+## Status
+
+- **Production-ready**: Modular, extensible, and supports real-time operations
+- **Actively developed**: See test scripts and docs for latest features
+
+---
+
+## Quick Start
+
+1. Configure connectors in `config/connectors.json`
+2. Start the server: `npm start`
+3. Access the web UI at `http://localhost:3000/`
+4. Explore API at `/api/*` and `/api/map/*`
+
+---
+
+## Authors & License
+
+- (c) Babelfish Looking Glass Team
+- MIT License
 
 ## 🚀 Key Features
 

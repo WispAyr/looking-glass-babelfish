@@ -98,6 +98,8 @@ async function testWebGuiConnector() {
 
     // Test auto-registration with map
     console.log('\n🗺️ Testing auto-registration with map...');
+    console.log('Available methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(webGui)));
+    console.log('autoRegisterWithMaps method:', typeof webGui.autoRegisterWithMaps);
     await webGui.autoRegisterWithMaps(map);
     console.log('✅ Auto-registered with map');
 
