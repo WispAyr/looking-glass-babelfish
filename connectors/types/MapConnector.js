@@ -11,14 +11,20 @@ const EventEmitter = require('events');
  */
 class MapConnector extends BaseConnector {
   constructor(config) {
-    super(config);
+    // Ensure type is set for BaseConnector
+    const connectorConfig = {
+      ...config,
+      type: 'map'
+    };
+    
+    super(connectorConfig);
     
     // Map-specific properties
     this.mapLayers = new Map();
     this.spatialData = new Map();
     this.connectorContexts = new Map();
-    this.editMode = false;
-    this.viewMode = 'realtime';
+    this.editMode = config.editMode || false;
+    this.viewMode = config.viewMode || 'realtime';
     
     // Real-time data streams
     this.dataStreams = new Map();
@@ -33,10 +39,48 @@ class MapConnector extends BaseConnector {
     this.renderStats = {
       fps: 0,
       elementsRendered: 0,
-      lastRenderTime: null
+      lastRenderTime: null,
+      averageRenderTime: 0
     };
+
+    // Web interface configuration
+    this.webInterface = {
+      enabled: config.webInterface?.enabled ?? true,
+      route: config.webInterface?.route ?? '/map.html',
+      port: config.webInterface?.port ?? 3000,
+      host: config.webInterface?.host ?? 'localhost'
+    };
+
+    // Auto-registration settings
+    this.autoRegisterConnectors = config.autoRegisterConnectors ?? true;
     
-    this.logger.info('Map Connector initialized');
+    // Security settings
+    this.security = {
+      requireAuth: config.security?.requireAuth ?? false,
+      allowedRoles: config.security?.allowedRoles ?? ['admin', 'operator'],
+      sessionTimeout: config.security?.sessionTimeout ?? 3600
+    };
+
+    // Debug settings
+    this.debug = {
+      enabled: config.debug?.enabled ?? false,
+      logLevel: config.debug?.logLevel ?? 'info',
+      traceEvents: config.debug?.traceEvents ?? false,
+      performanceMetrics: config.debug?.performanceMetrics ?? false
+    };
+
+    // Caching
+    this.spatialCache = new Map();
+    this.CACHE_TTL = 300000; // 5 minutes
+
+    // WebSocket connections
+    this.webSocketConnections = new Set();
+    
+    this.logger.info('Map Connector initialized', {
+      id: this.id,
+      webInterface: this.webInterface,
+      autoRegisterConnectors: this.autoRegisterConnectors
+    });
   }
 
   /**
@@ -107,17 +151,44 @@ class MapConnector extends BaseConnector {
    * Execute capability operations
    */
   async executeCapability(capabilityId, operation, parameters) {
-    switch (capabilityId) {
-      case 'spatial:config':
-        return await this.executeSpatialConfig(operation, parameters);
-      case 'visualization:realtime':
-        return await this.executeVisualization(operation, parameters);
-      case 'integration:connector':
-        return await this.executeConnectorIntegration(operation, parameters);
-      case 'context:spatial':
-        return await this.executeContextManagement(operation, parameters);
-      default:
-        throw new Error(`Unknown capability: ${capabilityId}`);
+    if (this.debug.traceEvents) {
+      this.logger.debug(`Executing capability: ${capabilityId}.${operation}`, parameters);
+    }
+
+    const startTime = Date.now();
+    
+    try {
+      let result;
+      switch (capabilityId) {
+        case 'spatial:config':
+          result = await this.executeSpatialConfig(operation, parameters);
+          break;
+        case 'visualization:realtime':
+          result = await this.executeVisualization(operation, parameters);
+          break;
+        case 'integration:connector':
+          result = await this.executeConnectorIntegration(operation, parameters);
+          break;
+        case 'context:spatial':
+          result = await this.executeContextManagement(operation, parameters);
+          break;
+        default:
+          throw new Error(`Unknown capability: ${capabilityId}`);
+      }
+
+      if (this.debug.performanceMetrics) {
+        const duration = Date.now() - startTime;
+        this.logger.debug(`Capability execution completed in ${duration}ms`, {
+          capabilityId,
+          operation,
+          duration
+        });
+      }
+
+      return result;
+    } catch (error) {
+      this.logger.error(`Capability execution failed: ${capabilityId}.${operation}`, error);
+      throw error;
     }
   }
 
@@ -267,10 +338,215 @@ class MapConnector extends BaseConnector {
     this.updateSpatialIndex(updatedElement);
     this.addToHistory('update', { elementId, original, updated: updatedElement });
 
+    // Sync changes back to source connector if linked
+    await this.syncToSourceConnector(elementId, updatedElement, original);
+
     this.logger.info(`Updated spatial element: ${elementId}`);
     this.emit('element:updated', updatedElement);
 
     return updatedElement;
+  }
+
+  /**
+   * Sync map changes back to source connector
+   */
+  async syncToSourceConnector(elementId, updatedElement, originalElement) {
+    try {
+      // Check if element is linked to a source connector
+      const sourceConnectorId = updatedElement.metadata?.sourceConnectorId;
+      if (!sourceConnectorId) {
+        return; // No source connector linked
+      }
+
+      // Get the source connector context
+      const connectorContext = this.connectorContexts.get(sourceConnectorId);
+      if (!connectorContext) {
+        this.logger.warn(`Source connector not found: ${sourceConnectorId}`);
+        return;
+      }
+
+      // Determine what changed
+      const changes = this.detectChanges(originalElement, updatedElement);
+      if (Object.keys(changes).length === 0) {
+        return; // No meaningful changes
+      }
+
+      // Emit sync event for the source connector
+      this.emit('sync:to-connector', {
+        sourceConnectorId,
+        elementId,
+        elementType: updatedElement.type,
+        changes,
+        original: originalElement,
+        updated: updatedElement,
+        timestamp: new Date().toISOString()
+      });
+
+      // Also emit connector-specific event
+      this.emit(`sync:${sourceConnectorId}`, {
+        elementId,
+        elementType: updatedElement.type,
+        changes,
+        original: originalElement,
+        updated: updatedElement,
+        timestamp: new Date().toISOString()
+      });
+
+      this.logger.info(`Synced changes to ${sourceConnectorId}:`, changes);
+
+    } catch (error) {
+      this.logger.error('Error syncing to source connector:', error);
+      // Don't throw - sync failure shouldn't break map updates
+    }
+  }
+
+  /**
+   * Detect meaningful changes between element versions
+   */
+  detectChanges(original, updated) {
+    const changes = {};
+
+    // Check position changes
+    if (original.position && updated.position) {
+      const posDiff = {
+        x: Math.abs(original.position.x - updated.position.x),
+        y: Math.abs(original.position.y - updated.position.y),
+        z: Math.abs((original.position.z || 0) - (updated.position.z || 0))
+      };
+
+      if (posDiff.x > 1 || posDiff.y > 1 || posDiff.z > 1) {
+        changes.position = {
+          from: original.position,
+          to: updated.position,
+          delta: posDiff
+        };
+      }
+    }
+
+    // Check property changes
+    if (original.properties && updated.properties) {
+      const propChanges = {};
+      const allKeys = new Set([...Object.keys(original.properties), ...Object.keys(updated.properties)]);
+
+      for (const key of allKeys) {
+        const oldValue = original.properties[key];
+        const newValue = updated.properties[key];
+
+        if (JSON.stringify(oldValue) !== JSON.stringify(newValue)) {
+          propChanges[key] = {
+            from: oldValue,
+            to: newValue
+          };
+        }
+      }
+
+      if (Object.keys(propChanges).length > 0) {
+        changes.properties = propChanges;
+      }
+    }
+
+    // Check name changes
+    if (original.name !== updated.name) {
+      changes.name = {
+        from: original.name,
+        to: updated.name
+      };
+    }
+
+    return changes;
+  }
+
+  /**
+   * Link a map element to a source connector
+   */
+  async linkElementToConnector(elementId, connectorId, connectorElementId) {
+    const element = this.spatialData.get(elementId);
+    if (!element) {
+      throw new Error(`Element not found: ${elementId}`);
+    }
+
+    // Update element metadata to link to source connector
+    const updatedElement = {
+      ...element,
+      metadata: {
+        ...element.metadata,
+        sourceConnectorId: connectorId,
+        sourceElementId: connectorElementId,
+        linked: new Date().toISOString()
+      }
+    };
+
+    this.spatialData.set(elementId, updatedElement);
+    this.updateSpatialIndex(updatedElement);
+
+    this.logger.info(`Linked element ${elementId} to connector ${connectorId}:${connectorElementId}`);
+    this.emit('element:linked', {
+      elementId,
+      connectorId,
+      connectorElementId,
+      timestamp: new Date().toISOString()
+    });
+
+    return updatedElement;
+  }
+
+  /**
+   * Unlink a map element from its source connector
+   */
+  async unlinkElementFromConnector(elementId) {
+    const element = this.spatialData.get(elementId);
+    if (!element) {
+      throw new Error(`Element not found: ${elementId}`);
+    }
+
+    const sourceConnectorId = element.metadata?.sourceConnectorId;
+    const sourceElementId = element.metadata?.sourceElementId;
+
+    // Update element metadata to remove link
+    const updatedElement = {
+      ...element,
+      metadata: {
+        ...element.metadata,
+        sourceConnectorId: undefined,
+        sourceElementId: undefined,
+        unlinked: new Date().toISOString()
+      }
+    };
+
+    this.spatialData.set(elementId, updatedElement);
+    this.updateSpatialIndex(updatedElement);
+
+    this.logger.info(`Unlinked element ${elementId} from connector ${sourceConnectorId}:${sourceElementId}`);
+    this.emit('element:unlinked', {
+      elementId,
+      connectorId: sourceConnectorId,
+      connectorElementId: sourceElementId,
+      timestamp: new Date().toISOString()
+    });
+
+    return updatedElement;
+  }
+
+  /**
+   * Get linked elements for a connector
+   */
+  getLinkedElements(connectorId) {
+    return Array.from(this.spatialData.values())
+      .filter(element => element.metadata?.sourceConnectorId === connectorId);
+  }
+
+  /**
+   * Check if an element is linked to a connector
+   */
+  isElementLinked(elementId, connectorId = null) {
+    const element = this.spatialData.get(elementId);
+    if (!element) return false;
+
+    if (connectorId) {
+      return element.metadata?.sourceConnectorId === connectorId;
+    }
+
+    return !!element.metadata?.sourceConnectorId;
   }
 
   /**
@@ -669,13 +945,23 @@ class MapConnector extends BaseConnector {
     return {
       version: '1.0.0',
       exported: new Date().toISOString(),
+      mapConnector: {
+        id: this.id,
+        name: this.name,
+        description: this.description,
+        webInterface: this.webInterface,
+        autoRegisterConnectors: this.autoRegisterConnectors,
+        security: this.security,
+        debug: this.debug
+      },
       elements: Array.from(this.spatialData.values()),
       contexts: Array.from(this.connectorContexts.values()),
       streams: Array.from(this.dataStreams.values()),
       settings: {
         editMode: this.editMode,
         viewMode: this.viewMode
-      }
+      },
+      performance: this.getPerformanceMetrics()
     };
   }
 
@@ -683,50 +969,74 @@ class MapConnector extends BaseConnector {
    * Import spatial configuration
    */
   async importConfiguration(config) {
-    // Clear existing data
-    this.spatialData.clear();
-    this.spatialIndex.clear();
-    this.connectorContexts.clear();
-    this.dataStreams.clear();
-    
-    // Import elements
-    if (config.elements) {
-      for (const element of config.elements) {
-        this.spatialData.set(element.id, element);
-        this.updateSpatialIndex(element);
+    try {
+      // Validate configuration
+      if (!config.version || !config.mapConnector) {
+        throw new Error('Invalid configuration format');
       }
-    }
-    
-    // Import contexts
-    if (config.contexts) {
-      for (const context of config.contexts) {
-        this.connectorContexts.set(context.id, context);
+
+      // Clear existing data
+      this.spatialData.clear();
+      this.spatialIndex.clear();
+      this.connectorContexts.clear();
+      this.dataStreams.clear();
+      this.spatialCache.clear();
+      
+      // Import elements
+      if (config.elements) {
+        for (const element of config.elements) {
+          this.spatialData.set(element.id, element);
+          this.updateSpatialIndex(element);
+        }
       }
-    }
-    
-    // Import streams
-    if (config.streams) {
-      for (const stream of config.streams) {
-        this.dataStreams.set(stream.id, stream);
+      
+      // Import contexts
+      if (config.contexts) {
+        for (const context of config.contexts) {
+          this.connectorContexts.set(context.id, context);
+        }
       }
+      
+      // Import streams
+      if (config.streams) {
+        for (const stream of config.streams) {
+          this.dataStreams.set(stream.id, stream);
+        }
+      }
+      
+      // Import settings
+      if (config.settings) {
+        this.editMode = config.settings.editMode || false;
+        this.viewMode = config.settings.viewMode || 'realtime';
+      }
+      
+      this.logger.info('Configuration imported successfully', {
+        elements: this.spatialData.size,
+        contexts: this.connectorContexts.size,
+        streams: this.dataStreams.size
+      });
+      
+      this.emit('configuration:imported', config);
+      
+      // Broadcast configuration update
+      this.broadcastToWebSockets({
+        type: 'configuration:imported',
+        timestamp: new Date().toISOString()
+      });
+      
+    } catch (error) {
+      this.logger.error('Failed to import configuration', error);
+      throw error;
     }
-    
-    // Import settings
-    if (config.settings) {
-      this.editMode = config.settings.editMode || false;
-      this.viewMode = config.settings.viewMode || 'realtime';
-    }
-    
-    this.logger.info('Configuration imported successfully');
-    this.emit('configuration:imported', config);
   }
 
   /**
    * Get connector statistics
    */
   getStats() {
+    const baseStats = super.getStatus();
     return {
-      ...super.getStats(),
+      ...baseStats,
       spatial: {
         totalElements: this.spatialData.size,
         elementsByType: this.getElementsByType(),
@@ -782,6 +1092,218 @@ class MapConnector extends BaseConnector {
       author: 'Looking Glass Team',
       capabilities: ['spatial:config', 'visualization:realtime', 'integration:connector', 'context:spatial']
     };
+  }
+
+  /**
+   * Get web interface configuration
+   */
+  getWebInterfaceConfig() {
+    return {
+      ...this.webInterface,
+      url: `http://${this.webInterface.host}:${this.webInterface.port}${this.webInterface.route}`,
+      websocketUrl: `ws://${this.webInterface.host}:${this.webInterface.port}/ws/map`
+    };
+  }
+
+  /**
+   * Add WebSocket connection
+   */
+  addWebSocketConnection(connection) {
+    this.webSocketConnections.add(connection);
+    this.logger.debug(`WebSocket connection added. Total connections: ${this.webSocketConnections.size}`);
+  }
+
+  /**
+   * Remove WebSocket connection
+   */
+  removeWebSocketConnection(connection) {
+    this.webSocketConnections.delete(connection);
+    this.logger.debug(`WebSocket connection removed. Total connections: ${this.webSocketConnections.size}`);
+  }
+
+  /**
+   * Broadcast to all WebSocket connections
+   */
+  broadcastToWebSockets(data) {
+    const message = JSON.stringify(data);
+    let sentCount = 0;
+    
+    for (const connection of this.webSocketConnections) {
+      try {
+        if (connection.readyState === 1) { // WebSocket.OPEN
+          connection.send(message);
+          sentCount++;
+        }
+      } catch (error) {
+        this.logger.error('Failed to send WebSocket message', error);
+      }
+    }
+    
+    if (this.debug.enabled && sentCount > 0) {
+      this.logger.debug(`Broadcasted to ${sentCount} WebSocket connections`, {
+        type: data.type,
+        sentCount,
+        totalConnections: this.webSocketConnections.size
+      });
+    }
+  }
+
+  /**
+   * Get cached spatial elements with TTL
+   */
+  getCachedSpatialElements(filter = {}) {
+    const cacheKey = JSON.stringify(filter);
+    
+    if (this.spatialCache.has(cacheKey)) {
+      const cached = this.spatialCache.get(cacheKey);
+      if (Date.now() - cached.timestamp < this.CACHE_TTL) {
+        return cached.data;
+      }
+    }
+    
+    const data = this.getSpatialElements(filter);
+    this.spatialCache.set(cacheKey, {
+      data,
+      timestamp: Date.now()
+    });
+    
+    return data;
+  }
+
+  /**
+   * Clear spatial cache
+   */
+  clearSpatialCache() {
+    this.spatialCache.clear();
+    this.logger.debug('Spatial cache cleared');
+  }
+
+  /**
+   * Get map health status
+   */
+  getHealthStatus() {
+    return {
+      status: 'healthy',
+      mapConnector: this.getStatus(),
+      connectedConnectors: this.connectorContexts.size,
+      spatialElements: this.spatialData.size,
+      dataStreams: this.dataStreams.size,
+      webSocketConnections: this.webSocketConnections.size,
+      cacheSize: this.spatialCache.size,
+      uptime: process.uptime(),
+      memoryUsage: process.memoryUsage(),
+      timestamp: new Date().toISOString()
+    };
+  }
+
+  /**
+   * Get performance metrics
+   */
+  getPerformanceMetrics() {
+    return {
+      ...this.renderStats,
+      webSocketConnections: this.webSocketConnections.size,
+      cacheSize: this.spatialCache.size,
+      spatialElements: this.spatialData.size,
+      connectorContexts: this.connectorContexts.size,
+      dataStreams: this.dataStreams.size
+    };
+  }
+
+  /**
+   * Auto-register connector with map
+   */
+  async autoRegisterConnector(connector) {
+    if (!this.autoRegisterConnectors || connector.type === 'map') {
+      return;
+    }
+
+    try {
+      const spatialContext = await this.getConnectorSpatialContext(connector);
+      const capabilities = connector.getCapabilities ? await connector.getCapabilities() : [];
+      
+      await this.execute('integration:connector', 'register', {
+        connectorId: connector.id,
+        context: spatialContext,
+        capabilities: capabilities
+      });
+
+      this.logger.info(`Auto-registered connector: ${connector.id}`);
+    } catch (error) {
+      this.logger.error(`Failed to auto-register connector: ${connector.id}`, error);
+    }
+  }
+
+  /**
+   * Get spatial context from connector
+   */
+  async getConnectorSpatialContext(connector) {
+    // Try to get spatial context from connector
+    if (connector.getSpatialContext) {
+      return await connector.getSpatialContext();
+    }
+
+    // Fallback to basic context
+    return {
+      type: connector.type,
+      name: connector.name,
+      description: connector.description,
+      capabilities: connector.getCapabilities ? await connector.getCapabilities() : []
+    };
+  }
+
+  /**
+   * Update element from connector data
+   */
+  async updateElementFromConnector(elementId, connectorData) {
+    const element = this.spatialData.get(elementId);
+    if (!element) {
+      return;
+    }
+
+    const updates = {
+      properties: {
+        ...element.properties,
+        ...connectorData.properties
+      },
+      metadata: {
+        ...element.metadata,
+        lastSync: new Date().toISOString(),
+        connectorData: connectorData
+      }
+    };
+
+    await this.updateSpatialElement({
+      elementId,
+      updates
+    });
+
+    // Broadcast update to WebSocket connections
+    this.broadcastToWebSockets({
+      type: 'element:updated',
+      element: this.spatialData.get(elementId)
+    });
+  }
+
+  /**
+   * Handle connector sync event
+   */
+  async handleConnectorSync(syncData) {
+    const { elementId, changes, timestamp } = syncData;
+    
+    if (this.debug.traceEvents) {
+      this.logger.debug('Handling connector sync', syncData);
+    }
+
+    try {
+      await this.updateElementFromConnector(elementId, {
+        changes,
+        timestamp,
+        source: 'connector'
+      });
+    } catch (error) {
+      this.logger.error('Failed to handle connector sync', error);
+    }
   }
 }
 

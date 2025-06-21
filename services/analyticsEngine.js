@@ -857,6 +857,251 @@ class AnalyticsEngine extends EventEmitter {
       stats: this.getStats()
     };
   }
+
+  /**
+   * Generic event processor for unknown event types
+   */
+  async processGenericEvent(event) {
+    const { cameraId, data, timestamp, type } = event;
+    
+    this.logger.info(`Processing generic event type: ${type} for camera ${cameraId}`);
+    
+    const analytics = this.getOrCreateAnalytics(cameraId);
+    
+    // Store generic event data
+    if (!analytics.genericEvents) {
+      analytics.genericEvents = [];
+    }
+    
+    const genericEvent = {
+      type,
+      data,
+      timestamp,
+      processedAt: new Date().toISOString()
+    };
+    
+    analytics.genericEvents.push(genericEvent);
+    
+    // Keep only recent generic events (last 50)
+    if (analytics.genericEvents.length > 50) {
+      analytics.genericEvents = analytics.genericEvents.slice(-50);
+    }
+    
+    // Discover and store new fields
+    this.discoverNewFields(type, data);
+    
+    // Extract capabilities from event data
+    const capabilities = this.extractCapabilitiesFromEvent(type, data);
+    
+    // Update analytics with new capabilities
+    if (!analytics.capabilities) {
+      analytics.capabilities = new Set();
+    }
+    capabilities.forEach(cap => analytics.capabilities.add(cap));
+    
+    // Emit generic event processed
+    this.emit('event:generic:processed', {
+      cameraId,
+      eventType: type,
+      data,
+      capabilities,
+      timestamp
+    });
+    
+    this.logger.debug(`Generic event ${type} processed for camera ${cameraId}`);
+  }
+
+  /**
+   * Discover new fields in event data
+   */
+  discoverNewFields(eventType, data) {
+    if (!this.discoveredFields) {
+      this.discoveredFields = new Map();
+    }
+    
+    if (!this.discoveredFields.has(eventType)) {
+      this.discoveredFields.set(eventType, new Set());
+    }
+    
+    const knownFields = this.discoveredFields.get(eventType);
+    const newFields = [];
+    
+    for (const [key, value] of Object.entries(data)) {
+      if (!knownFields.has(key)) {
+        knownFields.add(key);
+        newFields.push({ field: key, value, type: typeof value });
+      }
+    }
+    
+    if (newFields.length > 0) {
+      this.logger.warn(`🆕 NEW FIELDS DISCOVERED in analytics for ${eventType}: ${newFields.map(f => f.field).join(', ')}`);
+      
+      // Emit field discovery event
+      this.emit('analytics:fields:discovered', {
+        eventType,
+        newFields,
+        timestamp: new Date().toISOString()
+      });
+    }
+  }
+
+  /**
+   * Extract capabilities from event data
+   */
+  extractCapabilitiesFromEvent(eventType, data) {
+    const capabilities = [];
+    
+    // Smart detection capabilities
+    if (data.smartDetectTypes && Array.isArray(data.smartDetectTypes)) {
+      capabilities.push(...data.smartDetectTypes.map(type => `smartDetect:${type}`));
+    }
+    
+    // Audio detection capabilities
+    if (eventType === 'smartAudioDetect') {
+      capabilities.push('audioDetection');
+    }
+    
+    // Motion detection capabilities
+    if (eventType === 'motion') {
+      capabilities.push('motionDetection');
+    }
+    
+    // Line crossing capabilities
+    if (eventType === 'smartDetectLine') {
+      capabilities.push('lineCrossing');
+    }
+    
+    // Zone detection capabilities
+    if (eventType === 'smartDetectZone') {
+      capabilities.push('zoneDetection');
+    }
+    
+    // License plate detection
+    if (data.smartDetectTypes && data.smartDetectTypes.includes('license')) {
+      capabilities.push('licensePlateDetection');
+    }
+    
+    // Audio alarm detection
+    if (data.smartDetectTypes && data.smartDetectTypes.includes('alrmBark')) {
+      capabilities.push('audioAlarmDetection');
+    }
+    
+    return capabilities;
+  }
+
+  /**
+   * Get generic event analytics
+   */
+  getGenericEventAnalytics(cameraId) {
+    const analytics = this.getOrCreateAnalytics(cameraId);
+    
+    if (!analytics.genericEvents) {
+      return {
+        totalEvents: 0,
+        eventTypes: [],
+        recentEvents: [],
+        capabilities: []
+      };
+    }
+    
+    const eventTypes = [...new Set(analytics.genericEvents.map(e => e.type))];
+    const capabilities = analytics.capabilities ? Array.from(analytics.capabilities) : [];
+    
+    return {
+      totalEvents: analytics.genericEvents.length,
+      eventTypes,
+      recentEvents: analytics.genericEvents.slice(-10),
+      capabilities,
+      discoveredFields: this.getDiscoveredFieldsForAnalytics()
+    };
+  }
+
+  /**
+   * Get discovered fields for analytics
+   */
+  getDiscoveredFieldsForAnalytics() {
+    if (!this.discoveredFields) {
+      return {};
+    }
+    
+    const result = {};
+    for (const [eventType, fields] of this.discoveredFields) {
+      result[eventType] = Array.from(fields);
+    }
+    return result;
+  }
+
+  /**
+   * Process audio detection event
+   */
+  async processAudioDetectionEvent(event) {
+    const { cameraId, data, timestamp } = event;
+    
+    const analytics = this.getOrCreateAnalytics(cameraId);
+    
+    const audioContext = {
+      audioType: data.smartDetectTypes?.[0] || 'unknown',
+      confidence: data.confidence || data.score || 0,
+      duration: data.start && data.end ? data.end - data.start : undefined,
+      attributes: data.attributes || {},
+      timestamp: timestamp
+    };
+    
+    // Store audio detection context
+    if (!analytics.audioDetections) {
+      analytics.audioDetections = [];
+    }
+    analytics.audioDetections.push(audioContext);
+    
+    // Keep only recent audio detections (last 50)
+    if (analytics.audioDetections.length > 50) {
+      analytics.audioDetections = analytics.audioDetections.slice(-50);
+    }
+    
+    analytics.audioDetections++;
+    analytics.lastAudioDetection = timestamp;
+    
+    // Emit audio detection event
+    this.emit('audio:detected', {
+      cameraId,
+      audioContext,
+      analytics: this.getAudioDetectionAnalytics(cameraId)
+    });
+    
+    this.logger.info(`Audio detection (${audioContext.audioType}) on camera ${cameraId} with ${(audioContext.confidence * 100).toFixed(1)}% confidence`);
+  }
+
+  /**
+   * Get audio detection analytics
+   */
+  getAudioDetectionAnalytics(cameraId) {
+    const analytics = this.getOrCreateAnalytics(cameraId);
+    
+    if (!analytics.audioDetections) {
+      return {
+        totalDetections: 0,
+        audioTypes: [],
+        recentDetections: [],
+        confidenceStats: { average: 0, min: 0, max: 0 }
+      };
+    }
+    
+    const audioTypes = [...new Set(analytics.audioDetections.map(d => d.audioType))];
+    const confidences = analytics.audioDetections.map(d => d.confidence).filter(c => c > 0);
+    
+    const confidenceStats = confidences.length > 0 ? {
+      average: confidences.reduce((a, b) => a + b, 0) / confidences.length,
+      min: Math.min(...confidences),
+      max: Math.max(...confidences)
+    } : { average: 0, min: 0, max: 0 };
+    
+    return {
+      totalDetections: analytics.audioDetections.length,
+      audioTypes,
+      recentDetections: analytics.audioDetections.slice(-10),
+      confidenceStats
+    };
+  }
 }
 
 module.exports = AnalyticsEngine; 

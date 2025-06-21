@@ -82,6 +82,45 @@
         ],
         "disabled": []
       }
+    },
+    {
+      "id": "web-gui",
+      "type": "web-gui",
+      "name": "Web GUI",
+      "description": "Web-based graphical user interface",
+      "config": {
+        "webInterface": {
+          "enabled": true,
+          "port": 3000,
+          "host": "0.0.0.0"
+        },
+        "autoRegisterWithMaps": true,
+        "autoDiscoverConnectors": true,
+        "theme": "dark",
+        "layout": "default"
+      },
+      "capabilities": {
+        "enabled": [],
+        "disabled": []
+      }
+    },
+    {
+      "id": "main-map",
+      "type": "map",
+      "name": "Main Map",
+      "description": "Primary spatial visualization map",
+      "config": {
+        "autoRegisterConnectors": true,
+        "enableWebSockets": true,
+        "editMode": false,
+        "viewMode": "realtime",
+        "spatialElements": [],
+        "connectorContexts": []
+      },
+      "capabilities": {
+        "enabled": [],
+        "disabled": []
+      }
     }
   ]
 }

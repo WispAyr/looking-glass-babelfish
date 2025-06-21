@@ -39,9 +39,17 @@ const defaultRules = require('./config/defaultRules');
 const ConnectorRegistry = require('./connectors/ConnectorRegistry');
 const UnifiProtectConnector = require('./connectors/types/UnifiProtectConnector');
 const MqttConnector = require('./connectors/types/MqttConnector');
+const WebGuiConnector = require('./connectors/types/WebGuiConnector');
+const MapConnector = require('./connectors/types/MapConnector');
 
 // Import analytics routes
 const analyticsRouter = require('./routes/analytics');
+
+// Import map integration service
+const MapIntegrationService = require('./services/mapIntegrationService');
+
+// Import map routes
+const mapRouter = require('./routes/map');
 
 // Initialize logger
 const logger = winston.createLogger({
@@ -80,6 +88,9 @@ let zoneManager;
 let analyticsEngine;
 let dashboardService;
 
+// Map integration service
+let mapIntegrationService;
+
 // Main application setup
 const app = express();
 const server = http.createServer(app);
@@ -91,7 +102,22 @@ const io = new Server(server, {
 });
 
 // Middleware
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+      scriptSrcAttr: ["'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://cdnjs.cloudflare.com"],
+      imgSrc: ["'self'", "data:", "https:"],
+      connectSrc: ["'self'", "ws:", "wss:"],
+      fontSrc: ["'self'", "https:", "data:", "https://cdnjs.cloudflare.com"],
+      objectSrc: ["'none'"],
+      mediaSrc: ["'self'"],
+      frameSrc: ["'none'"]
+    }
+  }
+}));
 app.use(compression());
 app.use(cors(config.server.cors));
 app.use(express.json());
@@ -136,6 +162,75 @@ function setupConnectorEvents() {
     
     // Broadcast to WebSocket clients
     broadcastToClients('connectorEvent', event);
+  });
+  
+  // Handle new event type discoveries
+  connectorRegistry.on('eventType:discovered', (data) => {
+    logger.warn(`🆕 NEW EVENT TYPE DISCOVERED: ${data.eventType}`);
+    
+    // Publish to event bus
+    if (eventBus) {
+      eventBus.publishEvent({
+        type: 'eventType:discovered',
+        source: 'connector-registry',
+        timestamp: data.timestamp,
+        data: data
+      });
+    }
+    
+    // Publish to MQTT
+    if (mqttBroker) {
+      mqttBroker.publish('system/discovered/eventType', data);
+    }
+    
+    // Broadcast to WebSocket clients
+    broadcastToClients('eventTypeDiscovered', data);
+  });
+  
+  // Handle new field discoveries
+  connectorRegistry.on('fields:discovered', (data) => {
+    logger.warn(`🆕 NEW FIELDS DISCOVERED for ${data.eventType}: ${data.newFields.map(f => f.field).join(', ')}`);
+    
+    // Publish to event bus
+    if (eventBus) {
+      eventBus.publishEvent({
+        type: 'fields:discovered',
+        source: 'connector-registry',
+        timestamp: data.timestamp,
+        data: data
+      });
+    }
+    
+    // Publish to MQTT
+    if (mqttBroker) {
+      mqttBroker.publish('system/discovered/fields', data);
+    }
+    
+    // Broadcast to WebSocket clients
+    broadcastToClients('fieldsDiscovered', data);
+  });
+  
+  // Handle generic events
+  connectorRegistry.on('event:generic', (event) => {
+    logger.info(`Generic event received: ${event.eventType} for camera ${event.cameraId}`);
+    
+    // Publish to event bus
+    if (eventBus) {
+      eventBus.publishEvent({
+        type: 'event:generic',
+        source: 'connector-registry',
+        timestamp: event.timestamp,
+        data: event
+      });
+    }
+    
+    // Publish to MQTT
+    if (mqttBroker) {
+      mqttBroker.publish('events/generic', event);
+    }
+    
+    // Broadcast to WebSocket clients
+    broadcastToClients('genericEvent', event);
   });
 }
 
@@ -363,7 +458,8 @@ injectServices({
   get analyticsEngine() { return analyticsEngine; },
   get dashboardService() { return dashboardService; },
   get ruleEngine() { return ruleEngine; },
-  get flowOrchestrator() { return flowOrchestrator; }
+  get flowOrchestrator() { return flowOrchestrator; },
+  get mapIntegrationService() { return mapIntegrationService; }
 });
 
 // Connector event handling
@@ -430,6 +526,91 @@ function setupEventProcessing() {
   });
 }
 
+/**
+ * Auto-register Web GUI and Map connectors
+ */
+async function autoRegisterGuiAndMapConnectors() {
+  try {
+    // Check if Web GUI connector exists
+    const webGuiConnector = connectorRegistry.getConnector('web-gui');
+    if (!webGuiConnector) {
+      logger.info('Auto-creating Web GUI connector...');
+      await connectorRegistry.createConnector({
+        id: 'web-gui',
+        type: 'web-gui',
+        name: 'Web GUI',
+        description: 'Web-based graphical user interface',
+        config: {
+          webInterface: {
+            enabled: true,
+            port: config.server.port,
+            host: config.server.host
+          },
+          autoRegisterWithMaps: true,
+          autoDiscoverConnectors: true,
+          theme: 'dark',
+          layout: 'default'
+        }
+      });
+    }
+
+    // Check if Map connector exists
+    const mapConnector = connectorRegistry.getConnector('main-map');
+    if (!mapConnector) {
+      logger.info('Auto-creating Map connector...');
+      await connectorRegistry.createConnector({
+        id: 'main-map',
+        type: 'map',
+        name: 'Main Map',
+        description: 'Primary spatial visualization map',
+        config: {
+          autoRegisterConnectors: true,
+          enableWebSockets: true,
+          editMode: false,
+          viewMode: 'realtime',
+          spatialElements: [],
+          connectorContexts: []
+        }
+      });
+    }
+
+    // Initialize map integration service with connectors
+    const webGui = connectorRegistry.getConnector('web-gui');
+    const map = connectorRegistry.getConnector('main-map');
+    
+    if (webGui && map) {
+      await mapIntegrationService.initialize({
+        webGuiConnector: webGui,
+        mapConnector: map,
+        connectorRegistry: connectorRegistry
+      });
+
+      // Auto-register Web GUI with Map
+      if (webGui.autoRegisterWithMaps) {
+        await webGui.autoRegisterWithMaps(map);
+      }
+
+      // Auto-register all other connectors with the map
+      const otherConnectors = connectorRegistry.getConnectors().filter(c => 
+        c.id !== 'web-gui' && c.id !== 'main-map'
+      );
+
+      for (const connector of otherConnectors) {
+        try {
+          await mapIntegrationService.registerConnectorWithMap(connector, map);
+        } catch (error) {
+          logger.warn(`Failed to auto-register connector ${connector.id} with map: ${error.message}`);
+        }
+      }
+
+      logger.info(`Auto-registered ${otherConnectors.length} connectors with map`);
+    }
+
+  } catch (error) {
+    logger.error('Failed to auto-register GUI and Map connectors:', error);
+  }
+}
+
 // Start server
 async function startServer() {
   try {
@@ -453,18 +634,26 @@ async function startServer() {
     analyticsEngine = new AnalyticsEngine(config.analytics || {}, logger);
     dashboardService = new DashboardService(config.dashboard || {}, logger);
 
+    // Initialize map integration service
+    mapIntegrationService = new MapIntegrationService(config.mapIntegration || {}, logger);
+
     // Initialize connector registry
     connectorRegistry = new ConnectorRegistry(logger);
 
     // Register connector types
     connectorRegistry.registerType('unifi-protect', UnifiProtectConnector);
     connectorRegistry.registerType('mqtt', MqttConnector);
+    connectorRegistry.registerType('web-gui', WebGuiConnector);
+    connectorRegistry.registerType('map', MapConnector);
 
     // Auto-discover and register connector types
     await connectorRegistry.autoDiscoverTypes();
 
     // Initialize the registry to load connectors from config
     connectorRegistry.initialize();
+
+    // Auto-register Web GUI and Map connectors
+    await autoRegisterGuiAndMapConnectors();
 
     // Set entity manager reference for connectors that support it
     connectorRegistry.getConnectors().forEach(connector => {
@@ -584,7 +773,8 @@ async function startServer() {
       analyticsEngine,
       dashboardService,
       ruleEngine,
-      flowOrchestrator
+      flowOrchestrator,
+      mapIntegrationService
     });
     
     // Make services available to API routes via app.locals
@@ -597,6 +787,7 @@ async function startServer() {
     app.locals.cache = cache;
     app.locals.unifiAPI = unifiAPI;
     app.locals.mqttBroker = mqttBroker;
+    app.locals.mapIntegrationService = mapIntegrationService;
     
     // Flow system services
     if (config.flow.enabled) {
@@ -623,6 +814,9 @@ async function startServer() {
     
     // Mount analytics routes
     app.use('/api/analytics', analyticsRouter);
+    
+    // Mount map routes
+    app.use('/api/map', mapRouter);
     
     // Start server
     server.listen(config.server.port, config.server.host, () => {

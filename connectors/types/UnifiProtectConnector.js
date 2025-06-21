@@ -1362,7 +1362,7 @@ class UnifiProtectConnector extends BaseConnector {
         }
         
         // Log successful binary message parsing
-        this.logger.info(`Successfully parsed binary message: ${message.action || 'unknown'} - ${JSON.stringify(message).substring(0, 200)}...`);
+        this.logger.info(`Successfully parsed binary message: ${message.action || message.type || 'unknown'} - ${JSON.stringify(message).substring(0, 200)}...`);
       } else {
         // Handle text messages
         const dataString = data.toString();
@@ -1381,7 +1381,7 @@ class UnifiProtectConnector extends BaseConnector {
         // Try to parse as JSON
         try {
           message = JSON.parse(dataString);
-          this.logger.info(`Successfully parsed JSON message: ${message.action || 'unknown'} - ${JSON.stringify(message).substring(0, 200)}...`);
+          this.logger.info(`Successfully parsed JSON message: ${message.action || message.type || 'unknown'} - ${JSON.stringify(message).substring(0, 200)}...`);
         } catch (error) {
           // Only log JSON parse errors for actual text data that looks like it should be JSON
           // Skip binary data that was converted to string or other non-JSON text
@@ -1395,28 +1395,444 @@ class UnifiProtectConnector extends BaseConnector {
         }
       }
       
-      // Only process messages that have a known action
-      if (message && message.action) {
-        if (message.action === 'update') {
-          this.handleWebSocketUpdate(message);
-        } else if (message.action === 'add') {
-          this.handleWebSocketAdd(message);
-        } else if (message.action === 'remove') {
-          this.handleWebSocketRemove(message);
-        } else if (message.action === 'pong') {
-          // Heartbeat response
-          this.logger.debug('Heartbeat response received');
-        } else {
-          this.logger.info(`Unknown message type: ${message.action} - ${JSON.stringify(message).substring(0, 200)}...`);
+      // Enhanced message handling with automatic type detection and field discovery
+      if (message) {
+        const result = this.handleMessageByStructure(message);
+        if (!result.handled) {
+          // Only log if the message is not a known event and has content
+          this.logger.info(`Unhandled WebSocket message: ${JSON.stringify(message).substring(0, 200)}...`);
         }
-      } else if (message) {
-        // Only log if the message is not a known event and has content
-        this.logger.info(`Unhandled WebSocket message: ${JSON.stringify(message).substring(0, 200)}...`);
       }
     } catch (error) {
       const errorMessage = error?.message || String(error);
       this.logger.error('Error handling WebSocket message:', errorMessage);
     }
+  }
+
+  /**
+   * Handle message by detecting its structure and mapping to appropriate handlers
+   */
+  handleMessageByStructure(message) {
+    // Handle traditional action-based messages
+    if (message.action) {
+      return this.handleActionBasedMessage(message);
+    }
+    
+    // Handle UniFi Protect event-style messages (item + type structure)
+    if (message.item && message.type) {
+      return this.handleUnifiProtectEventMessage(message);
+    }
+    
+    // Handle direct event messages
+    if (message.modelKey && message.id) {
+      return this.handleDirectEventMessage(message);
+    }
+    
+    // Handle heartbeat responses
+    if (message.pong || message.ping) {
+      this.logger.debug('Heartbeat response received');
+      return { handled: true, type: 'heartbeat' };
+    }
+    
+    return { handled: false, reason: 'unknown_structure' };
+  }
+
+  /**
+   * Handle traditional action-based messages
+   */
+  handleActionBasedMessage(message) {
+    switch (message.action) {
+      case 'update':
+        this.handleWebSocketUpdate(message);
+        return { handled: true, type: 'update' };
+      case 'add':
+        this.handleWebSocketAdd(message);
+        return { handled: true, type: 'add' };
+      case 'remove':
+        this.handleWebSocketRemove(message);
+        return { handled: true, type: 'remove' };
+      case 'pong':
+        this.logger.debug('Heartbeat response received');
+        return { handled: true, type: 'heartbeat' };
+      default:
+        this.logger.info(`Unknown message action: ${message.action} - ${JSON.stringify(message).substring(0, 200)}...`);
+        return { handled: false, reason: 'unknown_action' };
+    }
+  }
+
+  /**
+   * Handle UniFi Protect event-style messages (item + type structure)
+   */
+  handleUnifiProtectEventMessage(message) {
+    const { item, type } = message;
+    
+    // Discover and track new event types and fields
+    this.discoverNewEventTypes(item);
+    this.discoverNewFields(item);
+    
+    // Map UniFi Protect event types to internal event types
+    const eventTypeMapping = {
+      'smartDetectZone': 'smartDetectZone',
+      'smartDetectLine': 'smartDetectLine', 
+      'smartAudioDetect': 'smartAudioDetect',
+      'motion': 'motion',
+      'ring': 'ring',
+      'recording': 'recording',
+      'connection': 'connection'
+    };
+    
+    const mappedEventType = eventTypeMapping[item.type] || item.type;
+    
+    // Create standardized event structure with all original fields preserved
+    const event = {
+      connectorId: this.id,
+      type: mappedEventType,
+      modelKey: item.modelKey || 'event',
+      deviceId: item.device,
+      eventId: item.id,
+      timestamp: new Date().toISOString(),
+      data: {
+        ...item, // Preserve ALL original fields
+        originalType: item.type,
+        mappedType: mappedEventType,
+        start: item.start ? new Date(item.start).toISOString() : undefined,
+        end: item.end ? new Date(item.end).toISOString() : undefined
+      },
+      source: 'unifi-protect-websocket',
+      metadata: {
+        messageType: 'unifi-protect-event',
+        originalMessage: message,
+        discoveredFields: this.getDiscoveredFields(item),
+        capabilities: this.extractCapabilities(item)
+      }
+    };
+
+    this.logger.info(`UniFi Protect ${mappedEventType} event: ${item.device} (${item.type})`);
+    
+    // Queue event for processing
+    this.queueEvent(event);
+    
+    // Emit the event
+    this.emit('event', event);
+    this.emit(`event:${mappedEventType}`, event);
+    this.emit(`connector:${this.id}:event`, event);
+    
+    // Handle specific event types
+    this.handleSpecificEventType(event, item);
+    
+    return { handled: true, type: mappedEventType };
+  }
+
+  /**
+   * Handle direct event messages (modelKey + id structure)
+   */
+  handleDirectEventMessage(message) {
+    const event = {
+      connectorId: this.id,
+      type: 'update',
+      modelKey: message.modelKey,
+      deviceId: message.id,
+      eventId: message.newUpdateId,
+      timestamp: new Date().toISOString(),
+      data: message.data || message,
+      source: 'unifi-protect-websocket'
+    };
+
+    this.logger.info(`UniFi ${message.modelKey} update: ${message.id}`);
+    
+    // Queue event for processing
+    this.queueEvent(event);
+    
+    // Emit the event
+    this.emit('event', event);
+    this.emit(`event:${message.modelKey}`, event);
+    this.emit(`connector:${this.id}:event`, event);
+    
+    // Handle specific modelKey events
+    switch (message.modelKey) {
+      case 'camera':
+        this.handleCameraUpdate(event);
+        break;
+      case 'event':
+        this.handleEventUpdate(event);
+        break;
+      case 'nvr':
+        this.handleNvrUpdate(event);
+        break;
+      case 'sensor':
+        this.handleSensorUpdate(event);
+        break;
+      default:
+        this.logger.debug(`Unhandled modelKey update: ${message.modelKey}`);
+    }
+    
+    return { handled: true, type: 'direct_update' };
+  }
+
+  /**
+   * Discover and track new event types
+   */
+  discoverNewEventTypes(item) {
+    if (!this.discoveredEventTypes) {
+      this.discoveredEventTypes = new Set();
+    }
+    
+    if (!this.discoveredEventTypes.has(item.type)) {
+      this.discoveredEventTypes.add(item.type);
+      this.logger.warn(`🆕 NEW EVENT TYPE DISCOVERED: ${item.type}`);
+      
+      // Emit discovery event for downstream systems
+      this.emit('eventType:discovered', {
+        eventType: item.type,
+        timestamp: new Date().toISOString(),
+        sampleData: item
+      });
+    }
+  }
+
+  /**
+   * Discover and track new fields in events
+   */
+  discoverNewFields(item) {
+    if (!this.discoveredFields) {
+      this.discoveredFields = new Map();
+    }
+    
+    const eventType = item.type;
+    if (!this.discoveredFields.has(eventType)) {
+      this.discoveredFields.set(eventType, new Set());
+    }
+    
+    const knownFields = this.discoveredFields.get(eventType);
+    const newFields = [];
+    
+    for (const [key, value] of Object.entries(item)) {
+      if (!knownFields.has(key)) {
+        knownFields.add(key);
+        newFields.push({ field: key, value, type: typeof value });
+      }
+    }
+    
+    if (newFields.length > 0) {
+      this.logger.warn(`🆕 NEW FIELDS DISCOVERED for ${eventType}: ${newFields.map(f => f.field).join(', ')}`);
+      
+      // Emit field discovery event for downstream systems
+      this.emit('fields:discovered', {
+        eventType,
+        newFields,
+        timestamp: new Date().toISOString()
+      });
+    }
+  }
+
+  /**
+   * Get discovered fields for an event type
+   */
+  getDiscoveredFields(item) {
+    if (!this.discoveredFields || !this.discoveredFields.has(item.type)) {
+      return [];
+    }
+    return Array.from(this.discoveredFields.get(item.type));
+  }
+
+  /**
+   * Extract capabilities from event data
+   */
+  extractCapabilities(item) {
+    const capabilities = [];
+    
+    // Smart detection capabilities
+    if (item.smartDetectTypes && Array.isArray(item.smartDetectTypes)) {
+      capabilities.push(...item.smartDetectTypes.map(type => `smartDetect:${type}`));
+    }
+    
+    // Audio detection capabilities
+    if (item.type === 'smartAudioDetect') {
+      capabilities.push('audioDetection');
+    }
+    
+    // Motion detection capabilities
+    if (item.type === 'motion') {
+      capabilities.push('motionDetection');
+    }
+    
+    // Line crossing capabilities
+    if (item.type === 'smartDetectLine') {
+      capabilities.push('lineCrossing');
+    }
+    
+    // Zone detection capabilities
+    if (item.type === 'smartDetectZone') {
+      capabilities.push('zoneDetection');
+    }
+    
+    // License plate detection
+    if (item.smartDetectTypes && item.smartDetectTypes.includes('license')) {
+      capabilities.push('licensePlateDetection');
+    }
+    
+    return capabilities;
+  }
+
+  /**
+   * Handle specific event types with enhanced processing
+   */
+  handleSpecificEventType(event, item) {
+    switch (event.type) {
+      case 'smartDetectZone':
+      case 'smartDetectLine':
+        this.handleSmartDetectionEvent(event, item);
+        break;
+      case 'smartAudioDetect':
+        this.handleSmartAudioDetectionEvent(event, item);
+        break;
+      case 'motion':
+        this.handleMotionDetectionEvent(event, item);
+        break;
+      case 'ring':
+        this.handleRingEvent(event, item);
+        break;
+      case 'recording':
+        this.handleRecordingEvent(event, item);
+        break;
+      case 'connection':
+        this.handleConnectionEvent(event, item);
+        break;
+      default:
+        // Generic handler for unknown event types
+        this.handleGenericEvent(event, item);
+    }
+  }
+
+  /**
+   * Handle smart detection events (zone and line)
+   */
+  handleSmartDetectionEvent(event, item) {
+    const smartContext = {
+      objectType: item.smartDetectTypes?.[0] || 'unknown',
+      confidence: item.score || 0.5,
+      zone: item.zone,
+      location: item.location,
+      trackingId: item.trackingId,
+      boundingBox: item.boundingBox,
+      attributes: {
+        detectionTypes: item.smartDetectTypes || [],
+        zoneType: event.type, // 'smartDetectZone' or 'smartDetectLine'
+        ...item.attributes
+      },
+      timestamp: event.timestamp
+    };
+
+    // Emit smart detection event with context
+    this.emit('smart:detected', {
+      cameraId: event.deviceId,
+      smartContext,
+      event: event.data
+    });
+
+    this.logger.info(`Smart detection (${smartContext.objectType}) on camera ${event.deviceId} with ${(smartContext.confidence * 100).toFixed(1)}% confidence`);
+  }
+
+  /**
+   * Handle smart audio detection events
+   */
+  handleSmartAudioDetectionEvent(event, item) {
+    const audioContext = {
+      audioType: item.smartDetectTypes?.[0] || 'unknown',
+      confidence: item.score || 0.5,
+      duration: item.start && item.end ? item.end - item.start : undefined,
+      attributes: {
+        detectionTypes: item.smartDetectTypes || [],
+        ...item.attributes
+      },
+      timestamp: event.timestamp
+    };
+
+    // Emit audio detection event with context
+    this.emit('audio:detected', {
+      cameraId: event.deviceId,
+      audioContext,
+      event: event.data
+    });
+
+    this.logger.info(`Audio detection (${audioContext.audioType}) on camera ${event.deviceId} with ${(audioContext.confidence * 100).toFixed(1)}% confidence`);
+  }
+
+  /**
+   * Handle motion detection events
+   */
+  handleMotionDetectionEvent(event, item) {
+    const motionData = {
+      timestamp: item.start ? new Date(item.start).toISOString() : event.timestamp,
+      cameraId: event.deviceId,
+      duration: item.start && item.end ? item.end - item.start : undefined,
+      zone: item.zone
+    };
+
+    this.emit('motion:detected', {
+      cameraId: event.deviceId,
+      motionData,
+      event: event.data
+    });
+
+    this.logger.info(`Motion detected on camera: ${event.deviceId}`);
+  }
+
+  /**
+   * Handle ring events
+   */
+  handleRingEvent(event, item) {
+    const ringData = {
+      timestamp: item.start ? new Date(item.start).toISOString() : event.timestamp,
+      cameraId: event.deviceId
+    };
+
+    this.emit('ring:detected', {
+      cameraId: event.deviceId,
+      ringData,
+      event: event.data
+    });
+
+    this.logger.info(`Doorbell ring on camera: ${event.deviceId}`);
+  }
+
+  /**
+   * Handle recording events
+   */
+  handleRecordingEvent(event, item) {
+    this.emit('recording:event', {
+      cameraId: event.deviceId,
+      event: event.data
+    });
+
+    this.logger.debug(`Recording event on camera: ${event.deviceId}`);
+  }
+
+  /**
+   * Handle connection events
+   */
+  handleConnectionEvent(event, item) {
+    this.emit('connection:event', {
+      cameraId: event.deviceId,
+      event: event.data
+    });
+
+    this.logger.debug(`Connection event on camera: ${event.deviceId}`);
+  }
+
+  /**
+   * Generic handler for unknown event types
+   */
+  handleGenericEvent(event, item) {
+    this.logger.info(`Generic event handler for unknown type: ${event.type}`);
+    
+    // Emit generic event for downstream processing
+    this.emit('event:generic', {
+      eventType: event.type,
+      cameraId: event.deviceId,
+      data: event.data,
+      timestamp: event.timestamp
+    });
   }
 
   /**

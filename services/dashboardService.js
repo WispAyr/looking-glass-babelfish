@@ -25,8 +25,16 @@ class DashboardService extends EventEmitter {
       zones: {},
       cameras: {},
       analytics: {},
-      events: {},
-      alerts: {}
+      events: {
+        recent: [],
+        byType: {},
+        byCamera: {}
+      },
+      alerts: {
+        recent: [],
+        byType: {},
+        bySeverity: {}
+      }
     };
     
     // Real-time updates
@@ -99,6 +107,13 @@ class DashboardService extends EventEmitter {
       this.analyticsEngine.on('smart:pattern:low-confidence', (data) => this.addSmartConfidenceAlert(data));
       this.analyticsEngine.on('smart:pattern:zone-activity', (data) => this.addZoneActivityAlert(data));
       this.analyticsEngine.on('vehicle:cross-zone', (data) => this.addCrossZoneAlert(data));
+      
+      // Audio detection events
+      this.analyticsEngine.on('audio:detected', (data) => this.addAudioDetectionAlert(data));
+      
+      // Generic event processing
+      this.analyticsEngine.on('event:generic:processed', (data) => this.addGenericEventAlert(data));
+      this.analyticsEngine.on('analytics:fields:discovered', (data) => this.handleNewFieldsDiscovered(data));
     }
     
     // Entity events
@@ -141,12 +156,12 @@ class DashboardService extends EventEmitter {
   async loadDashboardData() {
     try {
       await Promise.all([
-        this.updateOverview(),
+        this.updateAlerts(),
+        this.updateEvents(),
         this.updateZones(),
         this.updateCameras(),
         this.updateAnalytics(),
-        this.updateEvents(),
-        this.updateAlerts()
+        this.updateOverview()
       ]);
       
       this.logger.info('Dashboard data loaded successfully');
@@ -161,9 +176,10 @@ class DashboardService extends EventEmitter {
   async updateDashboardData() {
     try {
       await Promise.all([
-        this.updateOverview(),
+        this.updateAlerts(),
+        this.updateEvents(),
         this.updateAnalytics(),
-        this.updateEvents()
+        this.updateOverview()
       ]);
       
       // Notify subscribers
@@ -211,7 +227,7 @@ class DashboardService extends EventEmitter {
       }
       
       // Get alert count
-      overview.totalAlerts = this.dashboardData.alerts.recent?.length || 0;
+      overview.totalAlerts = (this.dashboardData.alerts?.recent?.length) || 0;
       
       this.dashboardData.overview = overview;
     } catch (error) {
@@ -274,14 +290,12 @@ class DashboardService extends EventEmitter {
    */
   async updateAnalytics() {
     try {
-      if (!this.analyticsEngine) {
-        return;
-      }
-      
       const analytics = {
-        timestamp: new Date().toISOString(),
-        cameras: {},
-        zones: {},
+        summary: {
+          totalEvents: 0,
+          totalDetections: 0,
+          totalAlerts: 0
+        },
         smartDetections: {
           summary: {
             totalDetections: 0,
@@ -294,7 +308,7 @@ class DashboardService extends EventEmitter {
           },
           confidenceStats: {
             average: 0,
-            min: 1,
+            min: 0,
             max: 0
           },
           recentDetections: [],
@@ -304,10 +318,31 @@ class DashboardService extends EventEmitter {
             crossZone: 0
           }
         },
+        audioDetections: {
+          summary: {
+            totalDetections: 0,
+            audioTypes: []
+          },
+          confidenceStats: {
+            average: 0,
+            min: 0,
+            max: 0
+          },
+          recentDetections: []
+        },
+        genericEvents: {
+          summary: {
+            totalEvents: 0,
+            eventTypes: []
+          },
+          capabilities: [],
+          discoveredFields: {}
+        },
+        cameras: {},
+        zones: {},
         speedCalculations: [],
-        peopleCounts: {},
-        vehicleCounts: {},
-        plateTracking: {}
+        discoveredEventTypes: this.getDiscoveredEventTypes(),
+        discoveredFields: this.getDiscoveredFields()
       };
       
       // Get camera analytics
@@ -317,10 +352,14 @@ class DashboardService extends EventEmitter {
         for (const camera of cameras) {
           const cameraAnalytics = this.analyticsEngine.getCameraAnalytics(camera.id);
           const smartAnalytics = this.analyticsEngine.getSmartDetectionAnalytics(camera.id);
+          const audioAnalytics = this.analyticsEngine.getAudioDetectionAnalytics(camera.id);
+          const genericAnalytics = this.analyticsEngine.getGenericEventAnalytics(camera.id);
           
           analytics.cameras[camera.id] = {
             ...cameraAnalytics,
             smartDetections: smartAnalytics,
+            audioDetections: audioAnalytics,
+            genericEvents: genericAnalytics,
             cameraName: camera.name,
             status: camera.status
           };
@@ -334,6 +373,19 @@ class DashboardService extends EventEmitter {
             analytics.smartDetections.summary.packageDetections += smartAnalytics.detectionTypes.package || 0;
             analytics.smartDetections.summary.faceDetections += smartAnalytics.detectionTypes.face || 0;
             analytics.smartDetections.summary.genericDetections += smartAnalytics.detectionTypes.generic || 0;
+          }
+          
+          // Aggregate audio detection summary
+          if (audioAnalytics.audioTypes) {
+            analytics.audioDetections.summary.totalDetections += audioAnalytics.totalDetections;
+            analytics.audioDetections.summary.audioTypes.push(...audioAnalytics.audioTypes);
+          }
+          
+          // Aggregate generic events summary
+          if (genericAnalytics.eventTypes) {
+            analytics.genericEvents.summary.totalEvents += genericAnalytics.totalEvents;
+            analytics.genericEvents.summary.eventTypes.push(...genericAnalytics.eventTypes);
+            analytics.genericEvents.capabilities.push(...genericAnalytics.capabilities);
           }
           
           // Aggregate confidence stats
@@ -353,6 +405,10 @@ class DashboardService extends EventEmitter {
           if (smartAnalytics.recentDetections) {
             analytics.smartDetections.recentDetections.push(...smartAnalytics.recentDetections);
           }
+          
+          if (audioAnalytics.recentDetections) {
+            analytics.audioDetections.recentDetections.push(...audioAnalytics.recentDetections);
+          }
         }
         
         // Sort recent detections by timestamp
@@ -360,9 +416,16 @@ class DashboardService extends EventEmitter {
           new Date(b.timestamp) - new Date(a.timestamp)
         );
         
+        analytics.audioDetections.recentDetections.sort((a, b) => 
+          new Date(b.timestamp) - new Date(a.timestamp)
+        );
+        
         // Keep only the most recent 50 detections
         analytics.smartDetections.recentDetections = 
           analytics.smartDetections.recentDetections.slice(0, 50);
+          
+        analytics.audioDetections.recentDetections = 
+          analytics.audioDetections.recentDetections.slice(0, 50);
       }
       
       // Get zone analytics
@@ -386,13 +449,13 @@ class DashboardService extends EventEmitter {
       
       // Get speed calculations
       const speedCalculations = this.analyticsEngine.getSpeedCalculations();
-      analytics.speedCalculations = speedCalculations.slice(0, 20); // Recent 20
+      analytics.speedCalculations = speedCalculations;
       
-      // Get plate tracking
-      const plateTracking = this.analyticsEngine.getPlateTracking();
-      analytics.plateTracking = plateTracking;
+      // Update dashboard data
+      this.dashboardData = analytics;
       
-      this.dashboardData.analytics = analytics;
+      // Emit analytics updated event
+      this.emit('analytics:updated', analytics);
       
     } catch (error) {
       this.logger.error('Error updating analytics:', error);
@@ -404,10 +467,19 @@ class DashboardService extends EventEmitter {
    */
   async updateEvents() {
     try {
+      // Initialize events structure if it doesn't exist
+      if (!this.dashboardData.events) {
+        this.dashboardData.events = {
+          recent: [],
+          byType: {},
+          byCamera: {}
+        };
+      }
+      
       const events = {
-        recent: [],
-        byType: {},
-        byCamera: {}
+        recent: this.dashboardData.events.recent || [],
+        byType: this.dashboardData.events.byType || {},
+        byCamera: this.dashboardData.events.byCamera || {}
       };
       
       // Get recent events from all cameras
@@ -436,13 +508,28 @@ class DashboardService extends EventEmitter {
    */
   async updateAlerts() {
     try {
-      const alerts = {
-        recent: this.dashboardData.alerts.recent || [],
-        byType: {},
-        bySeverity: {}
-      };
+      // Initialize alerts structure if it doesn't exist
+      if (!this.dashboardData.alerts) {
+        this.dashboardData.alerts = {
+          recent: [],
+          byType: {},
+          bySeverity: {}
+        };
+      }
       
-      this.dashboardData.alerts = alerts;
+      // Ensure recent array exists
+      if (!this.dashboardData.alerts.recent) {
+        this.dashboardData.alerts.recent = [];
+      }
+      
+      // Ensure other properties exist
+      if (!this.dashboardData.alerts.byType) {
+        this.dashboardData.alerts.byType = {};
+      }
+      
+      if (!this.dashboardData.alerts.bySeverity) {
+        this.dashboardData.alerts.bySeverity = {};
+      }
     } catch (error) {
       this.logger.error('Error updating alerts:', error);
     }
@@ -590,19 +677,91 @@ class DashboardService extends EventEmitter {
   }
   
   /**
+   * Add audio detection alert
+   */
+  addAudioDetectionAlert(data) {
+    const { cameraId, audioContext, analytics } = data;
+    
+    const alert = {
+      id: `audio-${Date.now()}`,
+      type: 'audio-detection',
+      severity: audioContext.confidence > 0.8 ? 'high' : audioContext.confidence > 0.5 ? 'medium' : 'low',
+      title: `Audio Detection: ${audioContext.audioType}`,
+      message: `Audio detection "${audioContext.audioType}" on camera ${cameraId} with ${(audioContext.confidence * 100).toFixed(1)}% confidence`,
+      data: {
+        cameraId,
+        audioContext,
+        analytics
+      },
+      timestamp: new Date().toISOString(),
+      acknowledged: false
+    };
+    
+    this.addAlert(alert);
+  }
+  
+  /**
+   * Add generic event alert
+   */
+  addGenericEventAlert(data) {
+    const { cameraId, eventType, capabilities, timestamp } = data;
+    
+    const alert = {
+      id: `generic-${Date.now()}`,
+      type: 'generic-event',
+      severity: 'info',
+      title: `Generic Event: ${eventType}`,
+      message: `Generic event "${eventType}" processed for camera ${cameraId}`,
+      data: {
+        cameraId,
+        eventType,
+        capabilities,
+        timestamp
+      },
+      timestamp: new Date().toISOString(),
+      acknowledged: false
+    };
+    
+    this.addAlert(alert);
+  }
+  
+  /**
    * Add alert to dashboard
    */
   addAlert(alert) {
+    // Ensure alerts structure exists
     if (!this.dashboardData.alerts) {
-      this.dashboardData.alerts = [];
+      this.dashboardData.alerts = {
+        recent: [],
+        byType: {},
+        bySeverity: {}
+      };
     }
     
-    this.dashboardData.alerts.unshift(alert);
+    // Ensure recent array exists
+    if (!this.dashboardData.alerts.recent) {
+      this.dashboardData.alerts.recent = [];
+    }
+    
+    // Add alert to recent array
+    this.dashboardData.alerts.recent.unshift(alert);
     
     // Limit alerts
-    if (this.dashboardData.alerts.length > this.dashboardConfig.maxAlerts) {
-      this.dashboardData.alerts = this.dashboardData.alerts.slice(0, this.dashboardConfig.maxAlerts);
+    if (this.dashboardData.alerts.recent.length > this.dashboardConfig.maxAlerts) {
+      this.dashboardData.alerts.recent = this.dashboardData.alerts.recent.slice(0, this.dashboardConfig.maxAlerts);
     }
+    
+    // Categorize by type
+    if (!this.dashboardData.alerts.byType[alert.type]) {
+      this.dashboardData.alerts.byType[alert.type] = [];
+    }
+    this.dashboardData.alerts.byType[alert.type].push(alert);
+    
+    // Categorize by severity
+    if (!this.dashboardData.alerts.bySeverity[alert.severity]) {
+      this.dashboardData.alerts.bySeverity[alert.severity] = [];
+    }
+    this.dashboardData.alerts.bySeverity[alert.severity].push(alert);
     
     // Notify subscribers immediately
     this.notifySubscribers();
@@ -729,6 +888,14 @@ class DashboardService extends EventEmitter {
    * Get events data
    */
   getEvents(limit = 50) {
+    if (!this.dashboardData.events || !this.dashboardData.events.recent) {
+      return {
+        recent: [],
+        byType: {},
+        byCamera: {}
+      };
+    }
+    
     return {
       ...this.dashboardData.events,
       recent: this.dashboardData.events.recent.slice(0, limit)
@@ -739,6 +906,14 @@ class DashboardService extends EventEmitter {
    * Get alerts data
    */
   getAlerts(limit = 20) {
+    if (!this.dashboardData.alerts || !this.dashboardData.alerts.recent) {
+      return {
+        recent: [],
+        byType: {},
+        bySeverity: {}
+      };
+    }
+    
     return {
       ...this.dashboardData.alerts,
       recent: this.dashboardData.alerts.recent.slice(0, limit)
@@ -794,6 +969,106 @@ class DashboardService extends EventEmitter {
     this.stopUpdateTimer();
     this.updateSubscribers.clear();
     this.realTimeUpdates.clear();
+  }
+
+  /**
+   * Handle new event type discovery
+   */
+  handleNewEventTypeDiscovered(data) {
+    const { eventType, timestamp, sampleData } = data;
+    
+    this.logger.warn(`🆕 NEW EVENT TYPE DISCOVERED: ${eventType}`);
+    
+    // Add to discovered event types
+    if (!this.discoveredEventTypes) {
+      this.discoveredEventTypes = new Set();
+    }
+    this.discoveredEventTypes.add(eventType);
+    
+    // Create alert for new event type
+    const alert = {
+      id: `new-event-type-${Date.now()}`,
+      type: 'new-event-type',
+      severity: 'info',
+      title: `New Event Type: ${eventType}`,
+      message: `A new event type "${eventType}" has been discovered from UniFi Protect`,
+      data: {
+        eventType,
+        sampleData,
+        timestamp
+      },
+      timestamp: new Date().toISOString(),
+      acknowledged: false
+    };
+    
+    this.addAlert(alert);
+    
+    // Update dashboard to include new event type
+    this.updateAnalytics();
+  }
+
+  /**
+   * Handle new fields discovery
+   */
+  handleNewFieldsDiscovered(data) {
+    const { eventType, newFields, timestamp } = data;
+    
+    this.logger.warn(`🆕 NEW FIELDS DISCOVERED for ${eventType}: ${newFields.map(f => f.field).join(', ')}`);
+    
+    // Store discovered fields
+    if (!this.discoveredFields) {
+      this.discoveredFields = new Map();
+    }
+    
+    if (!this.discoveredFields.has(eventType)) {
+      this.discoveredFields.set(eventType, new Set());
+    }
+    
+    const fields = this.discoveredFields.get(eventType);
+    newFields.forEach(field => fields.add(field.field));
+    
+    // Create alert for new fields
+    const alert = {
+      id: `new-fields-${Date.now()}`,
+      type: 'new-fields',
+      severity: 'info',
+      title: `New Fields Discovered`,
+      message: `New fields discovered for event type "${eventType}": ${newFields.map(f => f.field).join(', ')}`,
+      data: {
+        eventType,
+        newFields,
+        timestamp
+      },
+      timestamp: new Date().toISOString(),
+      acknowledged: false
+    };
+    
+    this.addAlert(alert);
+    
+    // Update dashboard to include new fields
+    this.updateAnalytics();
+  }
+
+  /**
+   * Get discovered event types and fields
+   */
+  getDiscoveredEventTypes() {
+    return this.discoveredEventTypes ? Array.from(this.discoveredEventTypes) : [];
+  }
+
+  /**
+   * Get discovered fields for all event types
+   */
+  getDiscoveredFields() {
+    if (!this.discoveredFields) {
+      return {};
+    }
+    
+    const result = {};
+    for (const [eventType, fields] of this.discoveredFields) {
+      result[eventType] = Array.from(fields);
+    }
+    return result;
   }
 }
 

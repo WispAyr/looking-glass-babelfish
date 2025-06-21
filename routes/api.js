@@ -1,8 +1,28 @@
 const express = require('express');
 const router = express.Router();
+const winston = require('winston');
+
+// Create logger instance
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.errors({ stack: true }),
+    winston.format.json()
+  ),
+  defaultMeta: { service: 'babelfish' },
+  transports: [
+    new winston.transports.Console({
+      format: winston.format.combine(
+        winston.format.colorize(),
+        winston.format.simple()
+      )
+    })
+  ]
+});
 
 // Import services (these will be injected from the main server)
-let unifiAPI, eventProcessor, mqttBroker, cache;
+let unifiAPI, eventProcessor, mqttBroker, cache, connectorRegistry, entityManager, analyticsEngine, dashboardService, flowOrchestrator;
 
 // Middleware to inject services
 function injectServices(services) {
@@ -10,6 +30,11 @@ function injectServices(services) {
   eventProcessor = services.eventProcessor;
   mqttBroker = services.mqttBroker;
   cache = services.cache;
+  connectorRegistry = services.connectorRegistry;
+  entityManager = services.entityManager;
+  analyticsEngine = services.analyticsEngine;
+  dashboardService = services.dashboardService;
+  flowOrchestrator = services.flowOrchestrator;
 }
 
 // Health check
@@ -248,6 +273,241 @@ router.get('/flows', (req, res) => {
     const flows = flowOrchestrator.getFlows();
     res.json({ success: true, count: flows.length, data: flows });
   } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Analytics endpoints
+router.get('/analytics', async (req, res) => {
+  try {
+    if (!analyticsEngine) {
+      return res.status(500).json({ success: false, error: 'Analytics Engine not initialized' });
+    }
+    const analytics = analyticsEngine.getAnalytics();
+    res.json({ success: true, data: analytics });
+  } catch (error) {
+    logger.error('Error getting analytics:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Smart detection analytics
+router.get('/analytics/smart-detections', async (req, res) => {
+  try {
+    if (!analyticsEngine || !entityManager) {
+      return res.status(500).json({ success: false, error: 'Analytics Engine or Entity Manager not initialized' });
+    }
+    
+    const { cameraId, objectType, limit = 20 } = req.query;
+    
+    if (cameraId) {
+      const analytics = analyticsEngine.getSmartDetectionAnalytics(cameraId);
+      res.json({ success: true, data: analytics });
+    } else {
+      const allAnalytics = {};
+      const cameras = entityManager.getEntities({ type: 'camera' });
+      
+      for (const camera of cameras) {
+        allAnalytics[camera.id] = analyticsEngine.getSmartDetectionAnalytics(camera.id);
+      }
+      
+      res.json({ success: true, data: allAnalytics });
+    }
+  } catch (error) {
+    logger.error('Error getting smart detection analytics:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Audio detection analytics
+router.get('/analytics/audio-detections', async (req, res) => {
+  try {
+    if (!analyticsEngine || !entityManager) {
+      return res.status(500).json({ success: false, error: 'Analytics Engine or Entity Manager not initialized' });
+    }
+    
+    const { cameraId } = req.query;
+    
+    if (cameraId) {
+      const analytics = analyticsEngine.getAudioDetectionAnalytics(cameraId);
+      res.json({ success: true, data: analytics });
+    } else {
+      const allAnalytics = {};
+      const cameras = entityManager.getEntities({ type: 'camera' });
+      
+      for (const camera of cameras) {
+        allAnalytics[camera.id] = analyticsEngine.getAudioDetectionAnalytics(camera.id);
+      }
+      
+      res.json({ success: true, data: allAnalytics });
+    }
+  } catch (error) {
+    logger.error('Error getting audio detection analytics:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Generic event analytics
+router.get('/analytics/generic-events', async (req, res) => {
+  try {
+    if (!analyticsEngine || !entityManager) {
+      return res.status(500).json({ success: false, error: 'Analytics Engine or Entity Manager not initialized' });
+    }
+    
+    const { cameraId } = req.query;
+    
+    if (cameraId) {
+      const analytics = analyticsEngine.getGenericEventAnalytics(cameraId);
+      res.json({ success: true, data: analytics });
+    } else {
+      const allAnalytics = {};
+      const cameras = entityManager.getEntities({ type: 'camera' });
+      
+      for (const camera of cameras) {
+        allAnalytics[camera.id] = analyticsEngine.getGenericEventAnalytics(camera.id);
+      }
+      
+      res.json({ success: true, data: allAnalytics });
+    }
+  } catch (error) {
+    logger.error('Error getting generic event analytics:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Discovered event types and fields
+router.get('/discovered', async (req, res) => {
+  try {
+    const discovered = {
+      eventTypes: [],
+      fields: {},
+      capabilities: [],
+      autoGeneratedRules: []
+    };
+    
+    // Get discovered event types from connectors
+    if (connectorRegistry) {
+      const connectors = connectorRegistry.getConnectors();
+      for (const connector of connectors) {
+        if (connector.discoveredEventTypes) {
+          discovered.eventTypes.push(...Array.from(connector.discoveredEventTypes));
+        }
+        if (connector.discoveredFields) {
+          for (const [eventType, fields] of connector.discoveredFields) {
+            if (!discovered.fields[eventType]) {
+              discovered.fields[eventType] = [];
+            }
+            discovered.fields[eventType].push(...Array.from(fields));
+          }
+        }
+      }
+    }
+    
+    // Get discovered data from analytics engine
+    if (analyticsEngine) {
+      const analyticsFields = analyticsEngine.getDiscoveredFieldsForAnalytics();
+      for (const [eventType, fields] of Object.entries(analyticsFields)) {
+        if (!discovered.fields[eventType]) {
+          discovered.fields[eventType] = [];
+        }
+        discovered.fields[eventType].push(...fields);
+      }
+    }
+    
+    // Get discovered data from dashboard service
+    if (dashboardService) {
+      const dashboardEventTypes = dashboardService.getDiscoveredEventTypes();
+      const dashboardFields = dashboardService.getDiscoveredFields();
+      
+      discovered.eventTypes.push(...dashboardEventTypes);
+      for (const [eventType, fields] of Object.entries(dashboardFields)) {
+        if (!discovered.fields[eventType]) {
+          discovered.fields[eventType] = [];
+        }
+        discovered.fields[eventType].push(...fields);
+      }
+    }
+    
+    // Get discovered data from flow orchestrator
+    if (flowOrchestrator) {
+      const orchestratorEventTypes = flowOrchestrator.getDiscoveredEventTypes();
+      const orchestratorFields = flowOrchestrator.getDiscoveredFields();
+      const autoGeneratedRules = flowOrchestrator.getAutoGeneratedRules();
+      
+      discovered.eventTypes.push(...orchestratorEventTypes);
+      for (const [eventType, fields] of Object.entries(orchestratorFields)) {
+        if (!discovered.fields[eventType]) {
+          discovered.fields[eventType] = [];
+        }
+        discovered.fields[eventType].push(...fields);
+      }
+      discovered.autoGeneratedRules = autoGeneratedRules;
+    }
+    
+    // Remove duplicates
+    discovered.eventTypes = [...new Set(discovered.eventTypes)];
+    for (const eventType in discovered.fields) {
+      discovered.fields[eventType] = [...new Set(discovered.fields[eventType])];
+    }
+    
+    res.json({ success: true, data: discovered });
+  } catch (error) {
+    logger.error('Error getting discovered data:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Auto-generated rules
+router.get('/rules/auto-generated', async (req, res) => {
+  try {
+    if (!flowOrchestrator) {
+      return res.json({ success: true, data: [] });
+    }
+    
+    const autoGeneratedRules = flowOrchestrator.getAutoGeneratedRules();
+    res.json({ success: true, data: autoGeneratedRules });
+  } catch (error) {
+    logger.error('Error getting auto-generated rules:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Event type capabilities
+router.get('/capabilities/:eventType', async (req, res) => {
+  try {
+    const { eventType } = req.params;
+    const capabilities = [];
+    
+    // Extract capabilities from event type
+    if (eventType === 'smartDetectZone' || eventType === 'smartDetectLine') {
+      capabilities.push('smartDetection', 'zoneDetection', 'lineCrossing');
+    } else if (eventType === 'smartAudioDetect') {
+      capabilities.push('audioDetection');
+    } else if (eventType === 'motion') {
+      capabilities.push('motionDetection');
+    }
+    
+    // Get discovered fields for this event type
+    let discoveredFields = [];
+    if (connectorRegistry) {
+      const connectors = connectorRegistry.getConnectors();
+      for (const connector of connectors) {
+        if (connector.discoveredFields && connector.discoveredFields.has(eventType)) {
+          discoveredFields.push(...Array.from(connector.discoveredFields.get(eventType)));
+        }
+      }
+    }
+    
+    res.json({ 
+      success: true, 
+      data: {
+        eventType,
+        capabilities,
+        discoveredFields: [...new Set(discoveredFields)]
+      }
+    });
+  } catch (error) {
+    logger.error('Error getting event type capabilities:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });

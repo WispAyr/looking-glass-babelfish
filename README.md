@@ -11,6 +11,16 @@ A comprehensive IoT and automation platform that integrates multiple systems and
 - **LLM**: AI-powered automation and decision making
 - **Hikvision**: IP camera integration
 - **Ankke DVR**: Digital video recorder support
+- **Map Connector**: Spatial configuration and real-time visualization
+
+### 🗺️ **Real-Time Map System**
+- **Spatial Configuration**: Drag-and-drop camera positioning and zone definition
+- **Real-Time Visualization**: Live display of detections, events, and analytics
+- **Multi-Connector Integration**: Unified view of data from all connected systems
+- **Context-Aware Display**: Intelligent rendering based on connector capabilities
+- **Edit & View Modes**: Toggle between configuration and monitoring modes
+- **Export/Import**: Save and load spatial configurations
+- **Undo/Redo**: Full history of spatial changes
 
 ### 📹 **Advanced Video & Security**
 - **Real-time Video Streaming**: RTSP and HTTP video streams from UniFi Protect cameras
@@ -60,6 +70,7 @@ The platform is specifically designed for communications van deployments with:
 - **Offline Capable**: Local processing and caching
 - **Multi-Camera Support**: Manage multiple cameras simultaneously
 - **Zone-Based Analytics**: Context-aware monitoring for complex deployments
+- **Spatial Visualization**: Real-time map interface for camera and zone management
 
 ## 🛠️ Quick Start
 
@@ -113,6 +124,11 @@ DASHBOARD_ENABLED=true
 DASHBOARD_REFRESH_INTERVAL=5000
 SPEED_ALERTS_ENABLED=true
 SPEED_ALERT_THRESHOLD=100
+
+# Map Configuration
+MAP_ENABLED=true
+MAP_EDIT_MODE=false
+MAP_VIEW_MODE=realtime
 ```
 
 ### Running the Application
@@ -126,6 +142,111 @@ npm run dev
 ```
 
 The application will be available at `http://localhost:3000`
+
+## 🗺️ Real-Time Map System
+
+The real-time map system provides a sophisticated spatial interface for configuring and monitoring your IoT infrastructure:
+
+### Accessing the Map Interface
+
+Navigate to `http://localhost:3000/map.html` to access the interactive map interface.
+
+### Key Features
+
+#### Edit Mode
+- **Drag & Drop**: Position cameras and define zones with intuitive controls
+- **Element Creation**: Add cameras, zones, and detection lines
+- **Property Editing**: Modify element properties through the properties panel
+- **Grid Alignment**: Snap-to-grid for precise positioning
+- **Undo/Redo**: Full history of spatial changes
+
+#### View Mode
+- **Real-Time Updates**: Live visualization of detections and events
+- **Filter Controls**: Show/hide specific data types
+- **Alert Overlays**: Visual indicators for events and violations
+- **Analytics Display**: Real-time statistics and occupancy data
+
+#### Multi-Connector Integration
+- **Unified View**: Display data from all connected systems
+- **Context Switching**: Switch between different spatial contexts
+- **Cross-Connector Analytics**: Combined data visualization
+- **Real-Time Streaming**: Live data from UniFi Protect, MQTT, and other connectors
+
+### Map Connector Capabilities
+
+The Map Connector provides four main capability categories:
+
+#### 1. Spatial Configuration (`spatial:config`)
+- Create, update, delete spatial elements
+- Position and resize elements
+- Duplicate existing elements
+- Manage element properties
+
+#### 2. Real-Time Visualization (`visualization:realtime`)
+- Subscribe to data streams
+- Filter and highlight elements
+- Animate real-time events
+- Display analytics data
+
+#### 3. Connector Integration (`integration:connector`)
+- Register other connectors
+- Configure spatial contexts
+- Query connector capabilities
+- Sync connector data
+
+#### 4. Context Management (`context:spatial`)
+- Store spatial context data
+- Link elements to connectors
+- Export/import configurations
+- Manage relationships
+
+### Example Usage
+
+```javascript
+// Create a map connector
+const mapConnector = new MapConnector({
+  id: 'map-main',
+  type: 'map',
+  name: 'Main Map',
+  description: 'Primary map for spatial visualization'
+});
+
+// Add a camera element
+const camera = await mapConnector.execute('spatial:config', 'create', {
+  elementType: 'camera',
+  position: { x: 100, y: 200, z: 0 },
+  properties: {
+    name: 'Front Door Camera',
+    model: 'G4 Pro',
+    capabilities: ['motion', 'smartDetect']
+  }
+});
+
+// Register a UniFi Protect connector
+await mapConnector.execute('integration:connector', 'register', {
+  connectorId: 'unifi-protect:communications-van',
+  context: {
+    cameras: [
+      {
+        id: '6814da4203251903e40156ee',
+        name: 'Front Door',
+        position: { x: 100, y: 200 }
+      }
+    ]
+  }
+});
+
+// Subscribe to real-time events
+await mapConnector.execute('visualization:realtime', 'subscribe', {
+  dataType: 'smartDetectLine:vehicle',
+  filter: { elementId: 'line-speed-trap' },
+  visual: {
+    animation: 'pulse',
+    color: '#00ff88',
+    duration: 2000
+  }
+});
+```
 
 ## 🎯 Zone Management & Analytics
 
@@ -196,6 +317,15 @@ Access the unified monitoring dashboard at `http://localhost:3000/dashboard.html
 - `GET /api/analytics/zones/:id` - Get zone analytics
 - `GET /api/analytics/speed` - Get speed calculations
 - `GET /api/analytics/plates/:plateNumber` - Get plate tracking data
+
+#### Map System
+- `GET /api/map/elements` - Get all spatial elements
+- `POST /api/map/elements` - Create spatial element
+- `PUT /api/map/elements/:id` - Update spatial element
+- `DELETE /api/map/elements/:id` - Delete spatial element
+- `GET /api/map/contexts` - Get connector contexts
+- `POST /api/map/export` - Export map configuration
+- `POST /api/map/import` - Import map configuration
 
 #### Dashboard
 - `GET /api/analytics/dashboard` - Get dashboard data
