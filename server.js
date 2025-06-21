@@ -45,6 +45,12 @@ const AirportVectorService = require('./services/airportVectorService');
 // Import coastline vector service
 const CoastlineVectorService = require('./services/coastlineVectorService');
 
+// Import vector optimization service
+const VectorOptimizationService = require('./services/vectorOptimizationService');
+
+// Import airspace service
+const AirspaceService = require('./services/airspaceService');
+
 // Import default rules
 const defaultRules = require('./config/defaultRules');
 
@@ -56,6 +62,7 @@ const WebGuiConnector = require('./connectors/types/WebGuiConnector');
 const MapConnector = require('./connectors/types/MapConnector');
 const SpeedCalculationConnector = require('./connectors/types/SpeedCalculationConnector');
 const RadarConnector = require('./connectors/types/RadarConnector');
+const ADSBConnector = require('./connectors/types/ADSBConnector');
 
 // Import analytics routes
 const analyticsRouter = require('./routes/analytics');
@@ -75,13 +82,24 @@ const mapRouter = require('./routes/map');
 // Import GUI routes
 const { router: guiRouter, injectServices: injectGuiServices } = require('./routes/gui');
 
+// Health routes
+const { router: healthRouter, HealthRoutes } = require('./routes/health');
+
+// History routes
+const { router: historyRouter, injectServices: injectHistoryServices } = require('./routes/history');
+
 // Import new health monitoring and security services
 const HealthMonitor = require('./services/healthMonitor');
 const SecurityMiddleware = require('./middleware/security');
-const { router: healthRouter, HealthRoutes } = require('./routes/health');
 
 // Import Flow Builder
 const FlowBuilder = require('./services/flowBuilder');
+
+// Import aircraft data service
+const AircraftDataService = require('./services/aircraftDataService');
+
+// Import squawk code service
+const SquawkCodeService = require('./services/squawkCodeService');
 
 // Initialize logger
 const logger = winston.createLogger({
@@ -137,6 +155,12 @@ let airportVectorService;
 // Coastline vector service
 let coastlineVectorService;
 
+// Airspace service
+let airspaceService;
+
+// Vector optimization service
+let vectorOptimizationService;
+
 // Map integration service
 let mapIntegrationService;
 
@@ -146,6 +170,12 @@ let securityMiddleware;
 
 // Flow Builder
 let flowBuilder;
+
+// Aircraft data service
+let aircraftDataService;
+
+// Squawk code service
+let squawkCodeService;
 
 // Main application setup
 const app = express();
@@ -550,7 +580,11 @@ injectServices({
   get speedCalculationConnector() { return speedCalculationConnector; },
   get radarConnector() { return radarConnector; },
   get airportVectorService() { return airportVectorService; },
-  get coastlineVectorService() { return coastlineVectorService; }
+  get coastlineVectorService() { return coastlineVectorService; },
+  get airspaceService() { return airspaceService; },
+  get vectorOptimizationService() { return vectorOptimizationService; },
+  get aircraftDataService() { return aircraftDataService; },
+  get squawkCodeService() { return squawkCodeService; }
 });
 
 // Connector event handling
@@ -622,63 +656,17 @@ function setupEventProcessing() {
  */
 async function autoRegisterGuiAndMapConnectors() {
   try {
-    // Check if Web GUI connector exists
-    const webGuiConnector = connectorRegistry.getConnector('web-gui');
-    if (!webGuiConnector) {
-      logger.info('Auto-creating Web GUI connector...');
-      await connectorRegistry.createConnector({
-        id: 'web-gui',
-        type: 'web-gui',
-        name: 'Web GUI',
-        description: 'Web-based graphical user interface',
-        config: {
-          webInterface: {
-            enabled: true,
-            port: config.server.port,
-            host: config.server.host
-          },
-          autoRegisterWithMaps: true,
-          autoDiscoverConnectors: true,
-          theme: 'dark',
-          layout: 'default'
-        }
-      });
-    }
-
-    // Check if Map connector exists
-    const mapConnector = connectorRegistry.getConnector('main-map');
-    if (!mapConnector) {
-      logger.info('Auto-creating Map connector...');
-      await connectorRegistry.createConnector({
-        id: 'main-map',
-        type: 'map',
-        name: 'Main Map',
-        description: 'Primary spatial visualization map',
-        config: {
-          autoRegisterConnectors: true,
-          enableWebSockets: true,
-          editMode: false,
-          viewMode: 'realtime',
-          spatialElements: [],
-          connectorContexts: []
-        }
-      });
-    }
-
     // Initialize map integration service with connectors
     const webGui = connectorRegistry.getConnector('web-gui');
     const map = connectorRegistry.getConnector('main-map');
     
     if (webGui && map) {
-      await mapIntegrationService.initialize({
-        webGuiConnector: webGui,
-        mapConnector: map,
-        connectorRegistry: connectorRegistry
-      });
-
-      // Auto-register Web GUI with Map
-      if (webGui.autoRegisterWithMaps) {
-        await webGui.autoRegisterWithMaps(map);
+      // Auto-register Web GUI with Map using the map integration service
+      try {
+        await mapIntegrationService.registerConnectorWithMap(webGui, map);
+        logger.info('Web GUI connector registered with map');
+      } catch (error) {
+        logger.warn(`Failed to register Web GUI with map: ${error.message}`);
       }
 
       // Auto-register all other connectors with the map
@@ -702,13 +690,6 @@ async function autoRegisterGuiAndMapConnectors() {
   }
 }
 
-// Initialize Flow Builder
-flowBuilder = new FlowBuilder({
-  flowsDir: path.join(process.cwd(), 'config', 'flows'),
-  autoSave: true,
-  maxFlows: 100
-});
-
 // Start server
 async function startServer() {
   try {
@@ -723,6 +704,23 @@ async function startServer() {
       }
     }
     logger.info('Starting Babelfish Looking Glass server...');
+
+    // Initialize Flow Builder
+    flowBuilder = new FlowBuilder({
+      flowsDir: path.join(process.cwd(), 'config', 'flows'),
+      autoSave: true,
+      maxFlows: 100
+    });
+
+    // Initialize core services
+    cache = new Cache(config.cache || {}, logger);
+    unifiAPI = new UnifiProtectAPI(config.unifi || {}, logger);
+    eventProcessor = new EventProcessor(config.events || {}, logger);
+    mqttBroker = new MQTTBroker(config.mqtt || {}, logger);
+    eventBus = new EventBus(config.eventBus || {}, logger);
+    ruleEngine = new RuleEngine(config.rules || {}, logger);
+    actionFramework = new ActionFramework(config.actions || {}, logger);
+    flowOrchestrator = new FlowOrchestrator(config.flows || {}, logger);
 
     // Initialize entity manager
     entityManager = new EntityManager(config.entities || {}, logger);
@@ -740,6 +738,12 @@ async function startServer() {
 
     // Initialize coastline vector service
     coastlineVectorService = new CoastlineVectorService(config.coastlineVector || {}, logger);
+
+    // Initialize airspace service
+    airspaceService = new AirspaceService(config.airspace || {}, logger);
+
+    // Initialize vector optimization service
+    vectorOptimizationService = new VectorOptimizationService(config.vectorOptimization || {}, logger);
 
     // Initialize layout and GUI services
     layoutManager = new LayoutManager(config.layouts || {}, logger);
@@ -762,12 +766,46 @@ async function startServer() {
     connectorRegistry.registerType('map', MapConnector);
     connectorRegistry.registerType('speed-calculation', SpeedCalculationConnector);
     connectorRegistry.registerType('radar', RadarConnector);
+    connectorRegistry.registerType('adsb', ADSBConnector);
 
     // Auto-discover and register connector types
     await connectorRegistry.autoDiscoverTypes();
 
+    // Initialize services BEFORE connectors
+    await cache.initialize();
+    await unifiAPI.initialize();
+    await eventProcessor.initialize();
+    await airspaceService.initialize();
+    
+    // Initialize aircraft data service
+    aircraftDataService = new AircraftDataService(config.aircraftData || {}, logger);
+    await aircraftDataService.initialize();
+    
+    // Initialize squawk code service
+    squawkCodeService = new SquawkCodeService(config.squawkCode || {}, logger);
+    await squawkCodeService.initialize();
+
     // Initialize the registry to load connectors from config
     await connectorRegistry.initialize();
+
+    // Initialize map integration service with connector registry
+    await mapIntegrationService.initialize(connectorRegistry);
+
+    // Create speed calculation connector if it doesn't exist
+    let speedCalculationConnectorInstance = connectorRegistry.getConnector('speed-calculation-main');
+    if (!speedCalculationConnectorInstance) {
+      logger.info('Auto-creating Speed Calculation connector...');
+      const speedConfig = {
+        id: 'speed-calculation-main',
+        type: 'speed-calculation',
+        name: 'Main Speed Calculation',
+        description: 'Primary speed calculation service',
+        enabled: true,
+      };
+      await connectorRegistry.createConnector(speedConfig);
+      speedCalculationConnectorInstance = connectorRegistry.getConnector('speed-calculation-main');
+    }
+    speedCalculationConnector = speedCalculationConnectorInstance;
 
     // Ensure essential connectors exist and initialize them
     const adsbConnectorInstance = connectorRegistry.getConnector('adsb-main');
@@ -775,6 +813,24 @@ async function startServer() {
 
     if (!adsbConnectorInstance) {
       logger.warn('ADSB Connector "adsb-main" not found. Radar will not function correctly.');
+    } else {
+      // Initialize ADSB connector with its dependencies
+      if (aircraftDataService) {
+        adsbConnectorInstance.setAircraftDataService(aircraftDataService);
+        logger.info('Connected aircraft data service to ADSB connector');
+      }
+      if (airspaceService) {
+        adsbConnectorInstance.setAirspaceService(airspaceService);
+        logger.info('Connected airspace service to ADSB connector');
+      }
+      if (squawkCodeService) {
+        adsbConnectorInstance.setSquawkCodeService(squawkCodeService);
+        logger.info('Connected squawk code service to ADSB connector');
+      }
+      if (connectorRegistry) {
+        adsbConnectorInstance.setConnectorRegistry(connectorRegistry);
+        logger.info('Connected connector registry to ADSB connector');
+      }
     }
 
     if (!radarConnectorInstance) {
@@ -796,6 +852,7 @@ async function startServer() {
         adsbConnector: adsbConnectorInstance,
         airportVectorService: airportVectorService,
         coastlineVectorService: coastlineVectorService,
+        airspaceService: airspaceService,
       });
       logger.info('Radar connector initialized with its dependencies.');
     } else {
@@ -818,80 +875,6 @@ async function startServer() {
         connector.setEventBus(eventBus);
       }
     });
-    
-    // Initialize services
-    cache = new Cache(config.cache);
-    unifiAPI = new UnifiProtectAPI(config.unifi, logger);
-    eventProcessor = new EventProcessor(config.events, logger);
-    
-    if (config.mqtt.enabled) {
-      mqttBroker = new MQTTBroker(config.mqtt, logger);
-    }
-    
-    // Initialize flow system (if enabled)
-    if (config.flow.enabled) {
-      eventBus = new EventBus(config.flow.eventBus, logger);
-      ruleEngine = new RuleEngine(config.flow.ruleEngine, logger);
-      actionFramework = new ActionFramework(config.flow.actionFramework, logger);
-      flowOrchestrator = new FlowOrchestrator(config.flow.orchestrator, logger);
-      
-      // Connect rule engine with services
-      ruleEngine.setConnectors(connectorRegistry);
-      ruleEngine.setEventBus(eventBus);
-      ruleEngine.setCache(cache);
-      
-      // Register action framework handlers with rule engine
-      ruleEngine.registerAction('mqtt_publish', actionFramework.executeAction.bind(actionFramework));
-      ruleEngine.registerAction('mqtt_subscribe', actionFramework.executeAction.bind(actionFramework));
-      ruleEngine.registerAction('send_notification', actionFramework.executeAction.bind(actionFramework));
-      ruleEngine.registerAction('send_email', actionFramework.executeAction.bind(actionFramework));
-      ruleEngine.registerAction('send_sms', actionFramework.executeAction.bind(actionFramework));
-      ruleEngine.registerAction('slack_notify', actionFramework.executeAction.bind(actionFramework));
-      ruleEngine.registerAction('connector_execute', actionFramework.executeAction.bind(actionFramework));
-      ruleEngine.registerAction('connector_connect', actionFramework.executeAction.bind(actionFramework));
-      ruleEngine.registerAction('connector_disconnect', actionFramework.executeAction.bind(actionFramework));
-      ruleEngine.registerAction('log_event', actionFramework.executeAction.bind(actionFramework));
-      ruleEngine.registerAction('store_data', actionFramework.executeAction.bind(actionFramework));
-      ruleEngine.registerAction('http_request', actionFramework.executeAction.bind(actionFramework));
-      ruleEngine.registerAction('delay', actionFramework.executeAction.bind(actionFramework));
-      ruleEngine.registerAction('transform_data', actionFramework.executeAction.bind(actionFramework));
-      ruleEngine.registerAction('conditional_action', actionFramework.executeAction.bind(actionFramework));
-      
-      // Load default rules
-      ruleEngine.loadRules(defaultRules);
-      
-      logger.info('Flow system initialized');
-    }
-
-    // Initialize speed calculation connector if not already registered
-    const existingSpeedConnector = connectorRegistry.getConnector('speed-calculation-main');
-    if (!existingSpeedConnector) {
-      speedCalculationConnector = new SpeedCalculationConnector({
-        id: 'speed-calculation-main',
-        name: 'Speed Calculation System',
-        description: 'ANPR-based speed calculation between detection points',
-        logger: logger,
-        speedService: config.speedCalculation || {}
-      });
-      
-      // Register the connector
-      connectorRegistry.registerConnector(speedCalculationConnector);
-      logger.info('Speed calculation connector registered');
-    } else {
-      speedCalculationConnector = existingSpeedConnector;
-    }
-
-    // Setup event listeners
-    setupConnectorEvents();
-    setupEntityEvents();
-    setupCameraEvents();
-    setupConnectorEventHandlers();
-    setupEventProcessing();
-
-    // Initialize services
-    await cache.initialize();
-    await unifiAPI.initialize();
-    await eventProcessor.initialize();
     
     if (mqttBroker) {
       await mqttBroker.initialize();
@@ -957,7 +940,11 @@ async function startServer() {
       guiEditor,
       speedCalculationService,
       speedCalculationConnector,
-      radarConnector
+      radarConnector,
+      airspaceService,
+      vectorOptimizationService,
+      aircraftDataService,
+      squawkCodeService
     });
     
     // Set up GUI routes
@@ -972,41 +959,28 @@ async function startServer() {
       radarConnector,
       adsbConnector: connectorRegistry.getConnector('adsb-main'),
       connectorRegistry,
-      airportVectorService
+      airportVectorService,
+      airspaceService,
+      vectorOptimizationService
     });
 
-    // Initialize speed calculation routes
-    new SpeedRoutes({
-      speedCalculationConnector,
-      mapConnector: connectorRegistry.getConnector('main-map'),
-      unifiConnector: connectorRegistry.getConnector('unifi-protect-main')
+    // Set up history routes
+    injectHistoryServices({
+      adsbConnector: connectorRegistry.getConnector('adsb-main'),
+      connectorRegistry,
+      aircraftDataService,
+      airspaceService,
+      squawkCodeService
     });
 
-    // Initialize health routes
-    new HealthRoutes({
-      healthMonitor,
-      databaseService: null, // Will be added when database service is enhanced
-      connectorRegistry
-    });
+    // Mount history routes
+    app.use('/history', historyRouter);
     
-    // Mount flow routes
-    app.use('/api/flows', require('./routes/flows'));
-    app.use('/flows', require('./routes/flows-gui'));
+    // Mount map routes
+    app.use('/api/map', mapRouter);
     
-    // Make services available to API routes via app.locals
-    app.locals.connectorRegistry = connectorRegistry;
-    app.locals.eventBus = eventBus;
-    app.locals.ruleEngine = ruleEngine;
-    app.locals.actionFramework = actionFramework;
-    app.locals.flowOrchestrator = flowOrchestrator;
-    app.locals.entityManager = entityManager;
-    app.locals.analyticsEngine = analyticsEngine;
-    app.locals.dashboardService = dashboardService;
-    app.locals.layoutManager = layoutManager;
-    app.locals.guiEditor = guiEditor;
-    app.locals.mapIntegrationService = mapIntegrationService;
-    app.locals.healthMonitor = healthMonitor;
-    app.locals.flowBuilder = flowBuilder;
+    // Mount GUI routes
+    app.use('/gui', guiRouter);
     
     // Mount health routes
     app.use('/health', healthRouter);
@@ -1023,12 +997,39 @@ async function startServer() {
     // Mount radar routes
     app.use('/radar', radarRouter);
     
-    // Mount map routes
-    app.use('/api/map', mapRouter);
+    // Mount flow routes
+    app.use('/api/flows', require('./routes/flows'));
+    app.use('/flows', require('./routes/flows-gui'));
+
+    // Make services available to API routes via app.locals
+    app.locals.connectorRegistry = connectorRegistry;
+    app.locals.eventBus = eventBus;
+    app.locals.ruleEngine = ruleEngine;
+    app.locals.actionFramework = actionFramework;
+    app.locals.flowOrchestrator = flowOrchestrator;
+    app.locals.entityManager = entityManager;
+    app.locals.analyticsEngine = analyticsEngine;
+    app.locals.dashboardService = dashboardService;
+    app.locals.layoutManager = layoutManager;
+    app.locals.guiEditor = guiEditor;
+    app.locals.mapIntegrationService = mapIntegrationService;
+    app.locals.healthMonitor = healthMonitor;
+    app.locals.flowBuilder = flowBuilder;
     
-    // Mount GUI routes
-    app.use('/gui', guiRouter);
-    
+    // Initialize speed calculation routes
+    new SpeedRoutes({
+      speedCalculationConnector,
+      mapConnector: connectorRegistry.getConnector('main-map'),
+      unifiConnector: connectorRegistry.getConnector('unifi-protect-main')
+    });
+
+    // Initialize health routes
+    new HealthRoutes({
+      healthMonitor,
+      databaseService: null, // Will be added when database service is enhanced
+      connectorRegistry
+    });
+
     // Add error handling middleware
     app.use(securityMiddleware.errorHandler());
     
@@ -1071,6 +1072,7 @@ async function startServer() {
       logger.info(`📈 Dashboard API: http://${config.server.host}:${config.server.port}/api/analytics/dashboard`);
       logger.info(`🚗 Speed Calculation API: http://${config.server.host}:${config.server.port}/api/speed`);
       logger.info(`🛩️ Radar API: http://${config.server.host}:${config.server.port}/radar`);
+      logger.info(`📊 Flight History: http://${config.server.host}:${config.server.port}/history`);
       
       if (mqttBroker) {
         logger.info(`📨 MQTT broker connected to ${config.mqtt.broker.host}:${config.mqtt.broker.port}`);
@@ -1137,4 +1139,4 @@ process.on('SIGINT', async () => {
 });
 
 // Start the server
-startServer(); 
+startServer();

@@ -3,6 +3,7 @@ const axios = require('axios');
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const SquawkCodeService = require('../../services/squawkCodeService');
+const AircraftDataService = require('../../services/aircraftDataService');
 
 /**
  * ADSB Connector for dump1090 with BaseStation.sqb integration, Airspace Awareness, and Squawk Code Analysis
@@ -35,6 +36,21 @@ class ADSBConnector extends BaseConnector {
     this.baseStationDb = null;
     this.aircraftRegistry = new Map(); // Cached aircraft registration data
     this.enableBaseStationIntegration = config.config?.enableBaseStationIntegration !== false; // Default to true
+    
+    // Aircraft data service integration
+    this.aircraftDataService = null;
+    this.enableAircraftDataService = config.config?.enableAircraftDataService !== false; // Default to true
+    this.enableFlightTracking = config.config?.enableFlightTracking !== false; // Default to true
+    
+    // Flight tracking state
+    this.activeFlights = new Map(); // Track active flights by icao24
+    this.flightSessionId = 1; // Simple session ID counter
+    this.flightDetectionConfig = {
+      minFlightDuration: config.config?.minFlightDuration || 30000, // 30 seconds
+      maxGroundSpeed: config.config?.maxGroundSpeed || 50, // 50 knots
+      minAltitude: config.config?.minAltitude || 100, // 100 feet
+      flightEndTimeout: config.config?.flightEndTimeout || 300000 // 5 minutes
+    };
     
     // Airspace service integration
     this.airspaceService = config.config?.airspaceService || null;
@@ -95,7 +111,9 @@ class ADSBConnector extends BaseConnector {
       airspaceQueries: 0,
       airspaceEvents: 0,
       squawkCodeQueries: 0,
-      squawkCodeEvents: 0
+      squawkCodeEvents: 0,
+      flightStarts: 0,
+      flightEnds: 0
     };
     
     // Polling control
@@ -150,8 +168,20 @@ class ADSBConnector extends BaseConnector {
       baseStationIntegration: this.enableBaseStationIntegration,
       baseStationDbPath: this.baseStationDbPath,
       airspaceAwareness: this.enableAirspaceAwareness,
-      squawkCodeAnalysis: this.enableSquawkCodeAnalysis
+      squawkCodeAnalysis: this.enableSquawkCodeAnalysis,
+      aircraftDataService: this.enableAircraftDataService,
+      flightTracking: this.enableFlightTracking
     });
+  }
+
+  /**
+   * Set aircraft data service reference
+   */
+  setAircraftDataService(aircraftDataService) {
+    this.aircraftDataService = aircraftDataService;
+    if (this.aircraftDataService && this.enableAircraftDataService) {
+      this.logger.info('Aircraft data service integrated');
+    }
   }
 
   /**
@@ -194,6 +224,14 @@ class ADSBConnector extends BaseConnector {
       
       this.logger.info('Squawk code service integrated');
     }
+  }
+
+  /**
+   * Set connector registry reference
+   */
+  setConnectorRegistry(connectorRegistry) {
+    this.connectorRegistry = connectorRegistry;
+    this.logger.info('Connector registry integrated');
   }
 
   /**
@@ -900,6 +938,17 @@ class ADSBConnector extends BaseConnector {
           await this.initializeBaseStationDatabase();
         }
         
+        // Initialize aircraft data service if available
+        if (this.enableAircraftDataService && this.aircraftDataService) {
+          try {
+            await this.aircraftDataService.initialize();
+            this.logger.info('Aircraft data service initialized successfully');
+          } catch (error) {
+            this.logger.warn('Failed to initialize aircraft data service', { error: error.message });
+            this.enableAircraftDataService = false;
+          }
+        }
+        
         this.startPolling();
         return true;
       } else {
@@ -955,8 +1004,8 @@ class ADSBConnector extends BaseConnector {
           OperatorFlagCode,
           SerialNo,
           YearBuilt,
-          Owner,
-          Operator
+          RegisteredOwners,
+          Country
         FROM Aircraft 
         WHERE ModeS IS NOT NULL AND ModeS != ''
       `;
@@ -982,8 +1031,8 @@ class ADSBConnector extends BaseConnector {
                   operatorFlagCode: row.OperatorFlagCode || null,
                   serialNo: row.SerialNo || null,
                   yearBuilt: row.YearBuilt || null,
-                  owner: row.Owner || null,
-                  operator: row.Operator || null
+                  owner: row.RegisteredOwners || null,
+                  country: row.Country || null
                 });
               }
             }
@@ -1032,8 +1081,8 @@ class ADSBConnector extends BaseConnector {
           OperatorFlagCode,
           SerialNo,
           YearBuilt,
-          Owner,
-          Operator
+          RegisteredOwners,
+          Country
         FROM Aircraft 
         WHERE ModeS = ?
       `;
@@ -1053,8 +1102,8 @@ class ADSBConnector extends BaseConnector {
               operatorFlagCode: row.OperatorFlagCode || null,
               serialNo: row.SerialNo || null,
               yearBuilt: row.YearBuilt || null,
-              owner: row.Owner || null,
-              operator: row.Operator || null
+              owner: row.RegisteredOwners || null,
+              country: row.Country || null
             };
             
             // Cache the result
@@ -1090,8 +1139,8 @@ class ADSBConnector extends BaseConnector {
           OperatorFlagCode,
           SerialNo,
           YearBuilt,
-          Owner,
-          Operator
+          RegisteredOwners,
+          Country
         FROM Aircraft 
         WHERE 1=1
       `;
@@ -1114,7 +1163,7 @@ class ADSBConnector extends BaseConnector {
       }
       
       if (parameters.operator) {
-        query += ` AND Operator LIKE ?`;
+        query += ` AND OperatorFlagCode LIKE ?`;
         params.push(`%${parameters.operator}%`);
       }
       
@@ -1136,8 +1185,8 @@ class ADSBConnector extends BaseConnector {
               operatorFlagCode: row.OperatorFlagCode || null,
               serialNo: row.SerialNo || null,
               yearBuilt: row.YearBuilt || null,
-              owner: row.Owner || null,
-              operator: row.Operator || null
+              owner: row.RegisteredOwners || null,
+              country: row.Country || null
             }));
             
             resolve({ aircraft, count: aircraft.length });
@@ -1201,6 +1250,11 @@ class ADSBConnector extends BaseConnector {
       if (response.status === 200 && response.data) {
         await this.processAircraftData(response.data);
         
+        // Check for flight timeouts
+        if (this.enableFlightTracking) {
+          this.checkFlightTimeouts();
+        }
+        
         // Update performance metrics
         const responseTime = Date.now() - startTime;
         this.performance.averageResponseTime = 
@@ -1212,6 +1266,7 @@ class ADSBConnector extends BaseConnector {
         
         this.logger.debug('Aircraft data polled successfully', {
           aircraftCount: this.aircraft.size,
+          activeFlights: this.activeFlights.size,
           responseTime: `${responseTime}ms`
         });
       }
@@ -1352,62 +1407,63 @@ class ADSBConnector extends BaseConnector {
             const squawkEvent = this.squawkCodeService.analyzeAircraftSquawk(aircraft);
             
             if (squawkEvent) {
-              // Add squawk context to aircraft
-              aircraft.squawkInfo = squawkEvent.squawkInfo;
-              aircraft.squawkCategory = squawkEvent.category;
-              aircraft.squawkPriority = squawkEvent.priority;
-              aircraft.squawkEnhanced = squawkEvent.enhanced;
+              aircraft.squawkAnalysis = squawkEvent;
               
-              // Store squawk context for this aircraft
-              this.aircraftSquawkContext.set(icao24, {
-                squawk: aircraft.squawk,
-                squawkInfo: squawkEvent.squawkInfo,
-                timestamp: now,
-                category: squawkEvent.category,
-                priority: squawkEvent.priority
-              });
-              
-              // Update emergency status based on squawk analysis
-              if (squawkEvent.category === 'emergency') {
-                aircraft.emergency = true;
-                aircraft.emergencyType = this.getEmergencyType(aircraft.squawk);
-              }
+              // Handle squawk code events
+              this.handleSquawkCodeEvent(squawkEvent);
             }
           } catch (error) {
             this.logger.debug('Failed to analyze squawk code for aircraft', { 
               icao24, 
-              squawk: aircraft.squawk,
               error: error.message 
             });
           }
         }
         
-        // Store aircraft
+        // Store aircraft data
         newAircraft.set(icao24, aircraft);
         
         // Check if this is a new aircraft
         if (!this.aircraft.has(icao24)) {
           this.handleAircraftAppearance(aircraft);
         } else {
-          // Check for updates
+          // Update existing aircraft
           const oldAircraft = this.aircraft.get(icao24);
-          this.handleAircraftUpdate(oldAircraft, aircraft);
+          await this.handleAircraftUpdate(oldAircraft, aircraft);
         }
+        
+        // Update aircraft in main storage
+        this.aircraft.set(icao24, aircraft);
       }
     }
     
     // Check for disappeared aircraft
-    for (const [icao24, aircraft] of this.aircraft) {
+    for (const [icao24, aircraft] of this.aircraft.entries()) {
       if (!currentIcao24s.has(icao24)) {
-        this.handleAircraftDisappearance(aircraft);
+        await this.handleAircraftDisappearance(aircraft);
+        this.aircraft.delete(icao24);
       }
     }
     
-    // Update aircraft map
-    this.aircraft = newAircraft;
-    
-    // Check zones
-    await this.checkZones();
+    // Broadcast aircraft data to other connectors
+    this.broadcastAircraftData(Array.from(newAircraft.values()));
+  }
+  
+  /**
+   * Broadcast aircraft data to other connectors
+   */
+  broadcastAircraftData(aircraftList) {
+    try {
+      // Find radar connector and send aircraft data
+      if (this.connectorRegistry) {
+        const radarConnector = this.connectorRegistry.getConnector('radar-main');
+        if (radarConnector && radarConnector.updateAircraftData) {
+          radarConnector.updateAircraftData(aircraftList);
+        }
+      }
+    } catch (error) {
+      this.logger.debug('Failed to broadcast aircraft data', { error: error.message });
+    }
   }
 
   /**
@@ -1459,7 +1515,7 @@ class ADSBConnector extends BaseConnector {
   /**
    * Handle aircraft update
    */
-  handleAircraftUpdate(oldAircraft, newAircraft) {
+  async handleAircraftUpdate(oldAircraft, newAircraft) {
     const changes = {};
     
     // Check for significant changes
@@ -1486,6 +1542,29 @@ class ADSBConnector extends BaseConnector {
       }
     }
     
+    // Flight tracking integration
+    if (this.enableFlightTracking) {
+      const wasInFlight = this.isAircraftInFlight(oldAircraft);
+      const isInFlight = this.isAircraftInFlight(newAircraft);
+      const isTracked = this.activeFlights.has(newAircraft.icao24);
+      
+      if (!wasInFlight && isInFlight) {
+        // Aircraft just started flying
+        await this.startFlightTracking(newAircraft);
+      } else if (wasInFlight && isInFlight) {
+        // Aircraft continues flying, update tracking
+        if (isTracked) {
+          await this.updateFlightTracking(newAircraft);
+        } else {
+          // Aircraft is in flight but not being tracked (first appearance while in flight)
+          await this.startFlightTracking(newAircraft);
+        }
+      } else if (wasInFlight && !isInFlight) {
+        // Aircraft stopped flying
+        await this.endFlightTracking(newAircraft, 'landed');
+      }
+    }
+    
     if (Object.keys(changes).length > 0) {
       this.recentChanges.push({
         type: 'update',
@@ -1501,7 +1580,7 @@ class ADSBConnector extends BaseConnector {
   /**
    * Handle aircraft disappearance
    */
-  handleAircraftDisappearance(aircraft) {
+  async handleAircraftDisappearance(aircraft) {
     this.disappearances.push({
       ...aircraft,
       disappeared_at: new Date().toISOString()
@@ -1517,6 +1596,11 @@ class ADSBConnector extends BaseConnector {
       aircraft: aircraft,
       timestamp: new Date().toISOString()
     });
+    
+    // Flight tracking integration - end flight if aircraft disappears
+    if (this.enableFlightTracking) {
+      await this.endFlightTracking(aircraft, 'disappeared');
+    }
     
     this.emit('aircraft:disappeared', aircraft);
     
@@ -2137,13 +2221,13 @@ class ADSBConnector extends BaseConnector {
    * Export aircraft registry data
    */
   async exportAircraftRegistry(parameters = {}) {
-    if (!this.enableBaseStationIntegration) {
+    if (!this.enableBaseStationIntegration || !this.baseStationDb) {
       return { aircraft: [], count: 0, error: 'BaseStation integration not enabled' };
     }
     
     try {
-      const format = parameters.format || 'json';
       const limit = parameters.limit || 1000;
+      const format = parameters.format || 'json';
       
       let query = `
         SELECT 
@@ -2155,8 +2239,8 @@ class ADSBConnector extends BaseConnector {
           OperatorFlagCode,
           SerialNo,
           YearBuilt,
-          Owner,
-          Operator
+          RegisteredOwners,
+          Country
         FROM Aircraft 
         WHERE ModeS IS NOT NULL AND ModeS != ''
       `;
@@ -2191,8 +2275,8 @@ class ADSBConnector extends BaseConnector {
               operatorFlagCode: row.OperatorFlagCode || null,
               serialNo: row.SerialNo || null,
               yearBuilt: row.YearBuilt || null,
-              owner: row.Owner || null,
-              operator: row.Operator || null
+              owner: row.RegisteredOwners || null,
+              country: row.Country || null
             }));
             
             const result = {
@@ -2232,8 +2316,8 @@ class ADSBConnector extends BaseConnector {
       'OperatorFlagCode',
       'SerialNo',
       'YearBuilt',
-      'Owner',
-      'Operator'
+      'RegisteredOwners',
+      'Country'
     ];
     
     const csvRows = [headers.join(',')];
@@ -2405,6 +2489,398 @@ class ADSBConnector extends BaseConnector {
     };
     
     return priorities[type] || 'low';
+  }
+
+  /**
+   * Check if aircraft is in flight
+   */
+  isAircraftInFlight(aircraft) {
+    if (!aircraft) return false;
+    
+    // Check if aircraft is moving fast enough
+    if (aircraft.speed && aircraft.speed > this.flightDetectionConfig.maxGroundSpeed) {
+      return true;
+    }
+    
+    // Check if aircraft is at sufficient altitude
+    if (aircraft.altitude && aircraft.altitude > this.flightDetectionConfig.minAltitude) {
+      return true;
+    }
+    
+    // Check if aircraft is climbing or descending significantly
+    if (aircraft.vertical_rate && Math.abs(aircraft.vertical_rate) > 100) {
+      return true;
+    }
+    
+    return false;
+  }
+
+  /**
+   * Start tracking a flight
+   */
+  async startFlightTracking(aircraft) {
+    if (!this.enableFlightTracking || !this.aircraftDataService) return;
+    
+    const icao24 = aircraft.icao24;
+    
+    // Check if flight is already being tracked
+    if (this.activeFlights.has(icao24)) {
+      return;
+    }
+    
+    // Get aircraft registration data
+    const registration = await this.aircraftDataService.getAircraftRegistration(icao24);
+    
+    // Create flight record
+    const flight = {
+      icao24: icao24,
+      callsign: aircraft.callsign,
+      registration: registration?.registration,
+      startTime: new Date().toISOString(),
+      startPosition: {
+        lat: aircraft.lat,
+        lon: aircraft.lon,
+        altitude: aircraft.altitude,
+        speed: aircraft.speed,
+        track: aircraft.track,
+        vertical_rate: aircraft.vertical_rate,
+        squawk: aircraft.squawk,
+        isOnGround: aircraft.isOnGround || false
+      },
+      lastPosition: {
+        lat: aircraft.lat,
+        lon: aircraft.lon,
+        altitude: aircraft.altitude,
+        speed: aircraft.speed,
+        track: aircraft.track,
+        vertical_rate: aircraft.vertical_rate,
+        squawk: aircraft.squawk,
+        isOnGround: aircraft.isOnGround || false
+      },
+      lastUpdate: new Date(),
+      sessionId: this.flightSessionId++,
+      aircraftId: registration?.icao24 || icao24
+    };
+    
+    // Store in BaseStation if enabled
+    if (this.aircraftDataService.config.enableBaseStationFlightLogging) {
+      try {
+        const flightId = await this.aircraftDataService.startFlightInBaseStation({
+          sessionId: flight.sessionId,
+          aircraftId: flight.aircraftId,
+          startTime: flight.startTime,
+          callsign: flight.callsign,
+          pos: flight.startPosition
+        });
+        flight.baseStationFlightId = flightId;
+      } catch (error) {
+        this.logger.error('Failed to start flight in BaseStation', { icao24, error: error.message });
+      }
+    }
+    
+    // Store in aircraft data service
+    if (this.aircraftDataService) {
+      await this.aircraftDataService.storeAircraftEvent(icao24, 'flight_started', {
+        callsign: flight.callsign,
+        registration: flight.registration,
+        startTime: flight.startTime,
+        startPosition: flight.startPosition
+      });
+    }
+    
+    // Track the flight
+    this.activeFlights.set(icao24, flight);
+    
+    // Emit flight started event
+    const flightEvent = {
+      id: `flight_started_${icao24}_${Date.now()}`,
+      type: 'flight:started',
+      aircraft: aircraft,
+      flight: flight,
+      timestamp: new Date().toISOString(),
+      metadata: {
+        callsign: flight.callsign,
+        registration: flight.registration,
+        startPosition: flight.startPosition,
+        sessionId: flight.sessionId
+      }
+    };
+    
+    this.events.push(flightEvent);
+    this.emit('flight:started', flightEvent);
+    this.performance.flightStarts++;
+    
+    this.logger.info('Flight started tracking', {
+      icao24: icao24,
+      callsign: flight.callsign,
+      registration: flight.registration,
+      sessionId: flight.sessionId
+    });
+  }
+
+  /**
+   * Update flight tracking
+   */
+  async updateFlightTracking(aircraft) {
+    if (!this.enableFlightTracking || !this.aircraftDataService) return;
+    
+    const icao24 = aircraft.icao24;
+    const flight = this.activeFlights.get(icao24);
+    
+    if (!flight) return;
+    
+    // Update flight data
+    flight.lastPosition = {
+      lat: aircraft.lat,
+      lon: aircraft.lon,
+      altitude: aircraft.altitude,
+      speed: aircraft.speed,
+      track: aircraft.track,
+      vertical_rate: aircraft.vertical_rate,
+      squawk: aircraft.squawk,
+      isOnGround: aircraft.isOnGround || false
+    };
+    flight.lastUpdate = new Date();
+    
+    // Update in BaseStation if enabled
+    if (this.aircraftDataService.config.enableBaseStationFlightLogging && flight.baseStationFlightId) {
+      try {
+        await this.aircraftDataService.logFlightPositionInBaseStation({
+          flightId: flight.baseStationFlightId,
+          pos: flight.lastPosition
+        });
+      } catch (error) {
+        this.logger.error('Failed to update flight position in BaseStation', { icao24, error: error.message });
+      }
+    }
+    
+    // Store position in aircraft data service
+    if (this.aircraftDataService) {
+      await this.aircraftDataService.storeAircraftPosition(aircraft);
+    }
+  }
+
+  /**
+   * End flight tracking
+   */
+  async endFlightTracking(aircraft, reason = 'disappeared') {
+    if (!this.enableFlightTracking || !this.aircraftDataService) return;
+    
+    const icao24 = aircraft.icao24;
+    const flight = this.activeFlights.get(icao24);
+    
+    if (!flight) return;
+    
+    const endTime = new Date().toISOString();
+    const flightDuration = new Date(endTime) - new Date(flight.startTime);
+    
+    // Only end flight if it lasted long enough
+    if (flightDuration < this.flightDetectionConfig.minFlightDuration) {
+      this.activeFlights.delete(icao24);
+      return;
+    }
+    
+    // Update flight end data
+    flight.endTime = endTime;
+    flight.endPosition = {
+      lat: aircraft.lat,
+      lon: aircraft.lon,
+      altitude: aircraft.altitude,
+      speed: aircraft.speed,
+      track: aircraft.track,
+      vertical_rate: aircraft.vertical_rate,
+      squawk: aircraft.squawk,
+      isOnGround: aircraft.isOnGround || false
+    };
+    flight.duration = flightDuration;
+    flight.reason = reason;
+    
+    // Update in BaseStation if enabled
+    if (this.aircraftDataService.config.enableBaseStationFlightLogging && flight.baseStationFlightId) {
+      try {
+        await this.aircraftDataService.endFlightInBaseStation({
+          flightId: flight.baseStationFlightId,
+          endTime: endTime,
+          pos: flight.endPosition
+        });
+      } catch (error) {
+        this.logger.error('Failed to end flight in BaseStation', { icao24, error: error.message });
+      }
+    }
+    
+    // Store in aircraft data service
+    if (this.aircraftDataService) {
+      await this.aircraftDataService.storeAircraftEvent(icao24, 'flight_ended', {
+        callsign: flight.callsign,
+        registration: flight.registration,
+        startTime: flight.startTime,
+        endTime: flight.endTime,
+        duration: flightDuration,
+        startPosition: flight.startPosition,
+        endPosition: flight.endPosition,
+        reason: reason
+      });
+    }
+    
+    // Remove from active flights
+    this.activeFlights.delete(icao24);
+    
+    // Emit flight ended event
+    const flightEvent = {
+      id: `flight_ended_${icao24}_${Date.now()}`,
+      type: 'flight:ended',
+      aircraft: aircraft,
+      flight: flight,
+      timestamp: new Date().toISOString(),
+      metadata: {
+        callsign: flight.callsign,
+        registration: flight.registration,
+        startTime: flight.startTime,
+        endTime: flight.endTime,
+        duration: flightDuration,
+        startPosition: flight.startPosition,
+        endPosition: flight.endPosition,
+        reason: reason,
+        sessionId: flight.sessionId
+      }
+    };
+    
+    this.events.push(flightEvent);
+    this.emit('flight:ended', flightEvent);
+    this.performance.flightEnds++;
+    
+    this.logger.info('Flight ended tracking', {
+      icao24: icao24,
+      callsign: flight.callsign,
+      registration: flight.registration,
+      duration: flightDuration,
+      reason: reason
+    });
+  }
+
+  /**
+   * Check for flight timeouts
+   */
+  checkFlightTimeouts() {
+    if (!this.enableFlightTracking) return;
+    
+    const now = new Date();
+    const timeoutThreshold = now.getTime() - this.flightDetectionConfig.flightEndTimeout;
+    
+    for (const [icao24, flight] of this.activeFlights.entries()) {
+      if (flight.lastUpdate.getTime() < timeoutThreshold) {
+        // Flight has timed out, end it
+        const aircraft = this.aircraft.get(icao24) || {
+          icao24: icao24,
+          callsign: flight.callsign,
+          lat: flight.lastPosition.lat,
+          lon: flight.lastPosition.lon,
+          altitude: flight.lastPosition.altitude,
+          speed: flight.lastPosition.speed,
+          track: flight.lastPosition.track,
+          vertical_rate: flight.lastPosition.vertical_rate,
+          squawk: flight.lastPosition.squawk
+        };
+        
+        this.endFlightTracking(aircraft, 'timeout');
+      }
+    }
+  }
+
+  /**
+   * Get active flights with augmented data
+   */
+  getActiveFlights() {
+    if (!this.enableFlightTracking) return [];
+    
+    const activeFlights = [];
+    
+    for (const [icao24, flight] of this.activeFlights.entries()) {
+      const currentAircraft = this.aircraft.get(icao24);
+      
+      const augmentedFlight = {
+        icao24: icao24,
+        callsign: flight.callsign,
+        registration: flight.registration,
+        startTime: flight.startTime,
+        lastUpdate: flight.lastUpdate,
+        duration: new Date() - new Date(flight.startTime),
+        startPosition: flight.startPosition,
+        currentPosition: flight.lastPosition,
+        emergency: currentAircraft?.emergency || false,
+        squawk: flight.lastPosition.squawk,
+        sessionId: flight.sessionId,
+        baseStationFlightId: flight.baseStationFlightId,
+        // Augmented data
+        airspaceInfo: null,
+        squawkInfo: null,
+        aircraftInfo: null,
+        flightPath: null,
+        alerts: []
+      };
+      
+      // Get airspace information if available
+      if (this.airspaceService && flight.lastPosition) {
+        const airspaces = this.airspaceService.getAirspacesAtPosition(
+          flight.lastPosition.lat, 
+          flight.lastPosition.lon, 
+          flight.lastPosition.altitude
+        );
+        if (airspaces.length > 0) {
+          augmentedFlight.airspaceInfo = airspaces.map(airspace => ({
+            id: airspace.id,
+            type: airspace.type,
+            name: airspace.name,
+            class: airspace.class,
+            floor: airspace.floor,
+            ceiling: airspace.ceiling
+          }));
+        }
+      }
+      
+      // Get squawk code information if available
+      if (this.squawkCodeService && flight.lastPosition.squawk) {
+        const squawkInfo = this.squawkCodeService.getSquawkCodeInfo(flight.lastPosition.squawk);
+        if (squawkInfo) {
+          augmentedFlight.squawkInfo = squawkInfo;
+        }
+      }
+      
+      // Get aircraft information if available
+      if (this.aircraftDataService) {
+        const aircraftInfo = this.aircraftDataService.getAircraftInfo(icao24);
+        if (aircraftInfo) {
+          augmentedFlight.aircraftInfo = aircraftInfo;
+        }
+      }
+      
+      // Get flight path if available
+      if (flight.flightPath && flight.flightPath.length > 0) {
+        augmentedFlight.flightPath = flight.flightPath.map(point => ({
+          lat: point.lat,
+          lon: point.lon,
+          altitude: point.altitude,
+          timestamp: point.timestamp
+        }));
+      }
+      
+      // Check for alerts
+      if (currentAircraft?.emergency) {
+        augmentedFlight.alerts.push('EMERGENCY');
+      }
+      
+      if (flight.lastPosition.squawk === '7500') {
+        augmentedFlight.alerts.push('HIJACK');
+      } else if (flight.lastPosition.squawk === '7600') {
+        augmentedFlight.alerts.push('COMM_FAILURE');
+      } else if (flight.lastPosition.squawk === '7700') {
+        augmentedFlight.alerts.push('EMERGENCY');
+      }
+      
+      activeFlights.push(augmentedFlight);
+    }
+    
+    return activeFlights;
   }
 }
 

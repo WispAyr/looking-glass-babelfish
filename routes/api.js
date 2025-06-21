@@ -820,6 +820,45 @@ router.get('/aircraft', (req, res) => {
   }
 });
 
+// Debug endpoint for ADSB connector internal state
+router.get('/adsb/debug', (req, res) => {
+  try {
+    const adsbConnector = req.app.locals.connectorRegistry?.getConnector('adsb-main');
+    
+    if (!adsbConnector) {
+      return res.status(500).json({ success: false, error: 'ADSB Connector not found' });
+    }
+    
+    const debugInfo = {
+      status: adsbConnector.status,
+      config: {
+        enableFlightTracking: adsbConnector.enableFlightTracking,
+        enableAircraftDataService: adsbConnector.enableAircraftDataService,
+        flightDetectionConfig: adsbConnector.flightDetectionConfig,
+        hasAircraftDataService: !!adsbConnector.aircraftDataService,
+        hasAirspaceService: !!adsbConnector.airspaceService,
+        hasSquawkCodeService: !!adsbConnector.squawkCodeService
+      },
+      state: {
+        aircraftCount: adsbConnector.aircraft?.size || 0,
+        activeFlightsCount: adsbConnector.activeFlights?.size || 0,
+        activeFlights: Array.from(adsbConnector.activeFlights?.entries() || []).map(([icao24, flight]) => ({
+          icao24,
+          callsign: flight.callsign,
+          startTime: flight.startTime,
+          lastUpdate: flight.lastUpdate,
+          sessionId: flight.sessionId
+        })),
+        performance: adsbConnector.performance
+      }
+    };
+    
+    res.json({ success: true, data: debugInfo });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 router.get('/radar/airport-vectors', (req, res) => {
   try {
     const airportVectorService = req.app.locals.airportVectorService;

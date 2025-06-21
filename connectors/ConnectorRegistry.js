@@ -122,10 +122,18 @@ class ConnectorRegistry extends EventEmitter {
     // Validate configuration
     connectorType.class.validateConfig(config);
     
-    // Create connector instance with logger
+    // Create a safe logger object to avoid circular references
+    const safeLogger = {
+      info: (message, data) => this.logger.info(message, data),
+      warn: (message, data) => this.logger.warn(message, data),
+      error: (message, data) => this.logger.error(message, data),
+      debug: (message, data) => this.logger.debug ? this.logger.debug(message, data) : this.logger.info(message, data)
+    };
+    
+    // Create connector instance with safe logger
     const connector = new connectorType.class({
       ...config,
-      logger: this.logger
+      logger: safeLogger
     });
     
     // Register connector
@@ -136,7 +144,11 @@ class ConnectorRegistry extends EventEmitter {
     
     // Save configuration if auto-save is enabled
     if (this.autoSave) {
-      await this.saveConfiguration();
+      try {
+        await this.saveConfiguration();
+      } catch (error) {
+        console.error('Failed to save connector configuration:', error.message);
+      }
     }
     
     this.emit('connector-created', {
@@ -389,17 +401,32 @@ class ConnectorRegistry extends EventEmitter {
   async saveConfiguration() {
     try {
       const config = {
-        connectors: Array.from(this.connectors.values()).map(connector => ({
-          id: connector.id,
-          type: connector.type,
-          name: connector.name,
-          description: connector.description,
-          config: connector.config,
-          capabilities: {
-            enabled: Array.from(connector.enabledCapabilities),
-            disabled: Array.from(connector.disabledCapabilities)
+        connectors: Array.from(this.connectors.values()).map(connector => {
+          // Create a safe configuration object without circular references
+          const safeConfig = {
+            id: connector.id,
+            type: connector.type,
+            name: connector.name,
+            description: connector.description,
+            enabled: connector.enabled,
+            config: connector.config || {}
+          };
+          
+          // Only add capabilities if they exist and are not circular
+          if (connector.enabledCapabilities && connector.disabledCapabilities) {
+            try {
+              safeConfig.capabilities = {
+                enabled: Array.from(connector.enabledCapabilities),
+                disabled: Array.from(connector.disabledCapabilities)
+              };
+            } catch (error) {
+              // Skip capabilities if they cause circular reference issues
+              console.warn(`Skipping capabilities for connector ${connector.id} due to serialization issues`);
+            }
           }
-        }))
+          
+          return safeConfig;
+        })
       };
       
       // Ensure config directory exists

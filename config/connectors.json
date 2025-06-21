@@ -40,20 +40,324 @@
       }
     },
     {
-      "id": "unifi-protect-main",
-      "type": "unifi-protect",
-      "name": "UniFi Protect System",
-      "description": "Main UniFi Protect camera system",
+      "id": "adsb-main",
+      "type": "adsb",
+      "name": "ADSB Receiver",
+      "description": "Connector for dump1090 ADS-B receiver with enhanced features",
       "config": {
-        "host": "10.0.0.1",
-        "port": 443,
-        "apiKey": "wye3aapIuxAz2omKg4WFdCSncRBfSzPx",
-        "verifySSL": false,
-        "enableWebSocket": true,
-        "enableEventPolling": false
+        "url": "http://10.0.1.180/skyaware/data/aircraft.json",
+        "pollInterval": 5000,
+        "emergencyCodes": [
+          "7500",
+          "7600",
+          "7700"
+        ],
+        "maxAircraftAge": 300000,
+        "radarRange": 50,
+        "radarCenter": {
+          "lat": 55.5074,
+          "lon": -4.5933
+        },
+        "enableSquawkCodeAnalysis": true,
+        "enableBaseStationIntegration": false,
+        "enableAirspaceAwareness": true,
+        "enableFlightTracking": true,
+        "enableAircraftDataService": true,
+        "baseStationDbPath": "./aviationdata/BaseStation.sqb"
+      },
+      "capabilities": {
+        "enabled": [
+          "aircraft:tracking",
+          "zones:management",
+          "radar:display",
+          "events:smart",
+          "emergency:monitoring",
+          "basestation:database",
+          "squawk:analysis"
+        ],
+        "disabled": []
+      }
+    },
+    {
+      "id": "speed-calculation-main",
+      "type": "speed-calculation",
+      "name": "Main Speed Calculation",
+      "description": "Primary speed calculation service",
+      "config": {},
+      "capabilities": {
+        "enabled": [],
+        "disabled": []
+      }
+    },
+    {
+      "id": "radar-main",
+      "type": "radar",
+      "name": "Main Radar",
+      "description": "Primary radar display service",
+      "config": {
+        "id": "radar-main",
+        "type": "radar",
+        "name": "Main Radar",
+        "description": "Primary radar display service",
+        "config": {
+          "id": "radar-main",
+          "type": "radar",
+          "name": "Main Radar",
+          "description": "Primary radar display service",
+          "config": {
+            "id": "radar-main",
+            "type": "radar",
+            "name": "Main Radar",
+            "description": "Primary radar display service",
+            "config": {
+              "id": "radar-main",
+              "type": "radar",
+              "name": "Main Radar",
+              "description": "Primary radar display service",
+              "config": {
+                "id": "radar-main",
+                "type": "radar",
+                "name": "Main Radar",
+                "description": "Primary radar display service",
+                "config": {
+                  "id": "radar-main",
+                  "type": "radar",
+                  "name": "Main Radar",
+                  "description": "Primary radar display service",
+                  "config": {
+                    "id": "radar-main",
+                    "type": "radar",
+                    "name": "Main Radar",
+                    "description": "Primary radar display service",
+                    "config": {
+                      "id": "radar-main",
+                      "type": "radar",
+                      "name": "Main Radar",
+                      "description": "Primary radar display service",
+                      "config": {
+                        "id": "radar-main",
+                        "type": "radar",
+                        "name": "Main Radar",
+                        "description": "Primary radar display service",
+                        "config": {
+                          "id": "radar-main",
+                          "type": "radar",
+                          "name": "Main Radar",
+                          "description": "Primary radar display service",
+                          "config": {
+                            "id": "radar-main",
+                            "type": "radar",
+                            "name": "Main Radar",
+                            "description": "Primary radar display service",
+                            "config": {
+                              "id": "radar-main",
+                              "type": "radar",
+                              "name": "Main Radar",
+                              "description": "Primary radar display service",
+                              "config": {
+                                "id": "radar-main",
+                                "type": "radar",
+                                "name": "Main Radar",
+                                "description": "Primary radar display service",
+                                "config": {
+                                  "id": "radar-main",
+                                  "type": "radar",
+                                  "name": "Main Radar",
+                                  "description": "Primary radar display service",
+                                  "config": {
+                                    "id": "radar-main",
+                                    "type": "radar",
+                                    "name": "Main Radar",
+                                    "description": "Primary radar display service",
+                                    "config": {
+                                      "id": "radar-main",
+                                      "type": "radar",
+                                      "name": "Main Radar",
+                                      "description": "Primary radar display service",
+                                      "config": {
+                                        "id": "radar-main",
+                                        "type": "radar",
+                                        "name": "Main Radar",
+                                        "description": "Primary radar display service",
+                                        "config": {
+                                          "id": "radar-main",
+                                          "type": "radar",
+                                          "name": "Main Radar",
+                                          "description": "Primary radar display service",
+                                          "config": {
+                                            "id": "radar-main",
+                                            "type": "radar",
+                                            "name": "Main Radar",
+                                            "description": "Primary radar display service",
+                                            "config": {
+                                              "id": "radar-main",
+                                              "type": "radar",
+                                              "name": "Main Radar",
+                                              "description": "Primary radar display service",
+                                              "config": {
+                                                "id": "radar-main",
+                                                "type": "radar",
+                                                "name": "Main Radar",
+                                                "description": "Primary radar display service",
+                                                "enabled": true,
+                                                "logger": {}
+                                              },
+                                              "capabilities": {
+                                                "enabled": [],
+                                                "disabled": []
+                                              },
+                                              "logger": {}
+                                            },
+                                            "capabilities": {
+                                              "enabled": [],
+                                              "disabled": []
+                                            },
+                                            "logger": {}
+                                          },
+                                          "capabilities": {
+                                            "enabled": [],
+                                            "disabled": []
+                                          },
+                                          "logger": {}
+                                        },
+                                        "capabilities": {
+                                          "enabled": [],
+                                          "disabled": []
+                                        },
+                                        "logger": {}
+                                      },
+                                      "capabilities": {
+                                        "enabled": [],
+                                        "disabled": []
+                                      },
+                                      "logger": {}
+                                    },
+                                    "capabilities": {
+                                      "enabled": [],
+                                      "disabled": []
+                                    },
+                                    "logger": {}
+                                  },
+                                  "capabilities": {
+                                    "enabled": [],
+                                    "disabled": []
+                                  },
+                                  "logger": {}
+                                },
+                                "capabilities": {
+                                  "enabled": [],
+                                  "disabled": []
+                                },
+                                "logger": {}
+                              },
+                              "capabilities": {
+                                "enabled": [],
+                                "disabled": []
+                              },
+                              "logger": {}
+                            },
+                            "capabilities": {
+                              "enabled": [],
+                              "disabled": []
+                            },
+                            "logger": {}
+                          },
+                          "capabilities": {
+                            "enabled": [],
+                            "disabled": []
+                          },
+                          "logger": {}
+                        },
+                        "capabilities": {
+                          "enabled": [],
+                          "disabled": []
+                        },
+                        "logger": {}
+                      },
+                      "capabilities": {
+                        "enabled": [],
+                        "disabled": []
+                      },
+                      "logger": {}
+                    },
+                    "capabilities": {
+                      "enabled": [],
+                      "disabled": []
+                    },
+                    "logger": {}
+                  },
+                  "capabilities": {
+                    "enabled": [],
+                    "disabled": []
+                  },
+                  "logger": {}
+                },
+                "capabilities": {
+                  "enabled": [],
+                  "disabled": []
+                },
+                "logger": {}
+              },
+              "capabilities": {
+                "enabled": [],
+                "disabled": []
+              },
+              "logger": {}
+            },
+            "capabilities": {
+              "enabled": [],
+              "disabled": []
+            },
+            "logger": {}
+          },
+          "capabilities": {
+            "enabled": [],
+            "disabled": []
+          },
+          "logger": {}
+        },
+        "capabilities": {
+          "enabled": [],
+          "disabled": []
+        },
+        "logger": {}
       },
       "capabilities": {
         "enabled": [],
+        "disabled": []
+      }
+    },
+    {
+      "id": "unifi-protect-main",
+      "type": "unifi-protect",
+      "name": "UniFi Protect",
+      "description": "Primary UniFi Protect system",
+      "config": {
+        "host": "10.0.0.1",
+        "port": 443,
+        "protocol": "https",
+        "apiKey": "wye3aapIuxAz2omKg4WFdCSncRBfSzPx",
+        "verifySSL": false,
+        "timeout": 10000,
+        "autoDiscoverCameras": true,
+        "enableWebSocketEvents": true,
+        "enableMotionDetection": true,
+        "enableSmartDetection": true,
+        "enableANPR": true,
+        "enableLineCrossing": true,
+        "eventTypes": [
+          "motion",
+          "smartDetect",
+          "smartDetectLine",
+          "smartDetectZone",
+          "anpr"
+        ]
+      },
+      "capabilities": {
+        "enabled": [
+          "camera:management",
+          "system:users"
+        ],
         "disabled": []
       }
     }

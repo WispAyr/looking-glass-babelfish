@@ -271,11 +271,18 @@ class CoastlineVectorService extends EventEmitter {
    * Get all coastline data
    */
   getAllData() {
-    return {
-      segments: this.coastlineData.segments,
-      bounds: this.coastlineData.bounds,
-      stats: this.stats
+    // Defensive: ensure segments is always an array of objects with .points
+    const segments = Array.isArray(this.coastlineData.segments)
+      ? this.coastlineData.segments.map(seg => ({
+          ...seg,
+          points: Array.isArray(seg.points) ? seg.points : [],
+        }))
+      : [];
+    // Defensive: ensure bounds is always an object
+    const bounds = this.coastlineData.bounds || {
+      minLat: null, maxLat: null, minLon: null, maxLon: null, center: { lat: null, lon: null }
     };
+    return { segments, bounds };
   }
   
   /**

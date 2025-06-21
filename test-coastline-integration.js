@@ -18,7 +18,17 @@ async function testCoastlineIntegration() {
     // Test coastline service directly
     console.log('📊 Coastline Service Test:');
     const coastlineData = coastlineService.getAllData();
-    console.log(`✅ Loaded ${coastlineData.segments?.length || 0} segments with ${coastlineData.segments?.reduce((sum, seg) => sum + (seg.points?.length || 0), 0) || 0} points`);
+    const segCount = coastlineData.segments?.length || 0;
+    const ptCount = coastlineData.segments?.reduce((sum, seg) => sum + (seg.points?.length || 0), 0) || 0;
+    console.log(`✅ Loaded ${segCount} segments with ${ptCount} points`);
+    if (segCount > 0 && coastlineData.segments[0].points?.length) {
+      console.log('Sample points:', coastlineData.segments[0].points.slice(0, 3));
+    }
+    if (coastlineData.bounds) {
+      console.log('Bounds:', coastlineData.bounds);
+    } else {
+      console.log('No bounds returned.');
+    }
     
     // Test radar connector with coastline service
     console.log('\n🎯 Radar Connector Integration Test:');

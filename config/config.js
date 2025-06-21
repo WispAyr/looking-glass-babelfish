@@ -301,6 +301,47 @@ const config = {
     }
   },
 
+  // Airspace Service Configuration
+  airspace: {
+    enabled: process.env.AIRSPACE_ENABLED !== 'false',
+    airspaceDataPath: process.env.AIRSPACE_DATA_PATH || './aviationdata/OUT_UK_Airspace',
+    enableAirspaceAwareness: process.env.AIRSPACE_AWARENESS_ENABLED !== 'false',
+    airspaceTypes: process.env.AIRSPACE_TYPES?.split(',') || ['FA', 'ATZ', 'CTA', 'CTR', 'DA', 'FIR', 'LARS', 'MIL'],
+    logLevel: process.env.AIRSPACE_LOG_LEVEL || 'info',
+    display: {
+      defaultColor: process.env.AIRSPACE_DEFAULT_COLOR || '#ff0000',
+      defaultOpacity: parseFloat(process.env.AIRSPACE_DEFAULT_OPACITY) || 0.3,
+      showLabels: process.env.AIRSPACE_SHOW_LABELS !== 'false',
+      showBoundaries: process.env.AIRSPACE_SHOW_BOUNDARIES !== 'false'
+    },
+    performance: {
+      maxAirspaces: parseInt(process.env.AIRSPACE_MAX_AIRSPACES) || 10000,
+      spatialIndexEnabled: process.env.AIRSPACE_SPATIAL_INDEX !== 'false',
+      cacheEnabled: process.env.AIRSPACE_CACHE_ENABLED !== 'false'
+    }
+  },
+
+  // Vector Optimization Service Configuration
+  vectorOptimization: {
+    enabled: process.env.VECTOR_OPTIMIZATION_ENABLED !== 'false',
+    maxPolygonPoints: parseInt(process.env.VECTOR_MAX_POLYGON_POINTS) || 1000,
+    simplificationTolerance: parseFloat(process.env.VECTOR_SIMPLIFICATION_TOLERANCE) || 0.001,
+    optimizationLevel: process.env.VECTOR_OPTIMIZATION_LEVEL || 'medium', // low, medium, high
+    display: {
+      defaultColors: {
+        'CTR': '#ff0000',
+        'CTA': '#ff6600',
+        'TMA': '#ff9900',
+        'ATZ': '#ffff00',
+        'FA': '#00ff00',
+        'DA': '#ff00ff',
+        'FIR': '#00ffff',
+        'LARS': '#0000ff',
+        'MIL': '#800080'
+      }
+    }
+  },
+
   // Database Configuration
   database: {
     path: process.env.DATABASE_PATH || 'data/babelfish.db',

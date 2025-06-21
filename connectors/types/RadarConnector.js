@@ -13,6 +13,7 @@ class RadarConnector extends BaseConnector {
     this.adsbConnector = null;
     this.airportVectorService = null;
     this.coastlineVectorService = null;
+    this.airspaceService = null;
     this.config = config || {};
     
     // Radar display configuration
@@ -144,6 +145,7 @@ class RadarConnector extends BaseConnector {
     this.adsbConnector = services.adsbConnector;
     this.airportVectorService = services.airportVectorService;
     this.coastlineVectorService = services.coastlineVectorService;
+    this.airspaceService = services.airspaceService;
     if (this.adsbConnector) {
         this.config = this.adsbConnector.radarConfig;
     }
@@ -420,38 +422,107 @@ class RadarConnector extends BaseConnector {
   }
   
   /**
-   * Get radar display data
+   * Get coastline data
    */
-  getRadarDisplay(parameters = {}) {
-    if (!this.adsbConnector || !this.airportVectorService || !this.coastlineVectorService) {
-      this.logger.warn('RadarConnector not initialized, cannot get display.');
-      return { 
-        config: this.config || {},
-        aircraft: [],
-        airport: null,
-        coastline: null,
-        error: 'RadarConnector not initialized' 
+  getCoastlineData(parameters = {}) {
+    if (!this.coastlineVectorService) {
+      throw new Error('Coastline vector service not available');
+    }
+    const { bounds, filter } = parameters;
+    let segments = this.coastlineVectorService.getAllData().segments;
+    // Filter by bounds if provided
+    if (bounds) {
+      segments = segments.filter(seg => {
+        // Simple bounds check: at least one point in bounds
+        return seg.points.some(pt =>
+          pt.lat >= bounds.minLat && pt.lat <= bounds.maxLat &&
+          pt.lon >= bounds.minLon && pt.lon <= bounds.maxLon
+        );
+      });
+    }
+    // Defensive: always return a valid bounds object
+    const allBounds = this.coastlineVectorService.getAllData().bounds || {
+      minLat: null, maxLat: null, minLon: null, maxLon: null, center: { lat: null, lon: null }
+    };
+    return { segments, bounds: allBounds };
+  }
+  
+  /**
+   * Get radar display (include coastline if enabled)
+   */
+  getRadarDisplay() {
+    const display = {
+      aircraft: Array.from(this.aircraftData?.values?.() || []),
+      zones: Array.from(this.zoneData?.values?.() || []),
+      // ... other display data ...
+    };
+    
+    // Add airspace data if available
+    if (this.airspaceService) {
+      try {
+        const center = this.radarConfig?.center || { lat: 51.5074, lon: -0.1278 };
+        const range = this.radarConfig?.range || 50;
+        const airspaces = this.airspaceService.getAirspaceForVisualization(center, range);
+        display.airspaces = airspaces;
+      } catch (error) {
+        this.logger.warn('Failed to get airspace data for radar display', { error: error.message });
+        display.airspaces = [];
+      }
+    }
+    
+    if (this.radarConfig?.showCoastline && this.coastlineVectorService) {
+      const coastlineData = this.coastlineVectorService.getAllData();
+      display.coastline = {
+        enabled: true,
+        segments: coastlineData.segments,
+        bounds: coastlineData.bounds,
       };
     }
-    const adsbDisplay = this.adsbConnector.getRadarDisplay();
-    const airportData = this.airportVectorService.getAllData();
-    const coastlineData = this.coastlineVectorService.getAllData();
-    
-    return {
-      ...adsbDisplay,
-      airport: airportData,
-      coastline: coastlineData,
-    };
+    return display;
   }
   
   /**
    * Configure radar display
    */
   configureRadar(parameters) {
+    // Update radar configuration
+    if (parameters.range !== undefined) {
+      this.radarConfig = this.radarConfig || {};
+      this.radarConfig.range = parameters.range;
+    }
+    
+    if (parameters.center) {
+      this.radarConfig = this.radarConfig || {};
+      this.radarConfig.center = parameters.center;
+    }
+    
+    if (parameters.displayMode) {
+      this.radarConfig = this.radarConfig || {};
+      this.radarConfig.displayMode = parameters.displayMode;
+    }
+    
+    if (parameters.showTrails !== undefined) {
+      this.radarConfig = this.radarConfig || {};
+      this.radarConfig.showTrails = parameters.showTrails;
+    }
+    
+    if (parameters.trailLength) {
+      this.radarConfig = this.radarConfig || {};
+      this.radarConfig.trailLength = parameters.trailLength;
+    }
+    
+    if (parameters.showCoastline !== undefined) {
+      this.radarConfig = this.radarConfig || {};
+      this.radarConfig.showCoastline = parameters.showCoastline;
+    }
+    
+    // Also configure ADSB connector if available
     if (this.adsbConnector) {
       this.adsbConnector.configureRadar(parameters);
     }
-    return { success: true };
+    
+    this.logger.info('Radar configuration updated', this.radarConfig);
+    return { success: true, data: this.radarConfig };
   }
   
   /**
@@ -691,35 +762,6 @@ class RadarConnector extends BaseConnector {
       aircraft: Array.from(this.aircraftData.values()).filter(ac => {
         return this.calculateDistance(ac.lat, ac.lon, zone.center.lat, zone.center.lon) <= zone.radius;
       })
-    };
-  }
-  
-  /**
-   * Get coastline data
-   */
-  getCoastlineData(parameters = {}) {
-    if (!this.coastlineVectorService) {
-      throw new Error('Coastline vector service not available');
-    }
-    
-    const { bounds, filter } = parameters;
-    
-    let segments = this.coastlineVectorService.getAllData().segments;
-    
-    // Filter by bounds if provided
-    if (bounds) {
-      segments = this.coastlineVectorService.getSegmentsInBounds(bounds);
-    }
-    
-    // Apply additional filters
-    if (filter) {
-      segments = this.applyCoastlineFilter(segments, filter);
-    }
-    
-    return {
-      segments,
-      display: this.coastlineDisplay,
-      stats: this.coastlineVectorService.getStats()
     };
   }
   

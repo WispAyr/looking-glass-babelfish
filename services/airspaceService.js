@@ -37,7 +37,7 @@ class AirspaceService {
     // Airspace data storage
     this.airspaces = new Map(); // All airspace definitions
     this.airspaceIndex = new Map(); // Spatial index for quick lookup
-    this.airspaceTypes = new Map(); // Type-specific collections
+    this.airspaceTypeCollections = new Map(); // Type-specific collections
     
     // Aircraft airspace tracking
     this.aircraftAirspace = new Map(); // Current airspace for each aircraft
@@ -84,7 +84,7 @@ class AirspaceService {
       this.logger.info('Airspace service initialized successfully', {
         airspaceCount: this.airspaces.size,
         loadTime: this.performance.loadTime,
-        types: Array.from(this.airspaceTypes.keys())
+        types: Array.from(this.airspaceTypeCollections.keys())
       });
     } catch (error) {
       this.logger.error('Failed to initialize airspace service', { error: error.message });
@@ -138,10 +138,10 @@ class AirspaceService {
       
       if (airspaceData.length > 0) {
         // Store by type
-        if (!this.airspaceTypes.has(airspaceType)) {
-          this.airspaceTypes.set(airspaceType, []);
+        if (!this.airspaceTypeCollections.has(airspaceType)) {
+          this.airspaceTypeCollections.set(airspaceType, []);
         }
-        this.airspaceTypes.get(airspaceType).push(...airspaceData);
+        this.airspaceTypeCollections.get(airspaceType).push(...airspaceData);
         
         // Store individually
         airspaceData.forEach(airspace => {
@@ -200,12 +200,11 @@ class AirspaceService {
       }
       
       if (trimmedLine.startsWith('{') && trimmedLine.endsWith('}')) {
-        // New airspace definition
         if (currentAirspace && currentPolygon.length > 0) {
           currentAirspace.polygons.push(currentPolygon);
           airspaces.push(currentAirspace);
+          this.logger.debug(`Pushed airspace: ${currentAirspace.name} with ${currentAirspace.polygons.length} polygons`);
         }
-        
         const name = trimmedLine.slice(1, -1);
         currentAirspace = {
           id: `${filename}_${name}`,
@@ -217,6 +216,7 @@ class AirspaceService {
         };
         currentPolygon = [];
         type = 5; // Reset type
+        this.logger.debug(`Started new airspace: ${name}`);
       }
       else if (trimmedLine.startsWith('$TYPE=')) {
         type = parseInt(trimmedLine.substring(6));
@@ -225,24 +225,31 @@ class AirspaceService {
         }
       }
       else if (trimmedLine === '-1') {
-        // End of polygon
         if (currentPolygon.length > 0) {
           if (currentAirspace) {
             currentAirspace.polygons.push(currentPolygon);
+            this.logger.debug(`Pushed polygon with ${currentPolygon.length} points to airspace: ${currentAirspace.name}`);
           }
           currentPolygon = [];
         }
       }
-      else if (trimmedLine.includes('+-')) {
-        // Coordinate pair
-        const parts = trimmedLine.split('+-');
-        if (parts.length === 2) {
-          const lat = parseFloat(parts[0]);
-          const lon = -parseFloat(parts[1]); // Convert to negative longitude
+      else if (trimmedLine.includes('+')) {
+        // Coordinate pair - format is lat+lon (e.g., 52.08683+0.92682 or 54.69917+-6.21583)
+        const plusIndex = trimmedLine.indexOf('+');
+        if (plusIndex > 0) {
+          const latStr = trimmedLine.substring(0, plusIndex);
+          const lonStr = trimmedLine.substring(plusIndex + 1); // Skip the + separator
+          
+          const lat = parseFloat(latStr);
+          const lon = parseFloat(lonStr);
           
           if (!isNaN(lat) && !isNaN(lon)) {
             currentPolygon.push({ lat, lon });
+          } else {
+            this.logger.warn(`Invalid coordinates: ${trimmedLine} (lat=${latStr}, lon=${lonStr})`);
           }
+        } else {
+          this.logger.warn(`Invalid coordinate format: ${trimmedLine}`);
         }
       }
     }
@@ -250,9 +257,17 @@ class AirspaceService {
     // Add final airspace
     if (currentAirspace && currentPolygon.length > 0) {
       currentAirspace.polygons.push(currentPolygon);
+      this.logger.debug(`Pushed polygon with ${currentPolygon.length} points to airspace: ${currentAirspace.name} (final)`);
+    }
+    if (currentAirspace && currentAirspace.polygons.length > 0) {
       airspaces.push(currentAirspace);
+      this.logger.debug(`Pushed airspace: ${currentAirspace.name} with ${currentAirspace.polygons.length} polygons (final)`);
     }
     
+    this.logger.info(`Parsed airspaces for file ${filename}: count=${airspaces.length}`);
+    if (airspaces.length > 0) {
+      this.logger.info(`Sample airspace:`, {name: airspaces[0].name, polygons: airspaces[0].polygons.length});
+    }
     return airspaces;
   }
 
@@ -458,6 +473,8 @@ class AirspaceService {
    * Get airspace information for visualization
    */
   getAirspaceForVisualization(center, range) {
+    this.logger.debug('getAirspaceForVisualization called', { center, range, airspaceCount: this.airspaces.size });
+    
     const airspaces = [];
     
     for (const [id, airspace] of this.airspaces) {
@@ -474,6 +491,7 @@ class AirspaceService {
       }
     }
     
+    this.logger.debug('getAirspaceForVisualization returning', { count: airspaces.length });
     return airspaces;
   }
 
@@ -548,7 +566,7 @@ class AirspaceService {
     return {
       totalAirspaces: this.airspaces.size,
       airspaceTypes: Object.fromEntries(
-        Array.from(this.airspaceTypes.entries()).map(([type, airspaces]) => [type, airspaces.length])
+        Array.from(this.airspaceTypeCollections.entries()).map(([type, airspaces]) => [type, airspaces.length])
       ),
       spatialIndexCells: this.airspaceIndex.size,
       trackedAircraft: this.aircraftAirspace.size,
@@ -568,24 +586,96 @@ class AirspaceService {
    * Get airspace by type
    */
   getAirspacesByType(type) {
-    return this.airspaceTypes.get(type) || [];
+    const airspaces = this.airspaceTypeCollections.get(type) || [];
+    this.logger.debug('getAirspacesByType called', { type, count: airspaces.length });
+    return airspaces;
   }
 
   /**
-   * Search airspaces by name or type
+   * Get all airspace types
+   */
+  getAirspaceTypes() {
+    const types = Array.from(this.airspaceTypeCollections.keys());
+    this.logger.debug('getAirspaceTypes called', { types, typeCount: types.length });
+    return types;
+  }
+
+  /**
+   * Get all airspaces
+   */
+  getAllAirspaces() {
+    this.logger.debug('getAllAirspaces called', { airspaceCount: this.airspaces.size });
+    return Array.from(this.airspaces.values());
+  }
+
+  /**
+   * Get recent airspace events
+   */
+  getRecentAirspaceEvents(options = {}) {
+    const { limit = 50, type = null, aircraft = null } = options;
+    
+    let filteredEvents = this.events;
+    
+    if (type) {
+      filteredEvents = filteredEvents.filter(event => event.airspaceType === type);
+    }
+    
+    if (aircraft) {
+      filteredEvents = filteredEvents.filter(event => event.aircraft === aircraft);
+    }
+    
+    return filteredEvents
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .slice(0, limit);
+  }
+
+  /**
+   * Search airspaces
    */
   searchAirspaces(query) {
     const results = [];
     const searchTerm = query.toLowerCase();
     
     for (const [id, airspace] of this.airspaces) {
-      if (airspace.name.toLowerCase().includes(searchTerm) ||
-          airspace.type.toLowerCase().includes(searchTerm)) {
+      if (airspace.name && airspace.name.toLowerCase().includes(searchTerm)) {
+        results.push(airspace);
+      } else if (airspace.type && airspace.type.toLowerCase().includes(searchTerm)) {
         results.push(airspace);
       }
     }
     
     return results;
+  }
+
+  /**
+   * Get all airspaces at a specific position
+   */
+  getAirspacesAtPosition(lat, lon, altitude = null) {
+    this.logger.debug('getAirspacesAtPosition called', { lat, lon, altitude, airspaceCount: this.airspaces.size });
+    
+    if (lat === null || lon === null || lat === undefined || lon === undefined) {
+      this.logger.warn('getAirspacesAtPosition called with invalid coordinates', { lat, lon });
+      return [];
+    }
+    
+    const matchingAirspaces = [];
+    
+    for (const [id, airspace] of this.airspaces) {
+      if (this.isPointInAirspace(lat, lon, airspace)) {
+        // Check altitude if provided and airspace has altitude limits
+        if (altitude !== null && airspace.metadata && airspace.metadata.floor !== undefined && airspace.metadata.ceiling !== undefined) {
+          if (altitude >= airspace.metadata.floor && altitude <= airspace.metadata.ceiling) {
+            matchingAirspaces.push(airspace);
+          }
+        } else {
+          // No altitude check needed or no altitude data available
+          matchingAirspaces.push(airspace);
+        }
+      }
+    }
+    
+    this.logger.debug('getAirspacesAtPosition returning', { count: matchingAirspaces.length });
+    return matchingAirspaces;
   }
 }
 
