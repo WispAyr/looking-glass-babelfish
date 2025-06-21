@@ -278,6 +278,29 @@ const config = {
     webGuiIntegration: process.env.SPEED_WEBGUI_INTEGRATION !== 'false'
   },
 
+  // Airport Vector Service Configuration
+  airportVector: {
+    enabled: process.env.AIRPORT_VECTOR_ENABLED !== 'false',
+    dataPath: process.env.AIRPORT_VECTOR_DATA_PATH || './config',
+    autoLoad: process.env.AIRPORT_VECTOR_AUTO_LOAD !== 'false'
+  },
+
+  // Coastline Vector Service Configuration
+  coastlineVector: {
+    enabled: process.env.COASTLINE_VECTOR_ENABLED !== 'false',
+    dataPath: process.env.COASTLINE_VECTOR_DATA_PATH || './aviationdata',
+    autoLoad: process.env.COASTLINE_VECTOR_AUTO_LOAD !== 'false',
+    spatialIndex: {
+      gridSize: parseFloat(process.env.COASTLINE_GRID_SIZE) || 1.0, // degrees
+      enabled: process.env.COASTLINE_SPATIAL_INDEX !== 'false'
+    },
+    display: {
+      defaultColor: process.env.COASTLINE_DEFAULT_COLOR || '#0066cc',
+      defaultWidth: parseInt(process.env.COASTLINE_DEFAULT_WIDTH) || 2,
+      defaultOpacity: parseFloat(process.env.COASTLINE_DEFAULT_OPACITY) || 0.8
+    }
+  },
+
   // Database Configuration
   database: {
     path: process.env.DATABASE_PATH || 'data/babelfish.db',

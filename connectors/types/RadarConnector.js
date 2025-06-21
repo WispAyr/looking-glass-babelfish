@@ -5,55 +5,54 @@ const EventEmitter = require('events');
  * Radar Connector
  * 
  * Provides a comprehensive radar map interface for ADSB aircraft tracking.
- * Features real-time aircraft display, zone management, and advanced radar controls.
+ * Features real-time aircraft display, zone management, coastline visualization, and advanced radar controls.
  */
 class RadarConnector extends BaseConnector {
-  constructor(config, adsbConnector, airportVectorService) {
-    const connectorConfig = {
-      ...config,
-      type: 'radar'
-    };
-    
-    super(connectorConfig);
-    
-    this.adsbConnector = adsbConnector;
-    this.airportVectorService = airportVectorService;
-    this.config = this.adsbConnector.radarConfig; // Use ADSB config by default
+  constructor(config) {
+    super({ ...config, type: 'radar' });
+    this.adsbConnector = null;
+    this.airportVectorService = null;
+    this.coastlineVectorService = null;
+    this.config = config || {};
     
     // Radar display configuration
     this.radarConfig = {
-      range: config.config?.range || 50, // nautical miles
-      center: config.config?.center || { lat: 51.5074, lon: -0.1278 }, // London default
-      zoom: config.config?.zoom || 10,
-      rotation: config.config?.rotation || 0, // degrees
-      sweepSpeed: config.config?.sweepSpeed || 4, // seconds per sweep
-      showTrails: config.config?.showTrails !== false,
-      trailLength: config.config?.trailLength || 20,
-      showLabels: config.config?.showLabels !== false,
-      showAltitude: config.config?.showAltitude !== false,
-      showSpeed: config.config?.showSpeed !== false,
-      showHeading: config.config?.showHeading !== false,
-      showSquawk: config.config?.showSquawk !== false,
-      showEmergency: config.config?.showEmergency !== false,
-      colorByAltitude: config.config?.colorByAltitude !== false,
-      colorBySpeed: config.config?.colorBySpeed !== false,
-      colorByType: config.config?.colorByType !== false
+      range: this.config.config?.range || 50, // nautical miles
+      center: this.config.config?.center || { lat: 51.5074, lon: -0.1278 }, // London default
+      zoom: this.config.config?.zoom || 10,
+      rotation: this.config.config?.rotation || 0, // degrees
+      sweepSpeed: this.config.config?.sweepSpeed || 4, // seconds per sweep
+      showTrails: this.config.config?.showTrails !== false,
+      trailLength: this.config.config?.trailLength || 20,
+      showLabels: this.config.config?.showLabels !== false,
+      showAltitude: this.config.config?.showAltitude !== false,
+      showSpeed: this.config.config?.showSpeed !== false,
+      showHeading: this.config.config?.showHeading !== false,
+      showSquawk: this.config.config?.showSquawk !== false,
+      showEmergency: this.config.config?.showEmergency !== false,
+      colorByAltitude: this.config.config?.colorByAltitude !== false,
+      colorBySpeed: this.config.config?.colorBySpeed !== false,
+      colorByType: this.config.config?.colorByType !== false,
+      showCoastline: this.config.config?.showCoastline !== false,
+      coastlineColor: this.config.config?.coastlineColor || '#0066cc',
+      coastlineWidth: this.config.config?.coastlineWidth || 2,
+      coastlineOpacity: this.config.config?.coastlineOpacity || 0.8
     };
     
     // Aircraft display settings
     this.aircraftDisplay = {
-      symbolSize: config.config?.symbolSize || 6,
-      symbolType: config.config?.symbolType || 'circle', // circle, triangle, square, diamond
-      trailOpacity: config.config?.trailOpacity || 0.6,
-      labelFontSize: config.config?.labelFontSize || 12,
-      labelOffset: config.config?.labelOffset || 15,
-      emergencyBlink: config.config?.emergencyBlink !== false,
-      altitudeThresholds: config.config?.altitudeThresholds || {
+      symbolSize: this.config.config?.symbolSize || 6,
+      symbolType: this.config.config?.symbolType || 'circle', // circle, triangle, square, diamond
+      trailOpacity: this.config.config?.trailOpacity || 0.6,
+      labelFontSize: this.config.config?.labelFontSize || 12,
+      labelOffset: this.config.config?.labelOffset || 15,
+      emergencyBlink: this.config.config?.emergencyBlink !== false,
+      altitudeThresholds: this.config.config?.altitudeThresholds || {
         low: 1000,
         medium: 10000,
         high: 30000
       },
-      speedThresholds: config.config?.speedThresholds || {
+      speedThresholds: this.config.config?.speedThresholds || {
         slow: 100,
         medium: 300,
         fast: 500
@@ -62,53 +61,64 @@ class RadarConnector extends BaseConnector {
     
     // Zone display settings
     this.zoneDisplay = {
-      showZones: config.config?.showZones !== false,
-      zoneOpacity: config.config?.zoneOpacity || 0.3,
-      zoneBorderWidth: config.config?.zoneBorderWidth || 2,
-      showZoneLabels: config.config?.showZoneLabels !== false,
-      zoneLabelFontSize: config.config?.zoneLabelFontSize || 10,
-      highlightActiveZones: config.config?.highlightActiveZones !== false
+      showZones: this.config.config?.showZones !== false,
+      zoneOpacity: this.config.config?.zoneOpacity || 0.3,
+      zoneBorderWidth: this.config.config?.zoneBorderWidth || 2,
+      showZoneLabels: this.config.config?.showZoneLabels !== false,
+      zoneLabelFontSize: this.config.config?.zoneLabelFontSize || 10,
+      highlightActiveZones: this.config.config?.highlightActiveZones !== false
+    };
+    
+    // Coastline display settings
+    this.coastlineDisplay = {
+      showCoastline: this.config.config?.showCoastline !== false,
+      coastlineColor: this.config.config?.coastlineColor || '#0066cc',
+      coastlineWidth: this.config.config?.coastlineWidth || 2,
+      coastlineOpacity: this.config.config?.coastlineOpacity || 0.8,
+      showCoastlineLabels: this.config.config?.showCoastlineLabels !== false,
+      coastlineLabelFontSize: this.config.config?.coastlineLabelFontSize || 10
     };
     
     // Filter settings
     this.filters = {
       altitude: {
-        min: config.config?.altitudeMin || 0,
-        max: config.config?.altitudeMax || 50000,
-        enabled: config.config?.altitudeFilter !== false
+        min: this.config.config?.altitudeMin || 0,
+        max: this.config.config?.altitudeMax || 50000,
+        enabled: this.config.config?.altitudeFilter !== false
       },
       speed: {
-        min: config.config?.speedMin || 0,
-        max: config.config?.speedMax || 1000,
-        enabled: config.config?.speedFilter !== false
+        min: this.config.config?.speedMin || 0,
+        max: this.config.config?.speedMax || 1000,
+        enabled: this.config.config?.speedFilter !== false
       },
       distance: {
-        max: config.config?.distanceMax || 100,
-        enabled: config.config?.distanceFilter !== false
+        max: this.config.config?.distanceMax || 100,
+        enabled: this.config.config?.distanceFilter !== false
       },
       aircraftType: {
-        types: config.config?.aircraftTypes || [],
-        enabled: config.config?.typeFilter !== false
+        types: this.config.config?.aircraftTypes || [],
+        enabled: this.config.config?.typeFilter !== false
       },
       callsign: {
-        pattern: config.config?.callsignPattern || '',
-        enabled: config.config?.callsignFilter !== false
+        pattern: this.config.config?.callsignPattern || '',
+        enabled: this.config.config?.callsignFilter !== false
       },
       squawk: {
-        codes: config.config?.squawkCodes || [],
-        enabled: config.config?.squawkFilter !== false
+        codes: this.config.config?.squawkCodes || [],
+        enabled: this.config.config?.squawkFilter !== false
       }
     };
     
     // Radar sweep animation
     this.sweepAngle = 0;
     this.sweepTimer = null;
-    this.isSweeping = config.config?.sweepAnimation !== false;
+    this.isSweeping = this.config.config?.sweepAnimation !== false;
     
     // Aircraft data cache
     this.aircraftData = new Map();
     this.aircraftTrails = new Map();
     this.zoneData = new Map();
+    this.coastlineData = new Map();
     
     // Event tracking
     this.radarEvents = [];
@@ -119,6 +129,7 @@ class RadarConnector extends BaseConnector {
       frameRate: 0,
       aircraftCount: 0,
       zoneCount: 0,
+      coastlineSegments: 0,
       lastUpdate: null,
       updateCount: 0
     };
@@ -126,11 +137,17 @@ class RadarConnector extends BaseConnector {
     // WebSocket connections for real-time updates
     this.connections = new Set();
     
-    this.logger.info('Radar Connector initialized', {
-      id: this.id,
-      range: this.radarConfig.range,
-      center: this.radarConfig.center
-    });
+    this.logger.info('Radar Connector initialized');
+  }
+  
+  initialize(services) {
+    this.adsbConnector = services.adsbConnector;
+    this.airportVectorService = services.airportVectorService;
+    this.coastlineVectorService = services.coastlineVectorService;
+    if (this.adsbConnector) {
+        this.config = this.adsbConnector.radarConfig;
+    }
+    this.logger.info('Radar Connector initialized with dependencies.');
   }
   
   /**
@@ -141,7 +158,7 @@ class RadarConnector extends BaseConnector {
       {
         id: 'radar:display',
         name: 'Radar Display',
-        description: 'Provides a unified view of aircraft and airport data.',
+        description: 'Provides a unified view of aircraft, airport, and coastline data.',
         operations: ['get', 'configure'],
       },
       {
@@ -170,6 +187,20 @@ class RadarConnector extends BaseConnector {
           zoneId: { type: 'string', required: false },
           zoneType: { type: 'string', required: false },
           coordinates: { type: 'array', required: false }
+        }
+      },
+      {
+        id: 'coastline:management',
+        name: 'Coastline Management',
+        description: 'Manage and display coastline vector data',
+        category: 'spatial',
+        operations: ['get', 'filter', 'highlight', 'configure'],
+        dataTypes: ['coastline:segment', 'coastline:display', 'coastline:stats'],
+        events: ['coastline:loaded', 'coastline:updated'],
+        parameters: {
+          bounds: { type: 'object', required: false },
+          filter: { type: 'object', required: false },
+          display: { type: 'object', required: false }
         }
       },
       {
@@ -212,6 +243,8 @@ class RadarConnector extends BaseConnector {
         return await this.executeAircraftTracking(operation, parameters);
       case 'zones:management':
         return await this.executeZoneManagement(operation, parameters);
+      case 'coastline:management':
+        return await this.executeCoastlineManagement(operation, parameters);
       case 'filters:radar':
         return await this.executeRadarFilters(operation, parameters);
       case 'alerts:radar':
@@ -278,6 +311,24 @@ class RadarConnector extends BaseConnector {
   }
   
   /**
+   * Execute coastline management operations
+   */
+  async executeCoastlineManagement(operation, parameters) {
+    switch (operation) {
+      case 'get':
+        return this.getCoastlineData(parameters);
+      case 'filter':
+        return this.filterCoastline(parameters);
+      case 'highlight':
+        return this.highlightCoastline(parameters);
+      case 'configure':
+        return this.configureCoastline(parameters);
+      default:
+        throw new Error(`Unknown coastline management operation: ${operation}`);
+    }
+  }
+  
+  /**
    * Execute radar filter operations
    */
   async executeRadarFilters(operation, parameters) {
@@ -318,6 +369,13 @@ class RadarConnector extends BaseConnector {
    */
   async performConnect() {
     try {
+      this.setStatus('connecting');
+      
+      // Initialize dependencies if not already done
+      if (!this.adsbConnector || !this.airportVectorService || !this.coastlineVectorService) {
+        throw new Error('Dependencies not initialized');
+      }
+      
       // Start radar sweep animation
       if (this.isSweeping) {
         this.startSweepAnimation();
@@ -326,9 +384,11 @@ class RadarConnector extends BaseConnector {
       // Initialize radar display
       await this.initializeRadarDisplay();
       
-      this.logger.info('Radar Connector connected');
-      return { status: 'connected', message: 'Radar system ready' };
+      this.setStatus('connected');
+      this.logger.info('Radar Connector connected successfully');
+      return true;
     } catch (error) {
+      this.setStatus('error');
       this.logger.error('Failed to connect radar', { error: error.message });
       throw error;
     }
@@ -339,6 +399,10 @@ class RadarConnector extends BaseConnector {
    */
   async performDisconnect() {
     try {
+      this.setStatus('disconnecting');
+      this.setStatus('disconnected');
+      this.logger.info('Radar Connector disconnected');
+      
       // Stop sweep animation
       if (this.sweepTimer) {
         clearInterval(this.sweepTimer);
@@ -348,10 +412,9 @@ class RadarConnector extends BaseConnector {
       // Clear connections
       this.connections.clear();
       
-      this.logger.info('Radar Connector disconnected');
-      return { status: 'disconnected', message: 'Radar system stopped' };
+      return true;
     } catch (error) {
-      this.logger.error('Failed to disconnect radar', { error: error.message });
+      this.logger.error('Error disconnecting radar', { error: error.message });
       throw error;
     }
   }
@@ -360,12 +423,24 @@ class RadarConnector extends BaseConnector {
    * Get radar display data
    */
   getRadarDisplay(parameters = {}) {
+    if (!this.adsbConnector || !this.airportVectorService || !this.coastlineVectorService) {
+      this.logger.warn('RadarConnector not initialized, cannot get display.');
+      return { 
+        config: this.config || {},
+        aircraft: [],
+        airport: null,
+        coastline: null,
+        error: 'RadarConnector not initialized' 
+      };
+    }
     const adsbDisplay = this.adsbConnector.getRadarDisplay();
     const airportData = this.airportVectorService.getAllData();
+    const coastlineData = this.coastlineVectorService.getAllData();
     
     return {
       ...adsbDisplay,
       airport: airportData,
+      coastline: coastlineData,
     };
   }
   
@@ -373,7 +448,10 @@ class RadarConnector extends BaseConnector {
    * Configure radar display
    */
   configureRadar(parameters) {
-    return this.adsbConnector.configureRadar(parameters);
+    if (this.adsbConnector) {
+      this.adsbConnector.configureRadar(parameters);
+    }
+    return { success: true };
   }
   
   /**
@@ -390,11 +468,17 @@ class RadarConnector extends BaseConnector {
       this.updateZoneData(parameters.zones);
     }
     
+    // Update coastline data
+    if (parameters.coastline) {
+      this.updateCoastlineData(parameters.coastline);
+    }
+    
     // Update performance metrics
     this.performance.lastUpdate = new Date().toISOString();
     this.performance.updateCount++;
     this.performance.aircraftCount = this.aircraftData.size;
     this.performance.zoneCount = this.zoneData.size;
+    this.performance.coastlineSegments = this.coastlineData.size;
     
     // Broadcast update to connected clients
     this.broadcastUpdate();
@@ -416,6 +500,7 @@ class RadarConnector extends BaseConnector {
             radar: this.getRadarDisplay(),
             aircraft: Array.from(this.aircraftData.values()),
             zones: Array.from(this.zoneData.values()),
+            coastline: Array.from(this.coastlineData.values()),
             trails: Array.from(this.aircraftTrails.entries()),
             events: this.radarEvents,
             alerts: this.alertEvents
@@ -589,17 +674,162 @@ class RadarConnector extends BaseConnector {
    * Monitor zone
    */
   monitorZone(parameters) {
-    const { zoneId, enabled } = parameters;
+    const { zoneId } = parameters;
     
-    if (!zoneId || !this.zoneData.has(zoneId)) {
-      throw new Error(`Zone ${zoneId} not found`);
+    if (!zoneId) {
+      throw new Error('Zone ID is required');
     }
     
     const zone = this.zoneData.get(zoneId);
-    zone.monitored = enabled !== false;
-    this.zoneData.set(zoneId, zone);
+    if (!zone) {
+      throw new Error(`Zone '${zoneId}' not found`);
+    }
     
-    return { success: true, zoneId, monitored: zone.monitored };
+    return {
+      zoneId,
+      status: 'monitoring',
+      aircraft: Array.from(this.aircraftData.values()).filter(ac => {
+        return this.calculateDistance(ac.lat, ac.lon, zone.center.lat, zone.center.lon) <= zone.radius;
+      })
+    };
+  }
+  
+  /**
+   * Get coastline data
+   */
+  getCoastlineData(parameters = {}) {
+    if (!this.coastlineVectorService) {
+      throw new Error('Coastline vector service not available');
+    }
+    
+    const { bounds, filter } = parameters;
+    
+    let segments = this.coastlineVectorService.getAllData().segments;
+    
+    // Filter by bounds if provided
+    if (bounds) {
+      segments = this.coastlineVectorService.getSegmentsInBounds(bounds);
+    }
+    
+    // Apply additional filters
+    if (filter) {
+      segments = this.applyCoastlineFilter(segments, filter);
+    }
+    
+    return {
+      segments,
+      display: this.coastlineDisplay,
+      stats: this.coastlineVectorService.getStats()
+    };
+  }
+  
+  /**
+   * Filter coastline segments
+   */
+  filterCoastline(parameters) {
+    const { filter } = parameters;
+    
+    if (!filter) {
+      throw new Error('Filter parameters are required');
+    }
+    
+    const segments = this.coastlineVectorService.getAllData().segments;
+    const filtered = this.applyCoastlineFilter(segments, filter);
+    
+    return {
+      segments: filtered,
+      count: filtered.length,
+      filter: filter
+    };
+  }
+  
+  /**
+   * Highlight coastline segments
+   */
+  highlightCoastline(parameters) {
+    const { segmentIds, highlight = true } = parameters;
+    
+    if (!segmentIds || !Array.isArray(segmentIds)) {
+      throw new Error('Segment IDs array is required');
+    }
+    
+    const segments = this.coastlineVectorService.getAllData().segments;
+    const highlighted = segments.filter(segment => segmentIds.includes(segment.id));
+    
+    // Add highlight property to segments
+    highlighted.forEach(segment => {
+      segment.highlighted = highlight;
+    });
+    
+    return {
+      segments: highlighted,
+      highlighted: highlight,
+      count: highlighted.length
+    };
+  }
+  
+  /**
+   * Configure coastline display
+   */
+  configureCoastline(parameters) {
+    const { display } = parameters;
+    
+    if (!display) {
+      throw new Error('Display configuration is required');
+    }
+    
+    // Update coastline display settings
+    Object.assign(this.coastlineDisplay, display);
+    
+    return {
+      display: this.coastlineDisplay,
+      message: 'Coastline display configuration updated'
+    };
+  }
+  
+  /**
+   * Apply coastline filter
+   */
+  applyCoastlineFilter(segments, filter) {
+    return segments.filter(segment => {
+      // Filter by segment length
+      if (filter.minLength && segment.coordinates.length < filter.minLength) {
+        return false;
+      }
+      if (filter.maxLength && segment.coordinates.length > filter.maxLength) {
+        return false;
+      }
+      
+      // Filter by bounds
+      if (filter.bounds && segment.bounds) {
+        if (!this.boundsIntersect(segment.bounds, filter.bounds)) {
+          return false;
+        }
+      }
+      
+      // Filter by distance from point
+      if (filter.nearPoint && filter.radius) {
+        const nearSegment = this.coastlineVectorService.getSegmentsNearPoint(
+          filter.nearPoint, 
+          filter.radius
+        );
+        if (!nearSegment.find(s => s.id === segment.id)) {
+          return false;
+        }
+      }
+      
+      return true;
+    });
+  }
+  
+  /**
+   * Check if two bounds intersect
+   */
+  boundsIntersect(bounds1, bounds2) {
+    return !(bounds1.maxLat < bounds2.minLat ||
+             bounds1.minLat > bounds2.maxLat ||
+             bounds1.maxLon < bounds2.minLon ||
+             bounds1.minLon > bounds2.maxLon);
   }
   
   /**
@@ -799,50 +1029,25 @@ class RadarConnector extends BaseConnector {
   }
   
   /**
+   * Update coastline data
+   */
+  updateCoastlineData(coastline) {
+    for (const segment of coastline) {
+      this.coastlineData.set(segment.id, segment);
+    }
+  }
+  
+  /**
    * Apply aircraft filter
    */
   applyAircraftFilter(aircraft, filter) {
+    // Simple filter implementation
+    if (!filter) return aircraft;
+    
     return aircraft.filter(ac => {
-      // Altitude filter
-      if (filter.altitude) {
-        const alt = ac.altitude || 0;
-        if (filter.altitude.min !== undefined && alt < filter.altitude.min) return false;
-        if (filter.altitude.max !== undefined && alt > filter.altitude.max) return false;
-      }
-      
-      // Speed filter
-      if (filter.speed) {
-        const speed = ac.speed || 0;
-        if (filter.speed.min !== undefined && speed < filter.speed.min) return false;
-        if (filter.speed.max !== undefined && speed > filter.speed.max) return false;
-      }
-      
-      // Distance filter
-      if (filter.distance && filter.distance.max) {
-        const distance = this.calculateDistance(
-          this.radarConfig.center.lat,
-          this.radarConfig.center.lon,
-          ac.lat,
-          ac.lon
-        );
-        if (distance > filter.distance.max) return false;
-      }
-      
-      // Type filter
-      if (filter.aircraftType && filter.aircraftType.types.length > 0) {
-        if (!filter.aircraftType.types.includes(ac.aircraftType)) return false;
-      }
-      
-      // Callsign filter
-      if (filter.callsign && filter.callsign.pattern) {
-        if (!ac.callsign || !ac.callsign.match(filter.callsign.pattern)) return false;
-      }
-      
-      // Squawk filter
-      if (filter.squawk && filter.squawk.codes.length > 0) {
-        if (!ac.squawk || !filter.squawk.codes.includes(ac.squawk)) return false;
-      }
-      
+      if (filter.icao24 && ac.icao24 !== filter.icao24) return false;
+      if (filter.callsign && ac.callsign !== filter.callsign) return false;
+      if (filter.emergency && !ac.emergency) return false;
       return true;
     });
   }
@@ -930,12 +1135,10 @@ class RadarConnector extends BaseConnector {
    */
   getStatus() {
     return {
-      status: this.isConnected ? 'connected' : 'disconnected',
-      aircraftCount: this.aircraftData.size,
-      zoneCount: this.zoneData.size,
-      connections: this.connections.size,
-      performance: this.performance,
-      sweepAngle: this.sweepAngle
+      connected: true,
+      aircraftCount: this.aircraftData ? this.aircraftData.length : 0,
+      zoneCount: this.zoneData ? this.zoneData.length : 0,
+      coastlineSegments: this.coastlineData ? this.coastlineData.length : 0
     };
   }
   
@@ -945,13 +1148,14 @@ class RadarConnector extends BaseConnector {
   static getMetadata() {
     return {
       name: 'Radar Connector',
-      description: 'Comprehensive radar map interface for ADSB aircraft tracking',
       version: '1.0.0',
-      author: 'Looking Glass Team',
+      description: 'Comprehensive radar display for ADSB aircraft tracking',
+      author: 'Babelfish Team',
       capabilities: [
         'radar:display',
-        'aircraft:tracking',
+        'aircraft:tracking', 
         'zones:management',
+        'coastline:management',
         'filters:radar',
         'alerts:radar'
       ]

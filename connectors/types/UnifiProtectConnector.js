@@ -378,7 +378,7 @@ class UnifiProtectConnector extends BaseConnector {
         case 'camera:video:stream':
           return await this.executeVideoStream(operation, parameters);
         case 'camera:snapshot':
-          return await this.executeCameraSnapshot(operation, parameters);
+          return await this.executeSnapshotCapability(operation, parameters);
         case 'camera:event:motion':
           return await this.executeMotionEvents(operation, parameters);
         case 'camera:event:smart':
@@ -1138,6 +1138,36 @@ class UnifiProtectConnector extends BaseConnector {
           deviceIds: { type: 'array', items: { type: 'string' } }
         },
         requiresConnection: true
+      },
+      {
+        id: 'camera:snapshot',
+        name: 'Camera Snapshot',
+        description: 'Get a snapshot from a camera',
+        category: 'camera',
+        operations: ['get'],
+        dataTypes: ['image'],
+        events: ['snapshot:captured'],
+        requiresConnection: true
+      },
+      {
+        id: 'camera:recording',
+        name: 'Camera Recording',
+        description: 'Manage camera recordings',
+        category: 'camera',
+        operations: ['start', 'stop', 'get'],
+        dataTypes: ['video'],
+        events: ['recording:started', 'recording:stopped'],
+        requiresConnection: true
+      },
+      {
+        id: 'camera:status',
+        name: 'Camera Status',
+        description: 'Get camera status and information',
+        category: 'camera',
+        operations: ['get'],
+        dataTypes: ['status'],
+        events: ['status:changed'],
+        requiresConnection: true
       }
     ];
   }
@@ -1775,17 +1805,30 @@ class UnifiProtectConnector extends BaseConnector {
     
     this.logger.info(`Loitering detection (${detectionTypes.join(', ') || 'unknown'}) on camera ${item.device} with ${confidence}% confidence for ${duration}ms`);
     
-    // Emit specialized event
-    this.emit('loiteringDetect', {
+    // Create event data
+    const eventData = {
+      type: 'smartDetectLoiterZone',
       cameraId: item.device,
       detectionTypes,
       confidence,
       duration,
       timestamp: event.timestamp,
       eventId: item.id,
-      startTime: item.start ? new Date(item.start).toISOString() : undefined,
-      endTime: item.end ? new Date(item.end).toISOString() : undefined
-    });
+      start: item.start,
+      end: item.end,
+      device: item.device
+    };
+    
+    // Emit local event
+    this.emit('loiteringDetect', eventData);
+    
+    // Publish to EventBus if available
+    if (this.eventBus) {
+      this.eventBus.publishEvent('smartDetectLoiterZone', eventData);
+    }
+    
+    // Emit specialized event
+    this.emit('smartDetectLoiterZone', eventData);
   }
 
   /**
@@ -3515,6 +3558,60 @@ class UnifiProtectConnector extends BaseConnector {
     } catch (error) {
       this.logger.debug('Session-based authentication failed:', error.message);
       throw error;
+    }
+  }
+
+  /**
+   * Execute snapshot capability
+   */
+  async executeSnapshotCapability(operation, parameters) {
+    if (operation !== 'get') {
+      throw new Error(`Unknown operation: ${operation}`);
+    }
+
+    const { cameraId, quality = 'high', timestamp } = parameters;
+    
+    if (!cameraId) {
+      throw new Error('Camera ID is required');
+    }
+
+    try {
+      // Get camera snapshot from UniFi Protect API
+      const snapshotUrl = await this.getCameraSnapshot(cameraId, quality);
+      
+      const result = {
+        success: true,
+        snapshotUrl,
+        cameraId,
+        quality,
+        timestamp: timestamp || new Date().toISOString()
+      };
+
+      // Emit snapshot captured event
+      this.emit('snapshot:captured', result);
+      
+      return result;
+    } catch (error) {
+      this.logger.error(`Failed to get snapshot for camera ${cameraId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get camera snapshot
+   */
+  async getCameraSnapshot(cameraId, quality = 'high') {
+    try {
+      // Use the existing UniFi Protect API to get snapshot
+      const snapshot = await this.unifiAPI.getCameraSnapshot(cameraId, {
+        quality: quality === 'high' ? 'high' : 'medium',
+        timestamp: new Date().toISOString()
+      });
+
+      return snapshot.url;
+    } catch (error) {
+      this.logger.error(`Failed to get camera snapshot:`, error);
+      throw new Error(`Failed to get camera snapshot: ${error.message}`);
     }
   }
 }

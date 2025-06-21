@@ -42,6 +42,9 @@ const SpeedCalculationService = require('./services/speedCalculationService');
 // Import airport vector service
 const AirportVectorService = require('./services/airportVectorService');
 
+// Import coastline vector service
+const CoastlineVectorService = require('./services/coastlineVectorService');
+
 // Import default rules
 const defaultRules = require('./config/defaultRules');
 
@@ -76,6 +79,9 @@ const { router: guiRouter, injectServices: injectGuiServices } = require('./rout
 const HealthMonitor = require('./services/healthMonitor');
 const SecurityMiddleware = require('./middleware/security');
 const { router: healthRouter, HealthRoutes } = require('./routes/health');
+
+// Import Flow Builder
+const FlowBuilder = require('./services/flowBuilder');
 
 // Initialize logger
 const logger = winston.createLogger({
@@ -128,12 +134,18 @@ let radarConnector;
 // Airport vector service
 let airportVectorService;
 
+// Coastline vector service
+let coastlineVectorService;
+
 // Map integration service
 let mapIntegrationService;
 
 // New health monitoring and security services
 let healthMonitor;
 let securityMiddleware;
+
+// Flow Builder
+let flowBuilder;
 
 // Main application setup
 const app = express();
@@ -537,7 +549,8 @@ injectServices({
   get speedCalculationService() { return speedCalculationService; },
   get speedCalculationConnector() { return speedCalculationConnector; },
   get radarConnector() { return radarConnector; },
-  get airportVectorService() { return airportVectorService; }
+  get airportVectorService() { return airportVectorService; },
+  get coastlineVectorService() { return coastlineVectorService; }
 });
 
 // Connector event handling
@@ -689,6 +702,13 @@ async function autoRegisterGuiAndMapConnectors() {
   }
 }
 
+// Initialize Flow Builder
+flowBuilder = new FlowBuilder({
+  flowsDir: path.join(process.cwd(), 'config', 'flows'),
+  autoSave: true,
+  maxFlows: 100
+});
+
 // Start server
 async function startServer() {
   try {
@@ -718,6 +738,9 @@ async function startServer() {
     // Initialize airport vector service
     airportVectorService = new AirportVectorService(config.airportVector || {}, logger);
 
+    // Initialize coastline vector service
+    coastlineVectorService = new CoastlineVectorService(config.coastlineVector || {}, logger);
+
     // Initialize layout and GUI services
     layoutManager = new LayoutManager(config.layouts || {}, logger);
     guiEditor = new GuiEditor(config.guiEditor || {}, logger);
@@ -745,6 +768,42 @@ async function startServer() {
 
     // Initialize the registry to load connectors from config
     await connectorRegistry.initialize();
+
+    // Ensure essential connectors exist and initialize them
+    const adsbConnectorInstance = connectorRegistry.getConnector('adsb-main');
+    let radarConnectorInstance = connectorRegistry.getConnector('radar-main');
+
+    if (!adsbConnectorInstance) {
+      logger.warn('ADSB Connector "adsb-main" not found. Radar will not function correctly.');
+    }
+
+    if (!radarConnectorInstance) {
+      logger.info('Auto-creating Radar connector...');
+      const radarConfig = {
+          id: 'radar-main',
+          type: 'radar',
+          name: 'Main Radar',
+          description: 'Primary radar display service',
+          enabled: true,
+      };
+      await connectorRegistry.createConnector(radarConfig);
+      radarConnectorInstance = connectorRegistry.getConnector('radar-main');
+    }
+
+    // Initialize radar connector with its dependencies
+    if (radarConnectorInstance && adsbConnectorInstance && airportVectorService && coastlineVectorService) {
+      radarConnectorInstance.initialize({
+        adsbConnector: adsbConnectorInstance,
+        airportVectorService: airportVectorService,
+        coastlineVectorService: coastlineVectorService,
+      });
+      logger.info('Radar connector initialized with its dependencies.');
+    } else {
+        logger.warn('Could not initialize radar connector due to missing dependencies.');
+    }
+    
+    // Make the instance available to the rest of the app
+    radarConnector = radarConnectorInstance;
 
     // Auto-register Web GUI and Map connectors
     await autoRegisterGuiAndMapConnectors();
@@ -820,17 +879,6 @@ async function startServer() {
       logger.info('Speed calculation connector registered');
     } else {
       speedCalculationConnector = existingSpeedConnector;
-    }
-
-    // Initialize radar connector
-    const adsbConnector = connectorRegistry.getConnector('adsb-main');
-    if (adsbConnector) {
-      radarConnector = new RadarConnector({
-        id: 'radar-main',
-        name: 'Main Radar Display',
-        description: 'Unified radar view'
-      }, adsbConnector, airportVectorService);
-      connectorRegistry.registerConnector(radarConnector);
     }
 
     // Setup event listeners
@@ -941,32 +989,24 @@ async function startServer() {
       connectorRegistry
     });
     
+    // Mount flow routes
+    app.use('/api/flows', require('./routes/flows'));
+    app.use('/flows', require('./routes/flows-gui'));
+    
     // Make services available to API routes via app.locals
     app.locals.connectorRegistry = connectorRegistry;
+    app.locals.eventBus = eventBus;
+    app.locals.ruleEngine = ruleEngine;
+    app.locals.actionFramework = actionFramework;
+    app.locals.flowOrchestrator = flowOrchestrator;
     app.locals.entityManager = entityManager;
-    app.locals.zoneManager = zoneManager;
     app.locals.analyticsEngine = analyticsEngine;
     app.locals.dashboardService = dashboardService;
-    app.locals.eventProcessor = eventProcessor;
-    app.locals.cache = cache;
-    app.locals.unifiAPI = unifiAPI;
-    app.locals.mqttBroker = mqttBroker;
-    app.locals.mapIntegrationService = mapIntegrationService;
-    app.locals.healthMonitor = healthMonitor;
     app.locals.layoutManager = layoutManager;
     app.locals.guiEditor = guiEditor;
-    app.locals.speedCalculationService = speedCalculationService;
-    app.locals.speedCalculationConnector = speedCalculationConnector;
-    app.locals.radarConnector = radarConnector;
-    app.locals.airportVectorService = airportVectorService;
-    
-    // Flow system services
-    if (config.flow.enabled) {
-      app.locals.ruleEngine = ruleEngine;
-      app.locals.flowOrchestrator = flowOrchestrator;
-      app.locals.eventBus = eventBus;
-      app.locals.actionFramework = actionFramework;
-    }
+    app.locals.mapIntegrationService = mapIntegrationService;
+    app.locals.healthMonitor = healthMonitor;
+    app.locals.flowBuilder = flowBuilder;
     
     // Mount health routes
     app.use('/health', healthRouter);
@@ -991,6 +1031,32 @@ async function startServer() {
     
     // Add error handling middleware
     app.use(securityMiddleware.errorHandler());
+    
+    // Initialize Flow Builder
+    await flowBuilder.initialize();
+
+    // Connect EventBus with Flow Builder
+    eventBus.flowBuilder = flowBuilder;
+    global.flowBuilder = flowBuilder;
+    global.actionFramework = actionFramework;
+    global.eventBus = eventBus;
+    global.connectorRegistry = connectorRegistry;
+
+    // Set up event listeners for flow execution
+    flowBuilder.on('action:execute', async (data) => {
+      const { actionType, parameters, nodeId, flowId } = data;
+      
+      try {
+        // Execute the action using the action framework
+        const actionFramework = app.locals.actionFramework;
+        if (actionFramework) {
+          const result = await actionFramework.executeAction(actionType, parameters);
+          console.log(`Flow ${flowId} executed action ${actionType}:`, result);
+        }
+      } catch (error) {
+        console.error(`Error executing flow action ${actionType}:`, error);
+      }
+    });
     
     // Start server
     server.listen(config.server.port, config.server.host, () => {

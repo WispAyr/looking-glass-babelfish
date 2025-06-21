@@ -1,12 +1,18 @@
 const BaseConnector = require('../BaseConnector');
 const axios = require('axios');
+const sqlite3 = require('sqlite3').verbose();
+const path = require('path');
+const SquawkCodeService = require('../../services/squawkCodeService');
 
 /**
- * ADSB Connector for dump1090
+ * ADSB Connector for dump1090 with BaseStation.sqb integration, Airspace Awareness, and Squawk Code Analysis
  * 
  * Connects to dump1090 ADS-B receiver and provides aircraft tracking,
  * zone monitoring, and radar display capabilities. Supports real-time
  * aircraft data, emergency priority handling, and spatial zone management.
+ * Enhanced with BaseStation.sqb database integration for aircraft registration data,
+ * UK airspace data for airspace awareness, and UK squawk code analysis for
+ * intelligent event generation and enhanced monitoring.
  */
 class ADSBConnector extends BaseConnector {
   constructor(config) {
@@ -23,6 +29,24 @@ class ADSBConnector extends BaseConnector {
     this.pollInterval = config.config?.pollInterval || 5000; // 5 seconds
     this.emergencyCodes = config.config?.emergencyCodes || ['7500', '7600', '7700'];
     this.maxAircraftAge = config.config?.maxAircraftAge || 300000; // 5 minutes
+    
+    // BaseStation database integration
+    this.baseStationDbPath = config.config?.baseStationDbPath || path.join(__dirname, '../../aviationdata/BaseStation.sqb');
+    this.baseStationDb = null;
+    this.aircraftRegistry = new Map(); // Cached aircraft registration data
+    this.enableBaseStationIntegration = config.config?.enableBaseStationIntegration !== false; // Default to true
+    
+    // Airspace service integration
+    this.airspaceService = config.config?.airspaceService || null;
+    this.enableAirspaceAwareness = config.config?.enableAirspaceAwareness !== false; // Default to true
+    this.airspaceEvents = []; // Airspace-related events
+    this.aircraftAirspaceContext = new Map(); // Current airspace context for each aircraft
+    
+    // Squawk code service integration
+    this.squawkCodeService = config.config?.squawkCodeService || null;
+    this.enableSquawkCodeAnalysis = config.config?.enableSquawkCodeAnalysis !== false; // Default to true
+    this.squawkCodeEvents = []; // Squawk code analysis events
+    this.aircraftSquawkContext = new Map(); // Current squawk context for each aircraft
     
     // Aircraft data management
     this.aircraft = new Map(); // Current aircraft
@@ -49,7 +73,9 @@ class ADSBConnector extends BaseConnector {
       center: config.config?.radarCenter || { lat: 55.5074, lon: -4.5933 },
       displayMode: config.config?.displayMode || 'all', // all, filtered, emergency
       showTrails: config.config?.showTrails || true,
-      trailLength: config.config?.trailLength || 10
+      trailLength: config.config?.trailLength || 10,
+      showAirspace: config.config?.showAirspace !== false, // Default to true
+      showSquawkInfo: config.config?.showSquawkInfo !== false // Default to true
     };
     
     // Event tracking
@@ -63,7 +89,13 @@ class ADSBConnector extends BaseConnector {
       errorCount: 0,
       averageResponseTime: 0,
       aircraftCount: 0,
-      zoneViolations: 0
+      zoneViolations: 0,
+      baseStationQueries: 0,
+      baseStationCacheHits: 0,
+      airspaceQueries: 0,
+      airspaceEvents: 0,
+      squawkCodeQueries: 0,
+      squawkCodeEvents: 0
     };
     
     // Polling control
@@ -114,8 +146,440 @@ class ADSBConnector extends BaseConnector {
       id: this.id,
       dump1090Url: this.dump1090Url,
       pollInterval: this.pollInterval,
-      radarRange: this.radarConfig.range
+      radarRange: this.radarConfig.range,
+      baseStationIntegration: this.enableBaseStationIntegration,
+      baseStationDbPath: this.baseStationDbPath,
+      airspaceAwareness: this.enableAirspaceAwareness,
+      squawkCodeAnalysis: this.enableSquawkCodeAnalysis
     });
+  }
+
+  /**
+   * Set airspace service reference
+   */
+  setAirspaceService(airspaceService) {
+    this.airspaceService = airspaceService;
+    if (this.airspaceService && this.enableAirspaceAwareness) {
+      // Subscribe to airspace events
+      this.airspaceService.onAirspaceEvent((event) => {
+        this.handleAirspaceEvent(event);
+      });
+      
+      this.logger.info('Airspace service integrated');
+    }
+  }
+
+  /**
+   * Set squawk code service reference
+   */
+  setSquawkCodeService(squawkCodeService) {
+    this.squawkCodeService = squawkCodeService;
+    if (this.squawkCodeService && this.enableSquawkCodeAnalysis) {
+      // Subscribe to squawk code events
+      this.squawkCodeService.on('squawk:analyzed', (event) => {
+        this.handleSquawkCodeEvent(event);
+      });
+      
+      this.squawkCodeService.on('emergency:squawk', (event) => {
+        this.handleEmergencySquawkEvent(event);
+      });
+      
+      this.squawkCodeService.on('military:squawk', (event) => {
+        this.handleMilitarySquawkEvent(event);
+      });
+      
+      this.squawkCodeService.on('nato:squawk', (event) => {
+        this.handleNatoSquawkEvent(event);
+      });
+      
+      this.logger.info('Squawk code service integrated');
+    }
+  }
+
+  /**
+   * Handle squawk code events from the squawk code service
+   */
+  handleSquawkCodeEvent(event) {
+    this.squawkCodeEvents.push(event);
+    this.performance.squawkCodeEvents++;
+    
+    // Keep only recent events
+    if (this.squawkCodeEvents.length > 1000) {
+      this.squawkCodeEvents = this.squawkCodeEvents.slice(-1000);
+    }
+    
+    // Store squawk context for this aircraft
+    this.aircraftSquawkContext.set(event.aircraft.icao24, {
+      squawk: event.squawk,
+      squawkInfo: event.squawkInfo,
+      timestamp: event.timestamp,
+      category: event.category,
+      priority: event.priority
+    });
+    
+    // Emit squawk code event
+    this.emit('squawk:analyzed', event);
+    
+    this.logger.info('Squawk code event processed', {
+      eventType: event.type,
+      aircraft: event.aircraft.icao24,
+      squawk: event.squawk,
+      category: event.category,
+      priority: event.priority
+    });
+  }
+
+  /**
+   * Handle emergency squawk events
+   */
+  handleEmergencySquawkEvent(event) {
+    this.emergencyEvents.push(event);
+    this.emit('emergency:squawk', event);
+    
+    this.logger.warn('Emergency squawk event processed', {
+      aircraft: event.aircraft.icao24,
+      squawk: event.squawk,
+      description: event.squawkInfo.description
+    });
+  }
+
+  /**
+   * Handle military squawk events
+   */
+  handleMilitarySquawkEvent(event) {
+    this.emit('military:squawk', event);
+    
+    this.logger.info('Military squawk event processed', {
+      aircraft: event.aircraft.icao24,
+      squawk: event.squawk,
+      description: event.squawkInfo.description
+    });
+  }
+
+  /**
+   * Handle NATO squawk events
+   */
+  handleNatoSquawkEvent(event) {
+    this.emit('nato:squawk', event);
+    
+    this.logger.info('NATO squawk event processed', {
+      aircraft: event.aircraft.icao24,
+      squawk: event.squawk,
+      description: event.squawkInfo.description
+    });
+  }
+
+  /**
+   * Handle airspace events from the airspace service
+   */
+  handleAirspaceEvent(event) {
+    this.airspaceEvents.push(event);
+    this.performance.airspaceEvents++;
+    
+    // Keep only recent events
+    if (this.airspaceEvents.length > 1000) {
+      this.airspaceEvents = this.airspaceEvents.slice(-1000);
+    }
+    
+    // Emit airspace event
+    this.emit('airspace:event', event);
+    
+    // Generate enhanced smart events based on airspace context
+    this.generateAirspaceBasedEvents(event);
+    
+    this.logger.info('Airspace event processed', {
+      eventType: event.type,
+      aircraft: event.aircraft.icao24,
+      airspace: event.airspace.name,
+      airspaceType: event.airspace.type
+    });
+  }
+
+  /**
+   * Generate enhanced events based on airspace context
+   */
+  generateAirspaceBasedEvents(airspaceEvent) {
+    const { aircraft, airspace } = airspaceEvent;
+    
+    // Approach detection
+    if (airspace.type === 'Final_Approach' && airspaceEvent.type === 'airspace:entry') {
+      this.generateApproachEvent(aircraft, airspace);
+    }
+    
+    // Departure detection
+    if (airspace.type === 'Final_Approach' && airspaceEvent.type === 'airspace:exit') {
+      this.generateDepartureEvent(aircraft, airspace);
+    }
+    
+    // Controlled airspace entry
+    if (['CTR', 'CTA', 'TMA'].includes(airspace.type) && airspaceEvent.type === 'airspace:entry') {
+      this.generateControlledAirspaceEvent(aircraft, airspace, 'entry');
+    }
+    
+    // Controlled airspace exit
+    if (['CTR', 'CTA', 'TMA'].includes(airspace.type) && airspaceEvent.type === 'airspace:exit') {
+      this.generateControlledAirspaceEvent(aircraft, airspace, 'exit');
+    }
+    
+    // Danger area entry
+    if (airspace.type === 'Danger_Area' && airspaceEvent.type === 'airspace:entry') {
+      this.generateDangerAreaEvent(aircraft, airspace, 'entry');
+    }
+    
+    // Military airspace entry
+    if (airspace.type === 'Military' && airspaceEvent.type === 'airspace:entry') {
+      this.generateMilitaryAirspaceEvent(aircraft, airspace, 'entry');
+    }
+    
+    // Holding pattern entry
+    if (airspace.type === 'Holding_Pattern' && airspaceEvent.type === 'airspace:entry') {
+      this.generateHoldingPatternEvent(aircraft, airspace, 'entry');
+    }
+  }
+
+  /**
+   * Generate approach event
+   */
+  generateApproachEvent(aircraft, airspace) {
+    const event = {
+      id: `approach_${aircraft.icao24}_${Date.now()}`,
+      timestamp: new Date(),
+      type: 'approach:detected',
+      aircraft: aircraft,
+      airspace: airspace,
+      metadata: {
+        eventType: 'approach',
+        runway: airspace.name,
+        airport: this.extractAirportFromAirspace(airspace),
+        confidence: this.calculateApproachConfidence(aircraft, airspace)
+      }
+    };
+    
+    this.events.push(event);
+    this.emit('approach:detected', event);
+    
+    this.logger.info('Approach detected', {
+      aircraft: aircraft.icao24,
+      runway: airspace.name,
+      airport: event.metadata.airport
+    });
+  }
+
+  /**
+   * Generate departure event
+   */
+  generateDepartureEvent(aircraft, airspace) {
+    const event = {
+      id: `departure_${aircraft.icao24}_${Date.now()}`,
+      timestamp: new Date(),
+      type: 'departure:detected',
+      aircraft: aircraft,
+      airspace: airspace,
+      metadata: {
+        eventType: 'departure',
+        runway: airspace.name,
+        airport: this.extractAirportFromAirspace(airspace),
+        confidence: this.calculateDepartureConfidence(aircraft, airspace)
+      }
+    };
+    
+    this.events.push(event);
+    this.emit('departure:detected', event);
+    
+    this.logger.info('Departure detected', {
+      aircraft: aircraft.icao24,
+      runway: airspace.name,
+      airport: event.metadata.airport
+    });
+  }
+
+  /**
+   * Generate controlled airspace event
+   */
+  generateControlledAirspaceEvent(aircraft, airspace, action) {
+    const event = {
+      id: `controlled_${aircraft.icao24}_${action}_${Date.now()}`,
+      timestamp: new Date(),
+      type: `controlled_airspace:${action}`,
+      aircraft: aircraft,
+      airspace: airspace,
+      metadata: {
+        eventType: 'controlled_airspace',
+        action: action,
+        airspaceType: airspace.type,
+        airspaceName: airspace.name,
+        requiresClearance: this.requiresClearance(airspace.type)
+      }
+    };
+    
+    this.events.push(event);
+    this.emit(`controlled_airspace:${action}`, event);
+    
+    this.logger.info(`Controlled airspace ${action}`, {
+      aircraft: aircraft.icao24,
+      airspace: airspace.name,
+      type: airspace.type
+    });
+  }
+
+  /**
+   * Generate danger area event
+   */
+  generateDangerAreaEvent(aircraft, airspace, action) {
+    const event = {
+      id: `danger_${aircraft.icao24}_${action}_${Date.now()}`,
+      timestamp: new Date(),
+      type: `danger_area:${action}`,
+      aircraft: aircraft,
+      airspace: airspace,
+      metadata: {
+        eventType: 'danger_area',
+        action: action,
+        airspaceName: airspace.name,
+        riskLevel: this.assessDangerAreaRisk(aircraft, airspace)
+      }
+    };
+    
+    this.events.push(event);
+    this.emit(`danger_area:${action}`, event);
+    
+    this.logger.warn(`Danger area ${action}`, {
+      aircraft: aircraft.icao24,
+      airspace: airspace.name,
+      riskLevel: event.metadata.riskLevel
+    });
+  }
+
+  /**
+   * Generate military airspace event
+   */
+  generateMilitaryAirspaceEvent(aircraft, airspace, action) {
+    const event = {
+      id: `military_${aircraft.icao24}_${action}_${Date.now()}`,
+      timestamp: new Date(),
+      type: `military_airspace:${action}`,
+      aircraft: aircraft,
+      airspace: airspace,
+      metadata: {
+        eventType: 'military_airspace',
+        action: action,
+        airspaceName: airspace.name,
+        militaryActivity: this.detectMilitaryActivity(airspace)
+      }
+    };
+    
+    this.events.push(event);
+    this.emit(`military_airspace:${action}`, event);
+    
+    this.logger.info(`Military airspace ${action}`, {
+      aircraft: aircraft.icao24,
+      airspace: airspace.name
+    });
+  }
+
+  /**
+   * Generate holding pattern event
+   */
+  generateHoldingPatternEvent(aircraft, airspace, action) {
+    const event = {
+      id: `holding_${aircraft.icao24}_${action}_${Date.now()}`,
+      timestamp: new Date(),
+      type: `holding_pattern:${action}`,
+      aircraft: aircraft,
+      airspace: airspace,
+      metadata: {
+        eventType: 'holding_pattern',
+        action: action,
+        holdingFix: airspace.name,
+        estimatedHoldTime: this.estimateHoldTime(aircraft, airspace)
+      }
+    };
+    
+    this.events.push(event);
+    this.emit(`holding_pattern:${action}`, event);
+    
+    this.logger.info(`Holding pattern ${action}`, {
+      aircraft: aircraft.icao24,
+      holdingFix: airspace.name
+    });
+  }
+
+  /**
+   * Extract airport code from airspace name
+   */
+  extractAirportFromAirspace(airspace) {
+    // Try to extract ICAO code from airspace name
+    const match = airspace.name.match(/[A-Z]{4}/);
+    return match ? match[0] : null;
+  }
+
+  /**
+   * Calculate approach confidence based on aircraft behavior
+   */
+  calculateApproachConfidence(aircraft, airspace) {
+    let confidence = 0.5; // Base confidence
+    
+    // Check if aircraft is descending
+    if (aircraft.vertical_rate && aircraft.vertical_rate < -500) {
+      confidence += 0.3;
+    }
+    
+    // Check if aircraft is slowing down
+    if (aircraft.speed && aircraft.speed < 200) {
+      confidence += 0.2;
+    }
+    
+    return Math.min(confidence, 1.0);
+  }
+
+  /**
+   * Calculate departure confidence based on aircraft behavior
+   */
+  calculateDepartureConfidence(aircraft, airspace) {
+    let confidence = 0.5; // Base confidence
+    
+    // Check if aircraft is climbing
+    if (aircraft.vertical_rate && aircraft.vertical_rate > 500) {
+      confidence += 0.3;
+    }
+    
+    // Check if aircraft is accelerating
+    if (aircraft.speed && aircraft.speed > 100) {
+      confidence += 0.2;
+    }
+    
+    return Math.min(confidence, 1.0);
+  }
+
+  /**
+   * Check if airspace type requires clearance
+   */
+  requiresClearance(airspaceType) {
+    return ['CTR', 'CTA', 'TMA'].includes(airspaceType);
+  }
+
+  /**
+   * Assess danger area risk level
+   */
+  assessDangerAreaRisk(aircraft, airspace) {
+    // Simple risk assessment - could be enhanced with more sophisticated logic
+    return 'medium'; // low, medium, high
+  }
+
+  /**
+   * Detect military activity in airspace
+   */
+  detectMilitaryActivity(airspace) {
+    // Simple detection - could be enhanced with more sophisticated logic
+    return 'unknown'; // unknown, training, refueling, etc.
+  }
+
+  /**
+   * Estimate hold time for aircraft
+   */
+  estimateHoldTime(aircraft, airspace) {
+    // Simple estimation - could be enhanced with more sophisticated logic
+    return 15; // minutes
   }
 
   /**
@@ -192,6 +656,39 @@ class ADSBConnector extends BaseConnector {
           priority: { type: 'string', required: false },
           action: { type: 'string', required: false }
         }
+      },
+      {
+        id: 'basestation:database',
+        name: 'BaseStation Database',
+        description: 'Access aircraft registration data from BaseStation.sqb database',
+        category: 'database',
+        operations: ['search', 'lookup', 'stats', 'export'],
+        dataTypes: ['aircraft:registration', 'aircraft:search', 'database:stats'],
+        events: ['database:connected', 'database:error', 'registry:loaded'],
+        parameters: {
+          icao24: { type: 'string', required: false },
+          registration: { type: 'string', required: false },
+          manufacturer: { type: 'string', required: false },
+          type: { type: 'string', required: false },
+          operator: { type: 'string', required: false },
+          limit: { type: 'number', required: false }
+        }
+      },
+      {
+        id: 'squawk:analysis',
+        name: 'Squawk Code Analysis',
+        description: 'Analyze and manage UK aviation squawk codes for enhanced monitoring',
+        category: 'intelligence',
+        operations: ['lookup', 'search', 'analyze', 'stats', 'categories'],
+        dataTypes: ['squawk:info', 'squawk:analysis', 'squawk:stats', 'squawk:categories'],
+        events: ['squawk:analyzed', 'emergency:squawk', 'military:squawk', 'nato:squawk'],
+        parameters: {
+          code: { type: 'string', required: false },
+          category: { type: 'string', required: false },
+          authority: { type: 'string', required: false },
+          description: { type: 'string', required: false },
+          priority: { type: 'string', required: false }
+        }
       }
     ];
   }
@@ -217,6 +714,12 @@ class ADSBConnector extends BaseConnector {
           break;
         case 'emergency:monitoring':
           result = await this.executeEmergencyMonitoring(operation, parameters);
+          break;
+        case 'basestation:database':
+          result = await this.executeBaseStationDatabase(operation, parameters);
+          break;
+        case 'squawk:analysis':
+          result = await this.executeSquawkAnalysis(operation, parameters);
           break;
         default:
           throw new Error(`Unknown capability: ${capabilityId}`);
@@ -322,6 +825,64 @@ class ADSBConnector extends BaseConnector {
   }
 
   /**
+   * Execute BaseStation database operations
+   */
+  async executeBaseStationDatabase(operation, parameters) {
+    switch (operation) {
+      case 'search':
+        return this.searchAircraft(parameters);
+      case 'lookup':
+        return this.getAircraftRegistration(parameters.icao24);
+      case 'stats':
+        return this.getStats();
+      case 'export':
+        return this.exportAircraftRegistry(parameters);
+      default:
+        throw new Error(`Unknown operation: ${operation}`);
+    }
+  }
+
+  /**
+   * Execute squawk code analysis operations
+   */
+  async executeSquawkAnalysis(operation, parameters) {
+    if (!this.squawkCodeService) {
+      throw new Error('Squawk code service not available');
+    }
+    
+    switch (operation) {
+      case 'lookup':
+        return this.squawkCodeService.lookupSquawkCode(parameters.code);
+      case 'search':
+        return this.squawkCodeService.searchSquawkCodes(parameters);
+      case 'analyze':
+        return this.analyzeAircraftSquawk(parameters.aircraft);
+      case 'stats':
+        return this.squawkCodeService.getStats();
+      case 'categories':
+        return {
+          categories: this.squawkCodeService.getCategories(),
+          emergencyCodes: this.squawkCodeService.getEmergencyCodes(),
+          militaryCodes: this.squawkCodeService.getMilitaryCodes(),
+          natoCodes: this.squawkCodeService.getNatoCodes()
+        };
+      default:
+        throw new Error(`Unknown operation: ${operation}`);
+    }
+  }
+
+  /**
+   * Analyze aircraft squawk code
+   */
+  analyzeAircraftSquawk(aircraft) {
+    if (!this.squawkCodeService || !aircraft) {
+      return null;
+    }
+    
+    return this.squawkCodeService.analyzeAircraftSquawk(aircraft);
+  }
+
+  /**
    * Connect to dump1090
    */
   async performConnect() {
@@ -333,6 +894,12 @@ class ADSBConnector extends BaseConnector {
       
       if (response.status === 200) {
         this.logger.info('Successfully connected to dump1090');
+        
+        // Initialize BaseStation database if enabled
+        if (this.enableBaseStationIntegration) {
+          await this.initializeBaseStationDatabase();
+        }
+        
         this.startPolling();
         return true;
       } else {
@@ -341,6 +908,245 @@ class ADSBConnector extends BaseConnector {
     } catch (error) {
       this.logger.error('Failed to connect to dump1090', error);
       throw error;
+    }
+  }
+
+  /**
+   * Initialize BaseStation database connection
+   */
+  async initializeBaseStationDatabase() {
+    try {
+      this.logger.info('Initializing BaseStation database...', { path: this.baseStationDbPath });
+      
+      return new Promise((resolve, reject) => {
+        this.baseStationDb = new sqlite3.Database(this.baseStationDbPath, sqlite3.OPEN_READONLY, (err) => {
+          if (err) {
+            this.logger.warn('Failed to connect to BaseStation database', { error: err.message });
+            this.enableBaseStationIntegration = false;
+            resolve(false);
+          } else {
+            this.logger.info('Successfully connected to BaseStation database');
+            this.loadAircraftRegistry();
+            resolve(true);
+          }
+        });
+      });
+    } catch (error) {
+      this.logger.warn('BaseStation database initialization failed', { error: error.message });
+      this.enableBaseStationIntegration = false;
+      return false;
+    }
+  }
+
+  /**
+   * Load aircraft registry from BaseStation database
+   */
+  async loadAircraftRegistry() {
+    if (!this.baseStationDb) return;
+    
+    try {
+      const query = `
+        SELECT 
+          ModeS,
+          Registration,
+          ICAOTypeCode,
+          Type,
+          Manufacturer,
+          OperatorFlagCode,
+          SerialNo,
+          YearBuilt,
+          Owner,
+          Operator
+        FROM Aircraft 
+        WHERE ModeS IS NOT NULL AND ModeS != ''
+      `;
+      
+      return new Promise((resolve, reject) => {
+        this.baseStationDb.all(query, [], (err, rows) => {
+          if (err) {
+            this.logger.error('Failed to load aircraft registry', { error: err.message });
+            reject(err);
+          } else {
+            // Clear existing registry
+            this.aircraftRegistry.clear();
+            
+            // Load aircraft data into registry
+            for (const row of rows) {
+              if (row.ModeS) {
+                this.aircraftRegistry.set(row.ModeS.toUpperCase(), {
+                  icao24: row.ModeS.toUpperCase(),
+                  registration: row.Registration || null,
+                  icaoTypeCode: row.ICAOTypeCode || null,
+                  type: row.Type || null,
+                  manufacturer: row.Manufacturer || null,
+                  operatorFlagCode: row.OperatorFlagCode || null,
+                  serialNo: row.SerialNo || null,
+                  yearBuilt: row.YearBuilt || null,
+                  owner: row.Owner || null,
+                  operator: row.Operator || null
+                });
+              }
+            }
+            
+            this.logger.info('Aircraft registry loaded', { 
+              count: this.aircraftRegistry.size,
+              databasePath: this.baseStationDbPath 
+            });
+            resolve(this.aircraftRegistry.size);
+          }
+        });
+      });
+    } catch (error) {
+      this.logger.error('Failed to load aircraft registry', { error: error.message });
+      return 0;
+    }
+  }
+
+  /**
+   * Get aircraft registration data from BaseStation database
+   */
+  async getAircraftRegistration(icao24) {
+    if (!this.enableBaseStationIntegration || !this.baseStationDb) {
+      return null;
+    }
+    
+    const icao24Upper = icao24.toUpperCase();
+    
+    // Check cache first
+    if (this.aircraftRegistry.has(icao24Upper)) {
+      this.performance.baseStationCacheHits++;
+      return this.aircraftRegistry.get(icao24Upper);
+    }
+    
+    // Query database
+    this.performance.baseStationQueries++;
+    
+    try {
+      const query = `
+        SELECT 
+          ModeS,
+          Registration,
+          ICAOTypeCode,
+          Type,
+          Manufacturer,
+          OperatorFlagCode,
+          SerialNo,
+          YearBuilt,
+          Owner,
+          Operator
+        FROM Aircraft 
+        WHERE ModeS = ?
+      `;
+      
+      return new Promise((resolve, reject) => {
+        this.baseStationDb.get(query, [icao24Upper], (err, row) => {
+          if (err) {
+            this.logger.error('Failed to query aircraft registration', { icao24: icao24Upper, error: err.message });
+            resolve(null);
+          } else if (row) {
+            const registrationData = {
+              icao24: row.ModeS.toUpperCase(),
+              registration: row.Registration || null,
+              icaoTypeCode: row.ICAOTypeCode || null,
+              type: row.Type || null,
+              manufacturer: row.Manufacturer || null,
+              operatorFlagCode: row.OperatorFlagCode || null,
+              serialNo: row.SerialNo || null,
+              yearBuilt: row.YearBuilt || null,
+              owner: row.Owner || null,
+              operator: row.Operator || null
+            };
+            
+            // Cache the result
+            this.aircraftRegistry.set(icao24Upper, registrationData);
+            resolve(registrationData);
+          } else {
+            resolve(null);
+          }
+        });
+      });
+    } catch (error) {
+      this.logger.error('Failed to query aircraft registration', { icao24: icao24Upper, error: error.message });
+      return null;
+    }
+  }
+
+  /**
+   * Search aircraft in BaseStation database
+   */
+  async searchAircraft(parameters = {}) {
+    if (!this.enableBaseStationIntegration || !this.baseStationDb) {
+      return { aircraft: [], count: 0 };
+    }
+    
+    try {
+      let query = `
+        SELECT 
+          ModeS,
+          Registration,
+          ICAOTypeCode,
+          Type,
+          Manufacturer,
+          OperatorFlagCode,
+          SerialNo,
+          YearBuilt,
+          Owner,
+          Operator
+        FROM Aircraft 
+        WHERE 1=1
+      `;
+      
+      const params = [];
+      
+      if (parameters.registration) {
+        query += ` AND Registration LIKE ?`;
+        params.push(`%${parameters.registration.toUpperCase()}%`);
+      }
+      
+      if (parameters.manufacturer) {
+        query += ` AND Manufacturer LIKE ?`;
+        params.push(`%${parameters.manufacturer}%`);
+      }
+      
+      if (parameters.type) {
+        query += ` AND (Type LIKE ? OR ICAOTypeCode LIKE ?)`;
+        params.push(`%${parameters.type}%`, `%${parameters.type}%`);
+      }
+      
+      if (parameters.operator) {
+        query += ` AND Operator LIKE ?`;
+        params.push(`%${parameters.operator}%`);
+      }
+      
+      query += ` ORDER BY Registration LIMIT ?`;
+      params.push(parameters.limit || 100);
+      
+      return new Promise((resolve, reject) => {
+        this.baseStationDb.all(query, params, (err, rows) => {
+          if (err) {
+            this.logger.error('Failed to search aircraft', { error: err.message });
+            resolve({ aircraft: [], count: 0 });
+          } else {
+            const aircraft = rows.map(row => ({
+              icao24: row.ModeS.toUpperCase(),
+              registration: row.Registration || null,
+              icaoTypeCode: row.ICAOTypeCode || null,
+              type: row.Type || null,
+              manufacturer: row.Manufacturer || null,
+              operatorFlagCode: row.OperatorFlagCode || null,
+              serialNo: row.SerialNo || null,
+              yearBuilt: row.YearBuilt || null,
+              owner: row.Owner || null,
+              operator: row.Operator || null
+            }));
+            
+            resolve({ aircraft, count: aircraft.length });
+          }
+        });
+      });
+    } catch (error) {
+      this.logger.error('Failed to search aircraft', { error: error.message });
+      return { aircraft: [], count: 0 };
     }
   }
 
@@ -453,17 +1259,140 @@ class ADSBConnector extends BaseConnector {
           rssi: aircraftData.rssi || null
         };
         
-        // Check if this is a new aircraft
-        const existingAircraft = this.aircraft.get(icao24);
-        if (!existingAircraft) {
-          // New aircraft appeared
-          this.handleAircraftAppearance(aircraft);
+        // Enhance with BaseStation registration data if available
+        if (this.enableBaseStationIntegration) {
+          try {
+            const registrationData = await this.getAircraftRegistration(icao24);
+            if (registrationData) {
+              aircraft.registration = registrationData.registration;
+              aircraft.icaoTypeCode = registrationData.icaoTypeCode;
+              aircraft.type = registrationData.type;
+              aircraft.manufacturer = registrationData.manufacturer;
+              aircraft.operatorFlagCode = registrationData.operatorFlagCode;
+              aircraft.serialNo = registrationData.serialNo;
+              aircraft.yearBuilt = registrationData.yearBuilt;
+              aircraft.owner = registrationData.owner;
+              aircraft.operator = registrationData.operator;
+              
+              // Use registration as display name if callsign is not available
+              if (!aircraft.callsign && aircraft.registration) {
+                aircraft.displayName = aircraft.registration;
+              } else if (aircraft.callsign) {
+                aircraft.displayName = aircraft.callsign;
+              } else {
+                aircraft.displayName = aircraft.icao24;
+              }
+            } else {
+              // No registration data found
+              aircraft.displayName = aircraft.callsign || aircraft.icao24;
+            }
+          } catch (error) {
+            this.logger.debug('Failed to get registration data for aircraft', { 
+              icao24, 
+              error: error.message 
+            });
+            aircraft.displayName = aircraft.callsign || aircraft.icao24;
+          }
         } else {
-          // Update existing aircraft
-          this.handleAircraftUpdate(existingAircraft, aircraft);
+          aircraft.displayName = aircraft.callsign || aircraft.icao24;
         }
         
+        // Enhance with airspace awareness if available
+        if (this.enableAirspaceAwareness && this.airspaceService && aircraft.lat && aircraft.lon) {
+          try {
+            this.performance.airspaceQueries++;
+            const airspaceUpdate = this.airspaceService.updateAircraftAirspace(aircraft);
+            
+            // Add airspace context to aircraft
+            aircraft.airspace = airspaceUpdate.current;
+            aircraft.airspaceContext = this.generateAirspaceContext(airspaceUpdate.current);
+            
+            // Store airspace context for this aircraft
+            this.aircraftAirspaceContext.set(icao24, {
+              current: airspaceUpdate.current,
+              new: airspaceUpdate.new,
+              exited: airspaceUpdate.exited,
+              timestamp: now
+            });
+            
+            // Process airspace events
+            if (airspaceUpdate.new && airspaceUpdate.new.length > 0) {
+              for (const airspace of airspaceUpdate.new) {
+                this.handleAirspaceEvent({
+                  type: 'airspace:entry',
+                  aircraft: aircraft,
+                  airspace: airspace,
+                  timestamp: now
+                });
+              }
+            }
+            
+            if (airspaceUpdate.exited && airspaceUpdate.exited.length > 0) {
+              for (const airspace of airspaceUpdate.exited) {
+                this.handleAirspaceEvent({
+                  type: 'airspace:exit',
+                  aircraft: aircraft,
+                  airspace: airspace,
+                  timestamp: now
+                });
+              }
+            }
+          } catch (error) {
+            this.logger.debug('Failed to process airspace data for aircraft', { 
+              icao24, 
+              error: error.message 
+            });
+          }
+        }
+        
+        // Enhance with squawk code analysis if available
+        if (this.enableSquawkCodeAnalysis && this.squawkCodeService && aircraft.squawk) {
+          try {
+            this.performance.squawkCodeQueries++;
+            const squawkEvent = this.squawkCodeService.analyzeAircraftSquawk(aircraft);
+            
+            if (squawkEvent) {
+              // Add squawk context to aircraft
+              aircraft.squawkInfo = squawkEvent.squawkInfo;
+              aircraft.squawkCategory = squawkEvent.category;
+              aircraft.squawkPriority = squawkEvent.priority;
+              aircraft.squawkEnhanced = squawkEvent.enhanced;
+              
+              // Store squawk context for this aircraft
+              this.aircraftSquawkContext.set(icao24, {
+                squawk: aircraft.squawk,
+                squawkInfo: squawkEvent.squawkInfo,
+                timestamp: now,
+                category: squawkEvent.category,
+                priority: squawkEvent.priority
+              });
+              
+              // Update emergency status based on squawk analysis
+              if (squawkEvent.category === 'emergency') {
+                aircraft.emergency = true;
+                aircraft.emergencyType = this.getEmergencyType(aircraft.squawk);
+              }
+            }
+          } catch (error) {
+            this.logger.debug('Failed to analyze squawk code for aircraft', { 
+              icao24, 
+              squawk: aircraft.squawk,
+              error: error.message 
+            });
+          }
+        }
+        
+        // Store aircraft
         newAircraft.set(icao24, aircraft);
+        
+        // Check if this is a new aircraft
+        if (!this.aircraft.has(icao24)) {
+          this.handleAircraftAppearance(aircraft);
+        } else {
+          // Check for updates
+          const oldAircraft = this.aircraft.get(icao24);
+          this.handleAircraftUpdate(oldAircraft, aircraft);
+        }
       }
     }
     
@@ -479,19 +1408,22 @@ class ADSBConnector extends BaseConnector {
     
     // Check zones
     await this.checkZones();
-    
-    // Generate smart events
-    await this.generateSmartEvents();
-    
-    // Emit update event
-    this.emit('aircraft:updated', {
-      count: this.aircraft.size,
-      timestamp: now,
-      changes: this.recentChanges.length
-    });
-    
-    // Clear recent changes after processing
-    this.recentChanges = [];
+  }
+
+  /**
+   * Get emergency type based on squawk code
+   */
+  getEmergencyType(squawk) {
+    switch (squawk) {
+      case '7500':
+        return 'hijacking';
+      case '7600':
+        return 'radio_failure';
+      case '7700':
+        return 'general_emergency';
+      default:
+        return 'unknown';
+    }
   }
 
   /**
@@ -884,6 +1816,7 @@ class ADSBConnector extends BaseConnector {
     const range = parameters.range || this.radarConfig.range;
     const center = parameters.center || this.radarConfig.center;
     const filter = parameters.filter || {};
+    const showAirspace = parameters.showAirspace !== undefined ? parameters.showAirspace : this.radarConfig.showAirspace;
     
     let aircraft = Array.from(this.aircraft.values());
     
@@ -911,23 +1844,125 @@ class ADSBConnector extends BaseConnector {
       aircraft = aircraft.filter(a => a.altitude && a.altitude <= filter.max_altitude);
     }
     
+    // Filter by airspace type if specified
+    if (filter.airspaceType) {
+      aircraft = aircraft.filter(a => 
+        a.airspace && a.airspace.some(space => space.type === filter.airspaceType)
+      );
+    }
+    
+    // Filter by airspace priority if specified
+    if (filter.airspacePriority) {
+      aircraft = aircraft.filter(a => 
+        a.airspaceContext && a.airspaceContext.priority === filter.airspacePriority
+      );
+    }
+    
     // Add calculated fields for display
     const displayAircraft = aircraft.map(a => ({
       ...a,
       distance: center.lat && center.lon ? 
         this.spatialUtils.calculateDistance(center.lat, center.lon, a.lat, a.lon) : null,
       bearing: center.lat && center.lon ? 
-        this.spatialUtils.calculateBearing(center.lat, center.lon, a.lat, a.lon) : null
+        this.spatialUtils.calculateBearing(center.lat, center.lon, a.lat, a.lon) : null,
+      // Enhanced display information with airspace context
+      displayInfo: this.generateAircraftDisplayInfo(a)
     }));
+    
+    // Get airspace data for visualization if enabled
+    let airspaces = [];
+    if (showAirspace && this.enableAirspaceAwareness && this.airspaceService) {
+      try {
+        airspaces = this.airspaceService.getAirspaceForVisualization(center, range);
+      } catch (error) {
+        this.logger.debug('Failed to get airspace data for radar display', { error: error.message });
+      }
+    }
     
     return {
       aircraft: displayAircraft,
+      airspaces: airspaces,
       count: displayAircraft.length,
+      airspaceCount: airspaces.length,
       range: range,
       center: center,
       timestamp: new Date().toISOString(),
-      config: this.radarConfig
+      config: this.radarConfig,
+      airspaceEnabled: this.enableAirspaceAwareness && showAirspace
     };
+  }
+
+  /**
+   * Generate enhanced display information for aircraft
+   */
+  generateAircraftDisplayInfo(aircraft) {
+    const info = {
+      callsign: aircraft.callsign || aircraft.icao24,
+      registration: aircraft.registration,
+      type: aircraft.type,
+      altitude: aircraft.altitude ? `${Math.round(aircraft.altitude)}ft` : 'Unknown',
+      speed: aircraft.speed ? `${Math.round(aircraft.speed)}kt` : 'Unknown',
+      heading: aircraft.track ? `${Math.round(aircraft.track)}°` : 'Unknown',
+      squawk: aircraft.squawk || 'Unknown',
+      emergency: aircraft.emergency,
+      airspaceContext: null
+    };
+    
+    // Add airspace context information
+    if (aircraft.airspaceContext) {
+      info.airspaceContext = {
+        type: aircraft.airspaceContext.type,
+        name: aircraft.airspaceContext.name,
+        description: aircraft.airspaceContext.description,
+        priority: aircraft.airspaceContext.priority,
+        requiresClearance: aircraft.airspaceContext.requiresClearance,
+        airspaceCount: aircraft.airspaceContext.airspaceCount
+      };
+      
+      // Add specific airspace information
+      if (aircraft.airspace && aircraft.airspace.length > 0) {
+        info.airspaces = aircraft.airspace.map(space => ({
+          name: space.name,
+          type: space.type,
+          color: this.getAirspaceDisplayColor(space.type)
+        }));
+      }
+    }
+    
+    // Add status indicators
+    info.status = {
+      emergency: aircraft.emergency,
+      inControlledAirspace: aircraft.airspaceContext?.requiresClearance || false,
+      onApproach: aircraft.airspace?.some(space => space.type === 'Final_Approach') || false,
+      inDangerArea: aircraft.airspace?.some(space => space.type === 'Danger_Area') || false,
+      inMilitaryAirspace: aircraft.airspace?.some(space => space.type === 'Military') || false
+    };
+    
+    return info;
+  }
+
+  /**
+   * Get display color for airspace type
+   */
+  getAirspaceDisplayColor(type) {
+    const colors = {
+      'Final_Approach': '#00FF00',
+      'Final_Approach_20nm': '#00FF00',
+      'ATZ': '#FFD700',
+      'CTA': '#FFA500',
+      'TMA': '#FFA500',
+      'CTR': '#FF0000',
+      'Danger_Area': '#FF00FF',
+      'FIR': '#0000FF',
+      'LARS': '#00FFFF',
+      'Military': '#800080',
+      'VOR': '#FFFF00',
+      'Holding_Pattern': '#FF8000',
+      'Airway_Lower': '#0080FF',
+      'Airway_Upper': '#8000FF'
+    };
+    
+    return colors[type] || '#808080';
   }
 
   /**
@@ -1085,8 +2120,137 @@ class ADSBConnector extends BaseConnector {
         total: this.events.length,
         emergency: this.emergencyEvents.length,
         recent: this.events.slice(-10)
+      },
+      baseStation: {
+        enabled: this.enableBaseStationIntegration,
+        connected: this.baseStationDb !== null,
+        registrySize: this.aircraftRegistry.size,
+        queries: this.performance.baseStationQueries,
+        cacheHits: this.performance.baseStationCacheHits,
+        cacheHitRate: this.performance.baseStationQueries > 0 ? 
+          (this.performance.baseStationCacheHits / this.performance.baseStationQueries * 100).toFixed(2) + '%' : '0%'
       }
     };
+  }
+
+  /**
+   * Export aircraft registry data
+   */
+  async exportAircraftRegistry(parameters = {}) {
+    if (!this.enableBaseStationIntegration) {
+      return { aircraft: [], count: 0, error: 'BaseStation integration not enabled' };
+    }
+    
+    try {
+      const format = parameters.format || 'json';
+      const limit = parameters.limit || 1000;
+      
+      let query = `
+        SELECT 
+          ModeS,
+          Registration,
+          ICAOTypeCode,
+          Type,
+          Manufacturer,
+          OperatorFlagCode,
+          SerialNo,
+          YearBuilt,
+          Owner,
+          Operator
+        FROM Aircraft 
+        WHERE ModeS IS NOT NULL AND ModeS != ''
+      `;
+      
+      const params = [];
+      
+      if (parameters.manufacturer) {
+        query += ` AND Manufacturer LIKE ?`;
+        params.push(`%${parameters.manufacturer}%`);
+      }
+      
+      if (parameters.type) {
+        query += ` AND (Type LIKE ? OR ICAOTypeCode LIKE ?)`;
+        params.push(`%${parameters.type}%`, `%${parameters.type}%`);
+      }
+      
+      query += ` ORDER BY Registration LIMIT ?`;
+      params.push(limit);
+      
+      return new Promise((resolve, reject) => {
+        this.baseStationDb.all(query, params, (err, rows) => {
+          if (err) {
+            this.logger.error('Failed to export aircraft registry', { error: err.message });
+            resolve({ aircraft: [], count: 0, error: err.message });
+          } else {
+            const aircraft = rows.map(row => ({
+              icao24: row.ModeS.toUpperCase(),
+              registration: row.Registration || null,
+              icaoTypeCode: row.ICAOTypeCode || null,
+              type: row.Type || null,
+              manufacturer: row.Manufacturer || null,
+              operatorFlagCode: row.OperatorFlagCode || null,
+              serialNo: row.SerialNo || null,
+              yearBuilt: row.YearBuilt || null,
+              owner: row.Owner || null,
+              operator: row.Operator || null
+            }));
+            
+            const result = {
+              aircraft,
+              count: aircraft.length,
+              format,
+              timestamp: new Date().toISOString(),
+              totalInRegistry: this.aircraftRegistry.size
+            };
+            
+            if (format === 'csv') {
+              result.csv = this.convertToCSV(aircraft);
+            }
+            
+            resolve(result);
+          }
+        });
+      });
+    } catch (error) {
+      this.logger.error('Failed to export aircraft registry', { error: error.message });
+      return { aircraft: [], count: 0, error: error.message };
+    }
+  }
+
+  /**
+   * Convert aircraft data to CSV format
+   */
+  convertToCSV(aircraft) {
+    if (!aircraft || aircraft.length === 0) return '';
+    
+    const headers = [
+      'ICAO24',
+      'Registration',
+      'ICAOTypeCode',
+      'Type',
+      'Manufacturer',
+      'OperatorFlagCode',
+      'SerialNo',
+      'YearBuilt',
+      'Owner',
+      'Operator'
+    ];
+    
+    const csvRows = [headers.join(',')];
+    
+    for (const plane of aircraft) {
+      const row = headers.map(header => {
+        const value = plane[header.toLowerCase()] || '';
+        // Escape commas and quotes in CSV
+        if (typeof value === 'string' && (value.includes(',') || value.includes('"'))) {
+          return `"${value.replace(/"/g, '""')}"`;
+        }
+        return value;
+      });
+      csvRows.push(row.join(','));
+    }
+    
+    return csvRows.join('\n');
   }
 
   /**
@@ -1118,25 +2282,129 @@ class ADSBConnector extends BaseConnector {
    */
   static getMetadata() {
     return {
-      name: 'ADSB Connector',
-      description: 'Connector for dump1090 ADS-B receiver with aircraft tracking, zone monitoring, and radar display',
-      version: '1.0.0',
+      name: 'ADSB Connector with BaseStation Integration',
+      description: 'Connector for dump1090 ADS-B receiver with BaseStation.sqb database integration for aircraft tracking, zone monitoring, radar display, and registration data lookup',
+      version: '2.0.0',
       author: 'Babelfish Looking Glass',
       capabilities: [
         'Aircraft tracking and monitoring',
         'Spatial zone management',
         'Real-time radar display',
         'Smart event generation',
-        'Emergency situation monitoring'
+        'Emergency situation monitoring',
+        'BaseStation database integration',
+        'Aircraft registration lookup',
+        'Aircraft search and filtering',
+        'Registration data export'
       ],
       configuration: {
         url: 'dump1090 URL (required)',
         pollInterval: 'Polling interval in milliseconds (default: 5000)',
         emergencyCodes: 'Array of emergency squawk codes (default: ["7500", "7600", "7700"])',
         radarRange: 'Radar display range in nautical miles (default: 0.5)',
-        radarCenter: 'Radar center coordinates {lat, lon}'
+        radarCenter: 'Radar center coordinates {lat, lon}',
+        baseStationDbPath: 'Path to BaseStation.sqb database file (default: aviationdata/BaseStation.sqb)',
+        enableBaseStationIntegration: 'Enable BaseStation database integration (default: true)'
       }
     };
+  }
+
+  /**
+   * Generate airspace context for aircraft
+   */
+  generateAirspaceContext(airspaces) {
+    if (!airspaces || airspaces.length === 0) {
+      return {
+        type: 'uncontrolled',
+        description: 'Uncontrolled airspace',
+        priority: 'low',
+        requiresClearance: false
+      };
+    }
+    
+    // Find highest priority airspace
+    const priorityOrder = {
+      'CTR': 10,
+      'CTA': 9,
+      'TMA': 8,
+      'Danger_Area': 7,
+      'Military': 6,
+      'Final_Approach': 5,
+      'ATZ': 4,
+      'FIR': 3,
+      'LARS': 2,
+      'Holding_Pattern': 1
+    };
+    
+    let highestPriority = null;
+    let maxPriority = -1;
+    
+    for (const airspace of airspaces) {
+      const priority = priorityOrder[airspace.type] || 0;
+      if (priority > maxPriority) {
+        maxPriority = priority;
+        highestPriority = airspace;
+      }
+    }
+    
+    if (!highestPriority) {
+      return {
+        type: 'uncontrolled',
+        description: 'Uncontrolled airspace',
+        priority: 'low',
+        requiresClearance: false
+      };
+    }
+    
+    return {
+      type: highestPriority.type,
+      name: highestPriority.name,
+      description: this.getAirspaceDescription(highestPriority.type),
+      priority: this.getAirspacePriority(highestPriority.type),
+      requiresClearance: this.requiresClearance(highestPriority.type),
+      airspaceCount: airspaces.length,
+      allAirspaces: airspaces
+    };
+  }
+
+  /**
+   * Get airspace description
+   */
+  getAirspaceDescription(type) {
+    const descriptions = {
+      'CTR': 'Control Zone - Highest level of air traffic control',
+      'CTA': 'Control Area - Controlled airspace around airports',
+      'TMA': 'Terminal Control Area - Controlled airspace for terminal operations',
+      'Danger_Area': 'Danger Area - Military or hazardous activities',
+      'Military': 'Military Airspace - Military training or operations',
+      'Final_Approach': 'Final Approach - Aircraft on approach to runway',
+      'ATZ': 'Aerodrome Traffic Zone - Airspace around aerodrome',
+      'FIR': 'Flight Information Region - Air traffic information service',
+      'LARS': 'Lower Airspace Radar Service - Radar service area',
+      'Holding_Pattern': 'Holding Pattern - Aircraft in holding pattern'
+    };
+    
+    return descriptions[type] || 'Unknown airspace type';
+  }
+
+  /**
+   * Get airspace priority level
+   */
+  getAirspacePriority(type) {
+    const priorities = {
+      'CTR': 'critical',
+      'CTA': 'high',
+      'TMA': 'high',
+      'Danger_Area': 'high',
+      'Military': 'medium',
+      'Final_Approach': 'medium',
+      'ATZ': 'medium',
+      'FIR': 'low',
+      'LARS': 'low',
+      'Holding_Pattern': 'low'
+    };
+    
+    return priorities[type] || 'low';
   }
 }
 

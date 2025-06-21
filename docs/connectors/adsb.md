@@ -4,14 +4,16 @@
 
 The ADSB Connector provides integration with dump1090 ADS-B receivers to track aircraft positions, monitor spatial zones, and generate intelligent events based on aircraft behavior. It supports real-time radar display, emergency situation monitoring, and spatial zone management for aviation applications.
 
-## Features
-
+**Enhanced Features:**
 - **Real-time Aircraft Tracking**: Monitor aircraft positions, movements, and status
 - **Spatial Zone Management**: Define and monitor zones for aircraft behavior
 - **Radar Display**: Real-time visualization of aircraft positions
 - **Smart Events**: Generate intelligent events based on aircraft patterns
 - **Emergency Monitoring**: Detect and handle emergency situations
 - **Zone Violations**: Track aircraft entering/exiting defined zones
+- **UK Squawk Code Analysis**: Enhanced monitoring with UK aviation squawk code intelligence
+- **BaseStation Database Integration**: Access aircraft registration data
+- **Airspace Awareness**: Real-time airspace context and monitoring
 
 ## Configuration
 
@@ -22,7 +24,7 @@ The ADSB Connector provides integration with dump1090 ADS-B receivers to track a
   "id": "adsb-connector",
   "type": "adsb",
   "name": "ADSB Receiver",
-  "description": "Connector for dump1090 ADS-B receiver",
+  "description": "Connector for dump1090 ADS-B receiver with enhanced features",
   "config": {
     "url": "http://10.0.1.180/skyaware/data/aircraft.json",
     "pollInterval": 5000,
@@ -31,7 +33,10 @@ The ADSB Connector provides integration with dump1090 ADS-B receivers to track a
     "radarCenter": {
       "lat": 51.5074,
       "lon": -0.1278
-    }
+    },
+    "enableSquawkCodeAnalysis": true,
+    "enableBaseStationIntegration": true,
+    "enableAirspaceAwareness": true
   }
 }
 ```
@@ -47,47 +52,37 @@ The ADSB Connector provides integration with dump1090 ADS-B receivers to track a
 | `radarRange` | number | `50` | Radar display range in nautical miles |
 | `radarCenter` | object | `{lat: 0, lon: 0}` | Center coordinates for radar display |
 | `displayMode` | string | `"all"` | Radar display mode (all, filtered, emergency) |
-| `showTrails` | boolean | `true` | Show aircraft trails on radar |
-| `trailLength` | number | `10` | Number of trail points to display |
+| `enableSquawkCodeAnalysis` | boolean | `true` | Enable UK squawk code analysis |
+| `enableBaseStationIntegration` | boolean | `true` | Enable BaseStation.sqb database integration |
+| `enableAirspaceAwareness` | boolean | `true` | Enable airspace awareness features |
+| `showSquawkInfo` | boolean | `true` | Show squawk information on radar display |
 
 ## Capabilities
 
 ### 1. Aircraft Tracking (`aircraft:tracking`)
 
-Track aircraft positions, movements, and status changes.
+Track aircraft positions, movements, and status.
 
 **Operations:**
-- `get` - Retrieve current aircraft data
+- `get` - Get current aircraft data
 - `subscribe` - Subscribe to aircraft updates
 - `filter` - Filter aircraft by criteria
 - `history` - Get aircraft history
 
-**Events:**
-- `aircraft:appeared` - New aircraft detected
-- `aircraft:disappeared` - Aircraft no longer visible
-- `aircraft:moved` - Aircraft position changed
-- `aircraft:emergency` - Emergency situation detected
-
 **Example:**
 ```javascript
 // Get all aircraft
-const result = await connector.execute('aircraft:tracking', 'get', {});
+const aircraft = await connector.execute('aircraft:tracking', 'get', {});
 
-// Get specific aircraft
-const aircraft = await connector.execute('aircraft:tracking', 'get', {
-  icao24: 'ABCD1234567890'
+// Filter aircraft by altitude
+const highAltitude = await connector.execute('aircraft:tracking', 'filter', {
+  min_altitude: 30000
 });
 
-// Filter aircraft
-const filtered = await connector.execute('aircraft:tracking', 'get', {
-  filter: {
-    emergency: true,
-    min_altitude: 1000,
-    within_range: {
-      center: { lat: 51.5074, lon: -0.1278 },
-      range: 25
-    }
-  }
+// Get aircraft history
+const history = await connector.execute('aircraft:tracking', 'history', {
+  icao24: 'ABCD1234567890',
+  hours: 24
 });
 ```
 
@@ -97,50 +92,28 @@ Define and manage spatial zones for aircraft monitoring.
 
 **Operations:**
 - `create` - Create a new zone
-- `update` - Update zone properties
+- `update` - Update zone configuration
 - `delete` - Delete a zone
 - `list` - List all zones
-- `monitor` - Monitor zone violations
-
-**Events:**
-- `zone:entered` - Aircraft entered zone
-- `zone:exited` - Aircraft exited zone
-- `zone:violation` - Zone violation detected
-
-**Zone Types:**
-- `parking` - Aircraft parking stands
-- `taxiway` - Taxiway areas
-- `runway` - Runway areas
-- `approach` - Approach paths
-- `departure` - Departure paths
-- `emergency` - Emergency areas
-- `custom` - Custom zones
+- `monitor` - Monitor zone activity
 
 **Example:**
 ```javascript
 // Create a runway zone
-const runway = await connector.execute('zones:management', 'create', {
+const runwayZone = await connector.execute('zones:management', 'create', {
   name: 'Runway 27L',
   zoneType: 'runway',
   coordinates: [
     { lat: 51.5074, lon: -0.1278 },
-    { lat: 51.5084, lon: -0.1278 },
-    { lat: 51.5084, lon: -0.1268 },
-    { lat: 51.5074, lon: -0.1268 }
-  ],
-  properties: {
-    runwayNumber: '27L',
-    length: 3902,
-    width: 50
-  }
+    { lat: 51.5174, lon: -0.1278 },
+    { lat: 51.5174, lon: -0.1178 },
+    { lat: 51.5074, lon: -0.1178 }
+  ]
 });
 
-// List all zones
-const zones = await connector.execute('zones:management', 'list', {});
-
-// List active zones
-const activeZones = await connector.execute('zones:management', 'list', {
-  active: true
+// Monitor zone violations
+connector.on('zone:entered', (violation) => {
+  console.log(`Aircraft ${violation.icao24} entered ${violation.zoneName}`);
 });
 ```
 
@@ -156,22 +129,18 @@ Real-time radar display of aircraft positions.
 
 **Example:**
 ```javascript
-// Get radar display
+// Get radar data
 const radar = await connector.execute('radar:display', 'get', {
   range: 50,
   center: { lat: 51.5074, lon: -0.1278 },
-  filter: {
-    emergency: false,
-    min_altitude: 1000
-  }
+  filter: { emergency: false }
 });
 
 // Configure radar
-const config = await connector.execute('radar:display', 'configure', {
-  range: 100,
-  displayMode: 'filtered',
+await connector.execute('radar:display', 'configure', {
   showTrails: true,
-  trailLength: 20
+  showSquawkInfo: true,
+  showAirspace: true
 });
 ```
 
@@ -182,24 +151,13 @@ Generate intelligent events based on aircraft behavior and zones.
 **Operations:**
 - `generate` - Generate smart events
 - `configure` - Configure event rules
-- `list` - List smart events
-- `subscribe` - Subscribe to smart events
-
-**Event Types:**
-- `low_altitude` - Aircraft flying below 1000ft
-- `high_speed` - Aircraft flying above 500 knots
-- `rapid_descent` - Aircraft descending rapidly
-- `zone_violation` - Aircraft violating zone rules
+- `list` - List recent events
+- `subscribe` - Subscribe to events
 
 **Example:**
 ```javascript
 // Generate smart events
 const events = await connector.execute('events:smart', 'generate', {});
-
-// List recent events
-const recentEvents = await connector.execute('events:smart', 'list', {
-  since: new Date(Date.now() - 3600000).toISOString() // Last hour
-});
 
 // List high priority events
 const highPriority = await connector.execute('events:smart', 'list', {
@@ -233,6 +191,74 @@ const active = await connector.execute('emergency:monitoring', 'monitor', {
 });
 ```
 
+### 6. BaseStation Database (`basestation:database`)
+
+Access aircraft registration data from BaseStation.sqb database.
+
+**Operations:**
+- `search` - Search aircraft by criteria
+- `lookup` - Lookup aircraft by ICAO24
+- `stats` - Get database statistics
+- `export` - Export aircraft data
+
+**Example:**
+```javascript
+// Search aircraft
+const search = await connector.execute('basestation:database', 'search', {
+  manufacturer: 'Boeing',
+  type: '737',
+  limit: 10
+});
+
+// Lookup aircraft
+const aircraft = await connector.execute('basestation:database', 'lookup', {
+  icao24: 'ABCD1234567890'
+});
+```
+
+### 7. Squawk Code Analysis (`squawk:analysis`) ⭐ NEW
+
+Analyze and manage UK aviation squawk codes for enhanced monitoring.
+
+**Operations:**
+- `lookup` - Lookup squawk code information
+- `search` - Search squawk codes by criteria
+- `analyze` - Analyze aircraft squawk code
+- `stats` - Get squawk code statistics
+- `categories` - Get available categories
+
+**Squawk Code Categories:**
+- `emergency` - Emergency codes (7500, 7600, 7700)
+- `military` - Military aircraft codes
+- `nato` - NATO operation codes
+- `atc` - Air traffic control codes
+- `emergency_services` - Emergency service codes
+- `law_enforcement` - Police and law enforcement codes
+- `offshore` - Offshore operations codes
+- `conspicuity` - Conspicuity and monitoring codes
+- `transit` - Transit and ORCAM codes
+- `general` - General purpose codes
+
+**Example:**
+```javascript
+// Lookup squawk code
+const squawkInfo = await connector.execute('squawk:analysis', 'lookup', {
+  code: '7500'
+});
+
+// Search military codes
+const militaryCodes = await connector.execute('squawk:analysis', 'search', {
+  category: 'military',
+  limit: 10
+});
+
+// Get categories
+const categories = await connector.execute('squawk:analysis', 'categories', {});
+
+// Get statistics
+const stats = await connector.execute('squawk:analysis', 'stats', {});
+```
+
 ## Aircraft Data Structure
 
 Each aircraft object contains the following properties:
@@ -253,7 +279,37 @@ Each aircraft object contains the following properties:
   last_seen: 1640995200000,        // Last seen timestamp
   messages: 150,                   // Number of messages received
   seen: 30,                        // Seconds since first seen
-  rssi: -45.2                      // Signal strength
+  rssi: -45.2,                     // Signal strength
+  
+  // Enhanced data (when available)
+  registration: "G-ABCD",          // Aircraft registration
+  type: "Boeing 737-800",          // Aircraft type
+  manufacturer: "Boeing",          // Manufacturer
+  operator: "British Airways",     // Operator
+  
+  // Squawk code analysis (when enabled)
+  squawkInfo: {                    // Squawk code information
+    code: "1234",
+    description: "Assigned by London Control",
+    category: "atc",
+    priority: "normal",
+    enhanced: {
+      type: "atc",
+      atcControlled: true,
+      alertLevel: "medium"
+    }
+  },
+  squawkCategory: "atc",           // Squawk category
+  squawkPriority: "normal",        // Squawk priority
+  squawkEnhanced: {                // Enhanced squawk data
+    type: "atc",
+    atcControlled: true,
+    alertLevel: "medium"
+  },
+  
+  // Airspace context (when enabled)
+  airspace: [...],                 // Current airspace
+  airspaceContext: "..."           // Airspace context description
 }
 ```
 
@@ -263,222 +319,124 @@ Each zone object contains the following properties:
 
 ```javascript
 {
-  id: "zone_1234567890",           // Unique zone identifier
+  id: "zone_001",                  // Zone identifier
   name: "Runway 27L",              // Zone name
-  type: "runway",                  // Zone type
-  coordinates: [                   // Zone boundary coordinates
+  zoneType: "runway",              // Zone type
+  coordinates: [                   // Zone coordinates
     { lat: 51.5074, lon: -0.1278 },
-    { lat: 51.5084, lon: -0.1278 },
-    { lat: 51.5084, lon: -0.1268 },
-    { lat: 51.5074, lon: -0.1268 }
+    { lat: 51.5174, lon: -0.1278 },
+    { lat: 51.5174, lon: -0.1178 },
+    { lat: 51.5074, lon: -0.1178 }
   ],
-  properties: {                    // Zone-specific properties
-    runwayNumber: "27L",
-    length: 3902,
-    width: 50
-  },
-  created: "2024-01-01T12:00:00Z", // Creation timestamp
-  active: true,                    // Zone active status
-  violations: []                   // Zone violation history
+  color: "#FF0000",                // Display color
+  priority: "high",                // Zone priority
+  active: true,                    // Zone status
+  violations: 5,                   // Number of violations
+  lastViolation: 1640995200000     // Last violation timestamp
 }
 ```
 
-## Event Data Structure
+## Squawk Code Data Structure
 
-Each event object contains the following properties:
+Each squawk code analysis contains the following properties:
 
 ```javascript
 {
-  type: "low_altitude",            // Event type
-  aircraft: {                      // Aircraft data
-    icao24: "ABCD1234567890",
-    callsign: "BAW123",
-    // ... other aircraft properties
-  },
-  priority: "medium",              // Event priority (low, medium, high, critical)
-  timestamp: "2024-01-01T12:00:00Z", // Event timestamp
-  details: {                       // Event-specific details
-    altitude: 800,
-    threshold: 1000
+  code: "7500",                    // Squawk code
+  found: true,                     // Whether code was found
+  description: "Special Purpose Code – Hi-Jacking", // Code description
+  category: "emergency",           // Code category
+  authority: "UK CAA",             // Controlling authority
+  special: true,                   // Whether it's a special code
+  priority: "critical",            // Priority level
+  enhanced: {                      // Enhanced information
+    type: "emergency",
+    requiresImmediateAttention: true,
+    alertLevel: "critical"
   }
 }
 ```
 
-## Spatial Calculations
+## Event Types
 
-The connector includes utility functions for spatial calculations:
+### Aircraft Events
+- `aircraft:appeared` - New aircraft detected
+- `aircraft:disappeared` - Aircraft no longer visible
+- `aircraft:moved` - Aircraft position updated
+- `aircraft:emergency` - Emergency situation detected
 
-### Distance Calculation
-```javascript
-const distance = spatialUtils.calculateDistance(lat1, lon1, lat2, lon2);
-// Returns distance in nautical miles
-```
+### Zone Events
+- `zone:entered` - Aircraft entered zone
+- `zone:exited` - Aircraft exited zone
+- `zone:violation` - Zone violation detected
 
-### Point in Polygon
-```javascript
-const isInside = spatialUtils.pointInPolygon(point, polygon);
-// Returns true if point is inside polygon
-```
+### Squawk Code Events ⭐ NEW
+- `squawk:analyzed` - Squawk code analyzed
+- `emergency:squawk` - Emergency squawk detected
+- `military:squawk` - Military squawk detected
+- `nato:squawk` - NATO squawk detected
+- `atc:squawk` - ATC squawk detected
 
-### Bearing Calculation
-```javascript
-const bearing = spatialUtils.calculateBearing(lat1, lon1, lat2, lon2);
-// Returns bearing in degrees (0-360)
-```
+### Airspace Events
+- `airspace:entry` - Aircraft entered airspace
+- `airspace:exit` - Aircraft exited airspace
+- `airspace:event` - Airspace-related event
 
-## Integration with Map Connector
+### Smart Events
+- `event:generated` - Smart event generated
+- `event:pattern:detected` - Pattern detected
+- `event:rule:triggered` - Rule triggered
 
-The ADSB connector integrates with the Map connector to provide spatial visualization:
+## Integration Examples
 
-```javascript
-// Register with map connector
-await mapConnector.execute('integration:connector', 'register', {
-  connectorId: 'adsb-connector',
-  context: {
-    type: 'aircraft',
-    capabilities: ['aircraft:tracking', 'zones:management']
-  }
-});
-
-// Create spatial elements for aircraft
-await mapConnector.execute('spatial:config', 'create', {
-  elementType: 'aircraft',
-  position: { lat: 51.5074, lon: -0.1278 },
-  properties: {
-    icao24: 'ABCD1234567890',
-    callsign: 'BAW123',
-    altitude: 35000
-  }
-});
-```
-
-## Error Handling
-
-The connector handles various error conditions:
-
-- **Connection Errors**: Network connectivity issues with dump1090
-- **Data Parsing Errors**: Invalid JSON responses from dump1090
-- **Zone Validation Errors**: Invalid zone coordinates or properties
-- **Spatial Calculation Errors**: Invalid coordinate data
-
-## Performance Considerations
-
-- **Polling Interval**: Adjust based on network capacity and update frequency needs
-- **Data Retention**: Aircraft history and events are limited to prevent memory issues
-- **Zone Complexity**: Complex polygons may impact performance
-- **Concurrent Operations**: Multiple simultaneous operations are supported
-
-## Security Considerations
-
-- **Network Security**: Ensure dump1090 URL is accessible and secure
-- **Data Privacy**: Aircraft data may contain sensitive information
-- **Zone Access**: Control access to zone management operations
-- **Emergency Handling**: Ensure proper escalation procedures for emergency events
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Connection Failed**
-   - Verify dump1090 URL is correct and accessible
-   - Check network connectivity
-   - Verify dump1090 is running and responding
-
-2. **No Aircraft Data**
-   - Check if dump1090 is receiving ADS-B signals
-   - Verify antenna connection and positioning
-   - Check dump1090 logs for errors
-
-3. **Zone Violations Not Detected**
-   - Verify zone coordinates are correct
-   - Check if zone is active
-   - Ensure aircraft have valid position data
-
-4. **High Memory Usage**
-   - Reduce data retention periods
-   - Limit number of zones
-   - Increase polling interval
-
-### Debug Mode
-
-Enable debug mode for detailed logging:
-
-```javascript
-connector.setDebugMode(true);
-```
-
-### Statistics
-
-Get connector statistics:
-
-```javascript
-const stats = connector.getStats();
-console.log('Aircraft count:', stats.aircraft.current);
-console.log('Zone violations:', stats.zones.violations);
-console.log('Performance:', stats.performance);
-```
-
-## API Reference
-
-### Methods
-
-#### `getAircraft(parameters)`
-Retrieve aircraft data with optional filtering.
-
-#### `createZone(parameters)`
-Create a new spatial zone.
-
-#### `getRadarDisplay(parameters)`
-Get radar display data.
-
-#### `generateSmartEvents()`
-Generate smart events based on current data.
-
-#### `getEmergencyEvents(parameters)`
-Get emergency events.
-
-#### `getStats()`
-Get connector statistics.
-
-### Events
-
-#### `aircraft:updated`
-Emitted when aircraft data is updated.
-
-#### `aircraft:appeared`
-Emitted when a new aircraft is detected.
-
-#### `aircraft:disappeared`
-Emitted when an aircraft is no longer visible.
-
-#### `aircraft:emergency`
-Emitted when an emergency situation is detected.
-
-#### `zone:entered`
-Emitted when an aircraft enters a zone.
-
-#### `zone:exited`
-Emitted when an aircraft exits a zone.
-
-#### `event:generated`
-Emitted when a smart event is generated.
-
-## Examples
-
-### Basic Setup
+### Basic Integration
 ```javascript
 const ADSBConnector = require('./connectors/types/ADSBConnector');
 
 const connector = new ADSBConnector({
-  id: 'adsb-connector',
+  id: 'adsb-main',
   name: 'ADSB Receiver',
   config: {
     url: 'http://10.0.1.180/skyaware/data/aircraft.json',
-    pollInterval: 5000
+    pollInterval: 5000,
+    enableSquawkCodeAnalysis: true,
+    enableBaseStationIntegration: true
   }
 });
 
+// Connect and start monitoring
 await connector.connect();
+
+// Listen for events
+connector.on('aircraft:emergency', (emergency) => {
+  console.log(`EMERGENCY: ${emergency.aircraft.icao24} squawking ${emergency.squawk}`);
+});
+
+connector.on('squawk:analyzed', (event) => {
+  console.log(`Squawk Analysis: ${event.aircraft.icao24} - ${event.squawkInfo.description}`);
+});
+```
+
+### Squawk Code Integration
+```javascript
+// Set up squawk code service
+const SquawkCodeService = require('./services/squawkCodeService');
+const squawkService = new SquawkCodeService();
+await squawkService.initialize();
+
+// Integrate with ADSB connector
+connector.setSquawkCodeService(squawkService);
+
+// Listen for squawk events
+connector.on('emergency:squawk', (event) => {
+  console.log(`🚨 EMERGENCY: ${event.aircraft.icao24} (${event.squawk})`);
+  // Handle emergency situation
+});
+
+connector.on('military:squawk', (event) => {
+  console.log(`⚔️  MILITARY: ${event.aircraft.icao24} (${event.squawk})`);
+  // Handle military activity
+});
 ```
 
 ### Zone Monitoring
@@ -530,4 +488,55 @@ app.get('/api/radar', async (req, res) => {
 });
 ```
 
-This documentation provides a comprehensive guide to using the ADSB connector for aircraft tracking, zone monitoring, and radar display functionality. 
+## Performance Considerations
+
+### Caching
+- Squawk code lookups are cached for improved performance
+- BaseStation database queries are cached
+- Airspace calculations are optimized
+
+### Memory Management
+- Aircraft data is limited to recent entries
+- Event history is capped to prevent memory issues
+- Zone violations are tracked efficiently
+
+### Network Optimization
+- Polling intervals can be adjusted based on requirements
+- Data filtering reduces network traffic
+- Efficient JSON parsing and processing
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Squawk Code Service Not Initialized**
+   - Ensure the squawk code data file exists
+   - Check file permissions
+   - Verify data file format
+
+2. **BaseStation Database Connection Failed**
+   - Verify database file path
+   - Check file permissions
+   - Ensure SQLite3 is available
+
+3. **High Memory Usage**
+   - Reduce aircraft history retention
+   - Limit event history size
+   - Adjust polling intervals
+
+4. **Network Timeouts**
+   - Increase timeout values
+   - Check network connectivity
+   - Verify dump1090 URL
+
+### Debug Mode
+Enable debug logging for detailed information:
+```javascript
+const connector = new ADSBConnector({
+  config: {
+    logLevel: 'debug'
+  }
+});
+```
+
+This documentation provides a comprehensive guide to using the enhanced ADSB connector with squawk code analysis, BaseStation integration, and airspace awareness for advanced aircraft monitoring and analysis. 

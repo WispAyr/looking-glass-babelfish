@@ -798,6 +798,43 @@ router.get('/radar/aircraft', (req, res) => {
   }
 });
 
+// Simple aircraft endpoint that doesn't require RadarConnector
+router.get('/aircraft', (req, res) => {
+  try {
+    const adsbConnector = req.app.locals.connectorRegistry?.getConnector('adsb-main');
+    
+    if (!adsbConnector) {
+      return res.status(500).json({ success: false, error: 'ADSB Connector not found' });
+    }
+    
+    let aircraft = [];
+    
+    // Get aircraft from ADSB connector if available
+    if (adsbConnector.aircraft) {
+      aircraft = Array.from(adsbConnector.aircraft.values());
+    }
+    
+    res.json({ success: true, data: aircraft });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/radar/airport-vectors', (req, res) => {
+  try {
+    const airportVectorService = req.app.locals.airportVectorService;
+    
+    if (!airportVectorService) {
+      return res.status(500).json({ success: false, error: 'Airport Vector Service not initialized' });
+    }
+    
+    const data = airportVectorService.getAllData();
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 router.get('/radar/zones', (req, res) => {
   try {
     const radarConnector = req.app.locals.radarConnector;
@@ -904,6 +941,129 @@ router.post('/radar/sync-adsb', (req, res) => {
         aircraft: adsbConnector.aircraft?.size || 0,
         zones: adsbConnector.zones?.size || 0
       }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// BaseStation Database API Routes
+router.get('/adsb/basestation/lookup', async (req, res) => {
+  try {
+    const adsbConnector = req.app.locals.connectorRegistry?.getConnector('adsb-main');
+    const { icao24 } = req.query;
+    
+    if (!adsbConnector) {
+      return res.status(500).json({ success: false, error: 'ADSB Connector not found' });
+    }
+    
+    if (!icao24) {
+      return res.status(400).json({ success: false, error: 'ICAO24 parameter is required' });
+    }
+    
+    const result = await adsbConnector.execute('basestation:database', 'lookup', { icao24 });
+    
+    res.json({ success: true, data: result });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/adsb/basestation/search', async (req, res) => {
+  try {
+    const adsbConnector = req.app.locals.connectorRegistry?.getConnector('adsb-main');
+    
+    if (!adsbConnector) {
+      return res.status(500).json({ success: false, error: 'ADSB Connector not found' });
+    }
+    
+    const searchParams = {
+      registration: req.query.registration,
+      manufacturer: req.query.manufacturer,
+      type: req.query.type,
+      operator: req.query.operator,
+      limit: req.query.limit ? parseInt(req.query.limit) : 100
+    };
+    
+    const result = await adsbConnector.execute('basestation:database', 'search', searchParams);
+    
+    res.json({ success: true, data: result });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/adsb/basestation/stats', async (req, res) => {
+  try {
+    const adsbConnector = req.app.locals.connectorRegistry?.getConnector('adsb-main');
+    
+    if (!adsbConnector) {
+      return res.status(500).json({ success: false, error: 'ADSB Connector not found' });
+    }
+    
+    const result = await adsbConnector.execute('basestation:database', 'stats', {});
+    
+    res.json({ success: true, data: result });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/adsb/basestation/export', async (req, res) => {
+  try {
+    const adsbConnector = req.app.locals.connectorRegistry?.getConnector('adsb-main');
+    const { icao24, format = 'json', limit = 1000 } = req.query;
+    
+    if (!adsbConnector) {
+      return res.status(500).json({ success: false, error: 'ADSB Connector not found' });
+    }
+    
+    const exportParams = {
+      format,
+      limit: parseInt(limit)
+    };
+    
+    // If specific ICAO24 is provided, filter by it
+    if (icao24) {
+      const lookupResult = await adsbConnector.execute('basestation:database', 'lookup', { icao24 });
+      if (lookupResult) {
+        exportParams.icao24 = icao24;
+      }
+    }
+    
+    const result = await adsbConnector.execute('basestation:database', 'export', exportParams);
+    
+    // Set appropriate headers for download
+    if (format === 'csv') {
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="aircraft_export_${Date.now()}.csv"`);
+      res.send(result.csv);
+    } else {
+      res.json({ success: true, data: result });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Enhanced aircraft endpoint with BaseStation data
+router.get('/adsb/aircraft/enhanced', async (req, res) => {
+  try {
+    const adsbConnector = req.app.locals.connectorRegistry?.getConnector('adsb-main');
+    
+    if (!adsbConnector) {
+      return res.status(500).json({ success: false, error: 'ADSB Connector not found' });
+    }
+    
+    const aircraft = await adsbConnector.execute('aircraft:tracking', 'get', {});
+    
+    // Add BaseStation statistics
+    const baseStationStats = await adsbConnector.execute('basestation:database', 'stats', {});
+    
+    res.json({ 
+      success: true, 
+      data: aircraft,
+      baseStation: baseStationStats.baseStation
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });

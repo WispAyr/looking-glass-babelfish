@@ -1,0 +1,126 @@
+{
+  "id": "loitering-telegram-flow",
+  "name": "Loitering Detection to Telegram",
+  "description": "Detect loitering events and send camera snapshots to Telegram chat",
+  "category": "security",
+  "enabled": true,
+  "version": "1.0.0",
+  "createdAt": "2025-06-21T19:00:00.000Z",
+  "updatedAt": "2025-06-21T19:00:00.000Z",
+  "nodes": [
+    {
+      "id": "trigger-1",
+      "type": "trigger",
+      "name": "Loitering Detected",
+      "position": {
+        "x": 100,
+        "y": 100
+      },
+      "config": {
+        "eventType": "smartDetectLoiterZone",
+        "conditions": {
+          "confidence": {
+            "min": 50
+          },
+          "duration": {
+            "min": 5000
+          }
+        }
+      }
+    },
+    {
+      "id": "action-1",
+      "type": "action",
+      "name": "Get Camera Snapshot",
+      "position": {
+        "x": 350,
+        "y": 100
+      },
+      "config": {
+        "actionType": "connector_execute",
+        "connectorId": "unifi-protect-main",
+        "capability": "camera:snapshot",
+        "parameters": {
+          "cameraId": "{{trigger.device}}",
+          "quality": "high",
+          "timestamp": "{{trigger.timestamp}}"
+        }
+      }
+    },
+    {
+      "id": "action-2",
+      "type": "action",
+      "name": "Send to Telegram",
+      "position": {
+        "x": 600,
+        "y": 100
+      },
+      "config": {
+        "actionType": "telegram_send",
+        "parameters": {
+          "chatId": "{{config.telegramChatId}}",
+          "message": "🚨 **Loitering Detected**\\n\\n📷 Camera: {{trigger.device}}\\n⏰ Time: {{trigger.timestamp}}\\n🎯 Confidence: {{trigger.confidence}}%\\n⏱️ Duration: {{trigger.duration}}ms",
+          "photo": "{{action-1.result.snapshotUrl}}",
+          "caption": "Loitering detected on camera {{trigger.device}}",
+          "parseMode": "Markdown"
+        }
+      }
+    },
+    {
+      "id": "action-3",
+      "type": "action",
+      "name": "Log Event",
+      "position": {
+        "x": 600,
+        "y": 250
+      },
+      "config": {
+        "actionType": "log_event",
+        "parameters": {
+          "level": "info",
+          "message": "Loitering detection flow executed",
+          "data": {
+            "cameraId": "{{trigger.device}}",
+            "confidence": "{{trigger.confidence}}",
+            "duration": "{{trigger.duration}}",
+            "snapshotUrl": "{{action-1.result.snapshotUrl}}",
+            "telegramSent": "{{action-2.result.success}}"
+          }
+        }
+      }
+    }
+  ],
+  "connections": [
+    {
+      "id": "conn-1",
+      "from": "trigger-1",
+      "to": "action-1",
+      "type": "success"
+    },
+    {
+      "id": "conn-2",
+      "from": "action-1",
+      "to": "action-2",
+      "type": "success"
+    },
+    {
+      "id": "conn-3",
+      "from": "action-1",
+      "to": "action-3",
+      "type": "success"
+    }
+  ],
+  "config": {
+    "telegramChatId": "YOUR_TELEGRAM_CHAT_ID",
+    "notificationSettings": {
+      "enabled": true,
+      "cooldown": 300000,
+      "maxNotificationsPerHour": 10
+    },
+    "cameraSettings": {
+      "snapshotQuality": "high",
+      "includeTimestamp": true,
+      "addWatermark": false
+    }
+  }
+} 

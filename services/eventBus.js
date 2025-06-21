@@ -59,6 +59,9 @@ class EventBus extends EventEmitter {
       
       this.logger.debug(`Event published: ${normalizedEvent.type} from ${normalizedEvent.source}`);
       
+      // Trigger flows if flow builder is available
+      await this.triggerFlows(normalizedEvent);
+      
       return normalizedEvent;
     } catch (error) {
       this.logger.error('Error publishing event:', error);
@@ -291,6 +294,76 @@ class EventBus extends EventEmitter {
     if (removed > 0) {
       this.logger.info(`Cleared ${removed} old events`);
     }
+  }
+  
+  /**
+   * Trigger flows based on event
+   */
+  async triggerFlows(event) {
+    try {
+      // Get flow builder from global scope or app.locals
+      const flowBuilder = global.flowBuilder || this.flowBuilder;
+      if (!flowBuilder) return;
+
+      const flows = flowBuilder.listFlows();
+      
+      for (const flow of flows) {
+        if (!flow.enabled) continue;
+        
+        // Check if flow has trigger nodes for this event type
+        const triggerNodes = flow.nodes.filter(node => 
+          node.type === 'trigger' && 
+          node.config.eventType === event.type
+        );
+        
+        for (const triggerNode of triggerNodes) {
+          // Check if conditions are met
+          if (this.checkTriggerConditions(triggerNode, event)) {
+            // Execute the flow
+            await flowBuilder.executeFlow(flow.id, {
+              eventData: event.data,
+              trigger: event.data,
+              config: flow.config,
+              flowId: flow.id
+            });
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error triggering flows:', error);
+    }
+  }
+
+  /**
+   * Check if trigger conditions are met
+   */
+  checkTriggerConditions(triggerNode, event) {
+    const conditions = triggerNode.config.conditions;
+    if (!conditions) return true;
+
+    const data = event.data;
+    
+    for (const [field, condition] of Object.entries(conditions)) {
+      const value = data[field];
+      
+      if (condition.min !== undefined && value < condition.min) {
+        return false;
+      }
+      
+      if (condition.max !== undefined && value > condition.max) {
+        return false;
+      }
+      
+      if (condition.equals !== undefined && value !== condition.equals) {
+        return false;
+      }
+      
+      if (condition.contains !== undefined && !value.includes(condition.contains)) {
+        return false;
+      }
+    }
+    
+    return true;
   }
 }
 
