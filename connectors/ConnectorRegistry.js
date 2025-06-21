@@ -1,6 +1,6 @@
 const EventEmitter = require('events');
 const path = require('path');
-const fs = require('fs');
+const fs = require('fs').promises;
 
 /**
  * Connector Registry
@@ -35,8 +35,8 @@ class ConnectorRegistry extends EventEmitter {
   /**
    * Initialize the registry by loading configuration
    */
-  initialize() {
-    this.loadConfiguration();
+  async initialize() {
+    await this.loadConfiguration();
   }
   
   /**
@@ -136,7 +136,7 @@ class ConnectorRegistry extends EventEmitter {
     
     // Save configuration if auto-save is enabled
     if (this.autoSave) {
-      this.saveConfiguration();
+      await this.saveConfiguration();
     }
     
     this.emit('connector-created', {
@@ -146,6 +146,24 @@ class ConnectorRegistry extends EventEmitter {
     });
     
     console.log(`Created connector: ${config.id} (${config.type})`);
+    
+    return connector;
+  }
+  
+  /**
+   * Register an existing connector instance
+   */
+  registerConnector(connector) {
+    if (!connector || !connector.id) {
+      throw new Error('Invalid connector instance');
+    }
+    
+    if (this.connectors.has(connector.id)) {
+      throw new Error(`Connector with ID '${connector.id}' already exists`);
+    }
+    
+    this.connectors.set(connector.id, connector);
+    this.logger.info(`Registered existing connector: ${connector.id}`);
     
     return connector;
   }
@@ -193,7 +211,7 @@ class ConnectorRegistry extends EventEmitter {
     
     // Save configuration
     if (this.autoSave) {
-      this.saveConfiguration();
+      await this.saveConfiguration();
     }
     
     this.emit('connector-updated', {
@@ -224,7 +242,7 @@ class ConnectorRegistry extends EventEmitter {
     
     // Save configuration
     if (this.autoSave) {
-      this.saveConfiguration();
+      await this.saveConfiguration();
     }
     
     this.emit('connector-removed', {
@@ -335,25 +353,31 @@ class ConnectorRegistry extends EventEmitter {
   /**
    * Load configuration from file
    */
-  loadConfiguration() {
+  async loadConfiguration() {
     try {
-      if (fs.existsSync(this.configPath)) {
-        const configData = fs.readFileSync(this.configPath, 'utf8');
-        const config = JSON.parse(configData);
-        
-        // Create connectors from configuration
-        if (config.connectors) {
-          config.connectors.forEach(async (connectorConfig) => {
-            try {
-              await this.createConnector(connectorConfig);
-            } catch (error) {
-              console.error(`Failed to create connector ${connectorConfig.id}:`, error.message);
-            }
-          });
-        }
-        
-        console.log(`Loaded ${config.connectors?.length || 0} connectors from configuration`);
+      // Check if config file exists
+      try {
+        await fs.access(this.configPath);
+      } catch (error) {
+        console.log('No connector configuration file found, starting with empty configuration');
+        return;
       }
+      
+      const configData = await fs.readFile(this.configPath, 'utf8');
+      const config = JSON.parse(configData);
+      
+      // Create connectors from configuration
+      if (config.connectors) {
+        for (const connectorConfig of config.connectors) {
+          try {
+            await this.createConnector(connectorConfig);
+          } catch (error) {
+            console.error(`Failed to create connector ${connectorConfig.id}:`, error.message);
+          }
+        }
+      }
+      
+      console.log(`Loaded ${config.connectors?.length || 0} connectors from configuration`);
     } catch (error) {
       console.error('Failed to load connector configuration:', error.message);
     }
@@ -362,7 +386,7 @@ class ConnectorRegistry extends EventEmitter {
   /**
    * Save configuration to file
    */
-  saveConfiguration() {
+  async saveConfiguration() {
     try {
       const config = {
         connectors: Array.from(this.connectors.values()).map(connector => ({
@@ -380,11 +404,13 @@ class ConnectorRegistry extends EventEmitter {
       
       // Ensure config directory exists
       const configDir = path.dirname(this.configPath);
-      if (!fs.existsSync(configDir)) {
-        fs.mkdirSync(configDir, { recursive: true });
+      try {
+        await fs.access(configDir);
+      } catch (error) {
+        await fs.mkdir(configDir, { recursive: true });
       }
       
-      fs.writeFileSync(this.configPath, JSON.stringify(config, null, 2));
+      await fs.writeFile(this.configPath, JSON.stringify(config, null, 2));
       
       this.emit('configuration-saved', {
         path: this.configPath,
@@ -428,11 +454,15 @@ class ConnectorRegistry extends EventEmitter {
    */
   async autoDiscoverTypes(typesDir = path.join(__dirname, 'types')) {
     try {
-      if (!fs.existsSync(typesDir)) {
+      // Check if directory exists
+      try {
+        await fs.access(typesDir);
+      } catch (error) {
+        console.log(`Types directory does not exist: ${typesDir}`);
         return;
       }
       
-      const files = fs.readdirSync(typesDir);
+      const files = await fs.readdir(typesDir);
       
       for (const file of files) {
         if (file.endsWith('.js')) {
@@ -473,6 +503,42 @@ class ConnectorRegistry extends EventEmitter {
       types: types.map(t => t.type),
       connectorIds: connectors.map(c => c.id)
     };
+  }
+  
+  /**
+   * Reload all connectors from configuration
+   */
+  async reloadConnectors() {
+    this.logger.info('Reloading connectors from configuration...');
+    try {
+      // Disconnect all existing connectors
+      for (const [id, connector] of this.connectors) {
+        try {
+          if (connector.status === 'connected') {
+            await connector.disconnect();
+          }
+        } catch (error) {
+          this.logger.error(`Error disconnecting connector ${id}:`, error);
+        }
+      }
+      // Clear existing connectors
+      this.connectors.clear();
+      // Load configuration
+      const configPath = path.join(process.cwd(), 'config', 'connectors.json');
+      const configData = JSON.parse(await fs.readFile(configPath, 'utf-8'));
+      // Create connectors from config
+      for (const connectorConfig of configData.connectors) {
+        try {
+          await this.createConnector(connectorConfig);
+        } catch (error) {
+          this.logger.error(`Error creating connector ${connectorConfig.id}:`, error);
+        }
+      }
+      this.logger.info(`Reloaded ${this.connectors.size} connectors`);
+    } catch (error) {
+      this.logger.error('Error reloading connectors:', error);
+      throw error;
+    }
   }
 }
 

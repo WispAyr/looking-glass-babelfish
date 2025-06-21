@@ -1,89 +1,6 @@
 {
   "connectors": [
     {
-      "id": "van-unifi",
-      "type": "unifi-protect",
-      "name": "Van Unifi Protect System",
-      "description": "Communications van Unifi Protect system",
-      "config": {
-        "host": "10.0.0.1",
-        "port": 443,
-        "protocol": "https",
-        "apiKey": "wye3aapIuxAz2omKg4WFdCSncRBfSzPx",
-        "verifySSL": false,
-        "autoDiscovery": {
-          "enabled": true,
-          "refreshInterval": 300000,
-          "createEntities": true,
-          "subscribeToEvents": true,
-          "eventTypes": [
-            "motion",
-            "smart",
-            "recording",
-            "connection"
-          ]
-        },
-        "entities": {
-          "enabled": true,
-          "autoCreate": true,
-          "syncInterval": 60000
-        },
-        "events": {
-          "enabled": true,
-          "types": [
-            "motion",
-            "smart",
-            "recording",
-            "connection"
-          ],
-          "webSocket": {
-            "enabled": true,
-            "reconnectInterval": 5000,
-            "maxReconnectAttempts": 10
-          },
-          "polling": {
-            "enabled": true,
-            "interval": 30000
-          }
-        },
-        "streaming": {
-          "enabled": true,
-          "defaultQuality": "high",
-          "defaultFormat": "rtsps",
-          "maxConcurrentStreams": 5
-        },
-        "recording": {
-          "enabled": true,
-          "downloadPath": "./recordings",
-          "maxStorageGB": 10
-        }
-      },
-      "capabilities": {
-        "enabled": [],
-        "disabled": []
-      }
-    },
-    {
-      "id": "mqtt",
-      "type": "mqtt",
-      "name": "Default MQTT Broker",
-      "description": "Default MQTT broker for notifications and events",
-      "config": {
-        "host": "localhost",
-        "port": 1883,
-        "protocol": "mqtt",
-        "username": "",
-        "password": ""
-      },
-      "capabilities": {
-        "enabled": [
-          "mqtt:publish",
-          "mqtt:subscribe"
-        ],
-        "disabled": []
-      }
-    },
-    {
       "id": "web-gui",
       "type": "web-gui",
       "name": "Web GUI",
@@ -91,7 +8,7 @@
       "config": {
         "webInterface": {
           "enabled": true,
-          "port": 3000,
+          "port": "3000",
           "host": "0.0.0.0"
         },
         "autoRegisterWithMaps": true,
@@ -116,6 +33,24 @@
         "viewMode": "realtime",
         "spatialElements": [],
         "connectorContexts": []
+      },
+      "capabilities": {
+        "enabled": [],
+        "disabled": []
+      }
+    },
+    {
+      "id": "unifi-protect-main",
+      "type": "unifi-protect",
+      "name": "UniFi Protect System",
+      "description": "Main UniFi Protect camera system",
+      "config": {
+        "host": "10.0.0.1",
+        "port": 443,
+        "apiKey": "wye3aapIuxAz2omKg4WFdCSncRBfSzPx",
+        "verifySSL": false,
+        "enableWebSocket": true,
+        "enableEventPolling": false
       },
       "capabilities": {
         "enabled": [],

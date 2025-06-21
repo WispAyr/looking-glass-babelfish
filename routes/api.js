@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const winston = require('winston');
+const path = require('path');
+const fs = require('fs').promises;
 
 // Create logger instance
 const logger = winston.createLogger({
@@ -91,7 +93,7 @@ router.get('/connectors', (req, res) => {
 router.get('/connectors/:connectorId', (req, res) => {
   try {
     const connectorRegistry = req.app.locals.connectorRegistry;
-    const connector = connectorRegistry.getConnectorById(req.params.connectorId);
+    const connector = connectorRegistry.getConnector(req.params.connectorId);
     if (!connector) {
       return res.status(404).json({ success: false, error: 'Connector not found' });
     }
@@ -156,7 +158,7 @@ router.get('/cameras/:cameraId', async (req, res) => {
     const { connectorId } = req.query;
 
     if (connectorId) {
-      const connector = connectorRegistry.getConnectorById(connectorId);
+      const connector = connectorRegistry.getConnector(connectorId);
       if (connector && typeof connector.getCamera === 'function') {
         const camera = await connector.getCamera(cameraId);
         if (camera) {
@@ -187,7 +189,7 @@ router.get('/cameras/:cameraId/snapshot', async (req, res) => {
     const { connectorId } = req.query;
     const connectorRegistry = req.app.locals.connectorRegistry;
     
-    const connector = connectorRegistry.getConnectorById(connectorId);
+    const connector = connectorRegistry.getConnector(connectorId);
 
     if (!connector || typeof connector.getCameraSnapshot !== 'function') {
       return res.status(404).json({ success: false, error: 'Snapshot function not available for this camera or connector.' });
@@ -508,6 +510,402 @@ router.get('/capabilities/:eventType', async (req, res) => {
     });
   } catch (error) {
     logger.error('Error getting event type capabilities:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GUI Configuration endpoints
+router.get('/gui/config', (req, res) => {
+  try {
+    const layoutManager = req.app.locals.layoutManager;
+    const guiEditor = req.app.locals.guiEditor;
+    const connectorRegistry = req.app.locals.connectorRegistry;
+    
+    if (!layoutManager || !guiEditor) {
+      return res.status(500).json({ success: false, error: 'GUI services not initialized' });
+    }
+    
+    const activeLayout = layoutManager.getActiveLayout();
+    const editorState = guiEditor.getEditorState();
+    const connectors = connectorRegistry ? connectorRegistry.getConnectors() : [];
+    
+    const guiConfig = {
+      activeLayout,
+      editorState,
+      connectors: connectors.map(c => ({
+        id: c.id,
+        name: c.name,
+        type: c.type,
+        hasGuiConfig: typeof c.getGuiConfig === 'function',
+        guiConfig: c.getGuiConfig ? c.getGuiConfig() : null
+      })),
+      canEdit: !editorState.isEditing,
+      editUrl: `/gui/editor${activeLayout ? `?layout=${activeLayout.id}` : ''}`
+    };
+    
+    res.json({ success: true, data: guiConfig });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/gui/edit', (req, res) => {
+  try {
+    const layoutManager = req.app.locals.layoutManager;
+    const guiEditor = req.app.locals.guiEditor;
+    
+    if (!layoutManager || !guiEditor) {
+      return res.status(500).json({ success: false, error: 'GUI services not initialized' });
+    }
+    
+    const { layoutId } = req.body;
+    const targetLayout = layoutId || (layoutManager.getActiveLayout() ? layoutManager.getActiveLayout().id : null);
+    
+    if (!targetLayout) {
+      return res.status(400).json({ success: false, error: 'No layout specified or active' });
+    }
+    
+    // Start editing the layout
+    const layout = guiEditor.startEditing(targetLayout, layoutManager);
+    
+    res.json({ 
+      success: true, 
+      data: {
+        layout,
+        editorUrl: `/gui/editor?layout=${targetLayout}`,
+        message: 'Editor started successfully'
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/gui/save', async (req, res) => {
+  try {
+    const guiEditor = req.app.locals.guiEditor;
+    
+    if (!guiEditor) {
+      return res.status(500).json({ success: false, error: 'GUI Editor not initialized' });
+    }
+    
+    const layout = await guiEditor.saveLayout();
+    
+    res.json({ 
+      success: true, 
+      data: {
+        layout,
+        message: 'Layout saved successfully'
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/gui/stop-edit', (req, res) => {
+  try {
+    const guiEditor = req.app.locals.guiEditor;
+    
+    if (!guiEditor) {
+      return res.status(500).json({ success: false, error: 'GUI Editor not initialized' });
+    }
+    
+    guiEditor.stopEditing();
+    
+    res.json({ 
+      success: true, 
+      message: 'Editor stopped successfully'
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Configuration management endpoints
+router.post('/connectors', async (req, res) => {
+  try {
+    const { id, type, name, description, config } = req.body;
+    
+    if (!id || !type) {
+      return res.status(400).json({ success: false, error: 'ID and type are required' });
+    }
+    
+    // Load current config
+    const configPath = path.join(process.cwd(), 'config', 'connectors.json');
+    const configData = JSON.parse(await fs.readFile(configPath, 'utf-8'));
+    
+    // Check if connector already exists
+    if (configData.connectors.find(c => c.id === id)) {
+      return res.status(400).json({ success: false, error: 'Connector with this ID already exists' });
+    }
+    
+    // Add new connector
+    const newConnector = {
+      id,
+      type,
+      name: name || id,
+      description: description || '',
+      config: config || {},
+      capabilities: {
+        enabled: [],
+        disabled: []
+      }
+    };
+    
+    configData.connectors.push(newConnector);
+    
+    // Save config
+    await fs.writeFile(configPath, JSON.stringify(configData, null, 2));
+    
+    res.json({ success: true, connector: newConnector });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.delete('/connectors/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Load current config
+    const configPath = path.join(process.cwd(), 'config', 'connectors.json');
+    const configData = JSON.parse(await fs.readFile(configPath, 'utf-8'));
+    
+    // Find and remove connector
+    const index = configData.connectors.findIndex(c => c.id === id);
+    if (index === -1) {
+      return res.status(404).json({ success: false, error: 'Connector not found' });
+    }
+    
+    configData.connectors.splice(index, 1);
+    
+    // Save config
+    await fs.writeFile(configPath, JSON.stringify(configData, null, 2));
+    
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/connectors/:id/toggle', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const connector = connectorRegistry.getConnector(id);
+    
+    if (!connector) {
+      return res.status(404).json({ success: false, error: 'Connector not found' });
+    }
+    
+    if (connector.status === 'connected') {
+      await connector.disconnect();
+    } else {
+      await connector.connect();
+    }
+    
+    res.json({ success: true, status: connector.status });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/config/save', async (req, res) => {
+  try {
+    // This endpoint can be used to save any configuration changes
+    // For now, just return success as the individual endpoints handle their own saving
+    res.json({ success: true, message: 'Configuration saved' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/server/restart', async (req, res) => {
+  try {
+    // Send response before restarting
+    res.json({ success: true, message: 'Server restart initiated' });
+    
+    // Restart server after a short delay
+    setTimeout(() => {
+      process.exit(0); // This will cause the server to restart if using a process manager
+    }, 1000);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/connectors/reload', async (req, res) => {
+  try {
+    // Reload connectors from config
+    await connectorRegistry.reloadConnectors();
+    res.json({ success: true, message: 'Connectors reloaded' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Radar API endpoints
+router.get('/radar/status', (req, res) => {
+  try {
+    const radarConnector = req.app.locals.radarConnector;
+    const adsbConnector = req.app.locals.connectorRegistry?.getConnector('adsb-main');
+    
+    if (!radarConnector) {
+      return res.status(500).json({ success: false, error: 'Radar Connector not initialized' });
+    }
+    
+    const status = {
+      radar: radarConnector.getStatus(),
+      adsb: adsbConnector ? adsbConnector.getStatus() : null,
+      integration: {
+        hasAdsb: !!adsbConnector,
+        aircraftCount: adsbConnector ? adsbConnector.aircraft?.size || 0 : 0,
+        zonesCount: radarConnector.zoneData?.size || 0
+      }
+    };
+    
+    res.json({ success: true, data: status });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/radar/aircraft', (req, res) => {
+  try {
+    const radarConnector = req.app.locals.radarConnector;
+    const adsbConnector = req.app.locals.connectorRegistry?.getConnector('adsb-main');
+    
+    if (!radarConnector) {
+      return res.status(500).json({ success: false, error: 'Radar Connector not initialized' });
+    }
+    
+    let aircraft = [];
+    
+    // Get aircraft from ADSB connector if available
+    if (adsbConnector && adsbConnector.aircraft) {
+      aircraft = Array.from(adsbConnector.aircraft.values());
+    }
+    
+    // Apply filters if provided
+    if (req.query.filter) {
+      const filter = JSON.parse(req.query.filter);
+      aircraft = radarConnector.applyAircraftFilter(aircraft, filter);
+    }
+    
+    res.json({ success: true, data: aircraft });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/radar/zones', (req, res) => {
+  try {
+    const radarConnector = req.app.locals.radarConnector;
+    const adsbConnector = req.app.locals.connectorRegistry?.getConnector('adsb-main');
+    
+    if (!radarConnector) {
+      return res.status(500).json({ success: false, error: 'Radar Connector not initialized' });
+    }
+    
+    let zones = [];
+    
+    // Get zones from radar connector
+    zones = radarConnector.listZones();
+    
+    // Merge with ADSB zones if available
+    if (adsbConnector && adsbConnector.zones) {
+      const adsbZones = Array.from(adsbConnector.zones.values());
+      zones = [...zones, ...adsbZones];
+    }
+    
+    res.json({ success: true, data: zones });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/radar/zones', (req, res) => {
+  try {
+    const radarConnector = req.app.locals.radarConnector;
+    
+    if (!radarConnector) {
+      return res.status(500).json({ success: false, error: 'Radar Connector not initialized' });
+    }
+    
+    const zone = radarConnector.createZone(req.body);
+    res.json({ success: true, data: zone });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.put('/radar/zones/:id', (req, res) => {
+  try {
+    const radarConnector = req.app.locals.radarConnector;
+    
+    if (!radarConnector) {
+      return res.status(500).json({ success: false, error: 'Radar Connector not initialized' });
+    }
+    
+    const zone = radarConnector.updateZone({
+      id: req.params.id,
+      updates: req.body
+    });
+    res.json({ success: true, data: zone });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.delete('/radar/zones/:id', (req, res) => {
+  try {
+    const radarConnector = req.app.locals.radarConnector;
+    
+    if (!radarConnector) {
+      return res.status(500).json({ success: false, error: 'Radar Connector not initialized' });
+    }
+    
+    const result = radarConnector.deleteZone({ id: req.params.id });
+    res.json({ success: true, data: result });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/radar/sync-adsb', (req, res) => {
+  try {
+    const radarConnector = req.app.locals.radarConnector;
+    const adsbConnector = req.app.locals.connectorRegistry?.getConnector('adsb-main');
+    
+    if (!radarConnector) {
+      return res.status(500).json({ success: false, error: 'Radar Connector not initialized' });
+    }
+    
+    if (!adsbConnector) {
+      return res.status(500).json({ success: false, error: 'ADSB Connector not found' });
+    }
+    
+    // Sync aircraft data from ADSB to radar
+    if (adsbConnector.aircraft) {
+      const aircraft = Array.from(adsbConnector.aircraft.values());
+      radarConnector.updateAircraftData(aircraft);
+    }
+    
+    // Sync zones from ADSB to radar
+    if (adsbConnector.zones) {
+      const zones = Array.from(adsbConnector.zones.values());
+      radarConnector.updateZoneData(zones);
+    }
+    
+    res.json({ 
+      success: true, 
+      message: 'ADSB data synced to radar',
+      synced: {
+        aircraft: adsbConnector.aircraft?.size || 0,
+        zones: adsbConnector.zones?.size || 0
+      }
+    });
+  } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });

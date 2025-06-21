@@ -502,4 +502,343 @@ router.post('/cache/clear', async (req, res) => {
   }
 });
 
+// Get all cameras with their locations and status
+router.get('/cameras', async (req, res) => {
+    try {
+        const { connectorRegistry } = req.app.locals;
+        
+        if (!connectorRegistry) {
+            return res.status(503).json({ error: 'Connector registry not available' });
+        }
+
+        const cameras = [];
+        
+        // Get cameras from all connectors
+        for (const [connectorId, connector] of connectorRegistry.connectors.entries()) {
+            if (connector.type === 'unifi-protect' || connector.type === 'hikvision' || connector.type === 'ankke-dvr') {
+                try {
+                    const result = await connector.execute('cameras', 'list');
+                    if (result.success && result.cameras) {
+                        cameras.push(...result.cameras.map(camera => ({
+                            ...camera,
+                            connectorId,
+                            connectorType: connector.type
+                        })));
+                    }
+                } catch (error) {
+                    console.warn(`Failed to get cameras from connector ${connectorId}:`, error);
+                }
+            }
+        }
+
+        res.json({
+            success: true,
+            cameras,
+            total: cameras.length
+        });
+    } catch (error) {
+        console.error('Error getting cameras:', error);
+        res.status(500).json({ error: 'Failed to get cameras' });
+    }
+});
+
+// Get camera details including line crossing configuration
+router.get('/cameras/:cameraId', async (req, res) => {
+    try {
+        const { cameraId } = req.params;
+        const { connectorRegistry } = req.app.locals;
+        
+        if (!connectorRegistry) {
+            return res.status(503).json({ error: 'Connector registry not available' });
+        }
+
+        // Find camera across all connectors
+        for (const [connectorId, connector] of connectorRegistry.connectors.entries()) {
+            if (connector.type === 'unifi-protect' || connector.type === 'hikvision' || connector.type === 'ankke-dvr') {
+                try {
+                    const result = await connector.execute('camera', 'get', { cameraId });
+                    if (result.success && result.camera) {
+                        return res.json({
+                            success: true,
+                            camera: {
+                                ...result.camera,
+                                connectorId,
+                                connectorType: connector.type
+                            }
+                        });
+                    }
+                } catch (error) {
+                    // Continue to next connector
+                }
+            }
+        }
+
+        res.status(404).json({ error: 'Camera not found' });
+    } catch (error) {
+        console.error('Error getting camera details:', error);
+        res.status(500).json({ error: 'Failed to get camera details' });
+    }
+});
+
+// Get line crossing configurations for a camera
+router.get('/cameras/:cameraId/lines', async (req, res) => {
+    try {
+        const { cameraId } = req.params;
+        const { connectorRegistry } = req.app.locals;
+        
+        if (!connectorRegistry) {
+            return res.status(503).json({ error: 'Connector registry not available' });
+        }
+
+        const lines = [];
+        
+        // Get lines from all connectors
+        for (const [connectorId, connector] of connectorRegistry.connectors.entries()) {
+            if (connector.type === 'unifi-protect') {
+                try {
+                    const result = await connector.execute('camera', 'getLines', { cameraId });
+                    if (result.success && result.lines) {
+                        lines.push(...result.lines.map(line => ({
+                            ...line,
+                            connectorId,
+                            cameraId
+                        })));
+                    }
+                } catch (error) {
+                    // Continue to next connector
+                }
+            }
+        }
+
+        res.json({
+            success: true,
+            lines,
+            total: lines.length
+        });
+    } catch (error) {
+        console.error('Error getting camera lines:', error);
+        res.status(500).json({ error: 'Failed to get camera lines' });
+    }
+});
+
+// Update camera location on map
+router.put('/cameras/:cameraId/location', async (req, res) => {
+    try {
+        const { cameraId } = req.params;
+        const { lat, lon, x, y } = req.body;
+        const { connectorRegistry } = req.app.locals;
+        
+        if (!connectorRegistry) {
+            return res.status(503).json({ error: 'Connector registry not available' });
+        }
+
+        // Find camera and update location
+        for (const [connectorId, connector] of connectorRegistry.connectors.entries()) {
+            if (connector.type === 'unifi-protect' || connector.type === 'hikvision' || connector.type === 'ankke-dvr') {
+                try {
+                    const result = await connector.execute('camera', 'updateLocation', {
+                        cameraId,
+                        location: { lat, lon, x, y }
+                    });
+                    if (result.success) {
+                        return res.json({
+                            success: true,
+                            message: 'Camera location updated',
+                            camera: result.camera
+                        });
+                    }
+                } catch (error) {
+                    // Continue to next connector
+                }
+            }
+        }
+
+        res.status(404).json({ error: 'Camera not found' });
+    } catch (error) {
+        console.error('Error updating camera location:', error);
+        res.status(500).json({ error: 'Failed to update camera location' });
+    }
+});
+
+// Get map configuration
+router.get('/config', async (req, res) => {
+    try {
+        const { mapIntegrationService } = req.app.locals;
+        
+        if (!mapIntegrationService) {
+            return res.status(503).json({ error: 'Map integration service not available' });
+        }
+
+        const config = await mapIntegrationService.getMapConfig();
+        
+        res.json({
+            success: true,
+            config
+        });
+    } catch (error) {
+        console.error('Error getting map config:', error);
+        res.status(500).json({ error: 'Failed to get map configuration' });
+    }
+});
+
+// Update map configuration
+router.put('/config', async (req, res) => {
+    try {
+        const { mapIntegrationService } = req.app.locals;
+        const config = req.body;
+        
+        if (!mapIntegrationService) {
+            return res.status(503).json({ error: 'Map integration service not available' });
+        }
+
+        const result = await mapIntegrationService.updateMapConfig(config);
+        
+        res.json({
+            success: true,
+            message: 'Map configuration updated',
+            config: result
+        });
+    } catch (error) {
+        console.error('Error updating map config:', error);
+        res.status(500).json({ error: 'Failed to update map configuration' });
+    }
+});
+
+// Get spatial elements (cameras, zones, lines)
+router.get('/elements', async (req, res) => {
+    try {
+        const { mapIntegrationService } = req.app.locals;
+        
+        if (!mapIntegrationService) {
+            return res.status(503).json({ error: 'Map integration service not available' });
+        }
+
+        const elements = await mapIntegrationService.getSpatialElements();
+        
+        res.json({
+            success: true,
+            elements,
+            total: elements.length
+        });
+    } catch (error) {
+        console.error('Error getting spatial elements:', error);
+        res.status(500).json({ error: 'Failed to get spatial elements' });
+    }
+});
+
+// Create or update spatial element
+router.post('/elements', async (req, res) => {
+    try {
+        const { mapIntegrationService } = req.app.locals;
+        const elementData = req.body;
+        
+        if (!mapIntegrationService) {
+            return res.status(503).json({ error: 'Map integration service not available' });
+        }
+
+        const element = await mapIntegrationService.createOrUpdateElement(elementData);
+        
+        res.json({
+            success: true,
+            message: 'Spatial element created/updated',
+            element
+        });
+    } catch (error) {
+        console.error('Error creating spatial element:', error);
+        res.status(500).json({ error: 'Failed to create spatial element' });
+    }
+});
+
+// Delete spatial element
+router.delete('/elements/:elementId', async (req, res) => {
+    try {
+        const { elementId } = req.params;
+        const { mapIntegrationService } = req.app.locals;
+        
+        if (!mapIntegrationService) {
+            return res.status(503).json({ error: 'Map integration service not available' });
+        }
+
+        await mapIntegrationService.deleteElement(elementId);
+        
+        res.json({
+            success: true,
+            message: 'Spatial element deleted'
+        });
+    } catch (error) {
+        console.error('Error deleting spatial element:', error);
+        res.status(500).json({ error: 'Failed to delete spatial element' });
+    }
+});
+
+// Get real-time events for map
+router.get('/events', async (req, res) => {
+    try {
+        const { eventBus } = req.app.locals;
+        
+        if (!eventBus) {
+            return res.status(503).json({ error: 'Event bus not available' });
+        }
+
+        // Get recent events for each type
+        const eventTypes = ['motion', 'smartDetectLine', 'smartDetectZone', 'smartDetectLoiterZone'];
+        let allEvents = [];
+        
+        for (const eventType of eventTypes) {
+            const events = eventBus.getEvents({
+                type: eventType,
+                limit: 20
+            });
+            allEvents = allEvents.concat(events);
+        }
+        
+        // Sort by timestamp and limit total
+        allEvents.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+        allEvents = allEvents.slice(0, 50);
+        
+        res.json({
+            success: true,
+            events: allEvents,
+            total: allEvents.length
+        });
+    } catch (error) {
+        console.error('Error getting map events:', error);
+        res.status(500).json({ error: 'Failed to get map events' });
+    }
+});
+
+// Get connector status for map
+router.get('/connectors', async (req, res) => {
+    try {
+        const { connectorRegistry } = req.app.locals;
+        
+        if (!connectorRegistry) {
+            return res.status(503).json({ error: 'Connector registry not available' });
+        }
+
+        const connectors = [];
+        
+        for (const [connectorId, connector] of connectorRegistry.connectors.entries()) {
+            if (connector.type === 'unifi-protect' || connector.type === 'hikvision' || connector.type === 'ankke-dvr') {
+                connectors.push({
+                    id: connectorId,
+                    type: connector.type,
+                    name: connector.name,
+                    status: connector.getStatus(),
+                    capabilities: connector.getCapabilities()
+                });
+            }
+        }
+
+        res.json({
+            success: true,
+            connectors,
+            total: connectors.length
+        });
+    } catch (error) {
+        console.error('Error getting connectors:', error);
+        res.status(500).json({ error: 'Failed to get connectors' });
+    }
+});
+
 module.exports = router; 

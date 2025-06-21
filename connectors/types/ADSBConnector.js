@@ -1,6 +1,5 @@
 const BaseConnector = require('../BaseConnector');
 const axios = require('axios');
-const EventEmitter = require('events');
 
 /**
  * ADSB Connector for dump1090
@@ -46,8 +45,8 @@ class ADSBConnector extends BaseConnector {
     
     // Radar display settings
     this.radarConfig = {
-      range: config.config?.radarRange || 50, // nautical miles
-      center: config.config?.radarCenter || { lat: 0, lon: 0 },
+      range: config.config?.radarRange || 0.5, // nautical miles
+      center: config.config?.radarCenter || { lat: 55.5074, lon: -4.5933 },
       displayMode: config.config?.displayMode || 'all', // all, filtered, emergency
       showTrails: config.config?.showTrails || true,
       trailLength: config.config?.trailLength || 10
@@ -1134,11 +1133,11 @@ class ADSBConnector extends BaseConnector {
         url: 'dump1090 URL (required)',
         pollInterval: 'Polling interval in milliseconds (default: 5000)',
         emergencyCodes: 'Array of emergency squawk codes (default: ["7500", "7600", "7700"])',
-        radarRange: 'Radar display range in nautical miles (default: 50)',
+        radarRange: 'Radar display range in nautical miles (default: 0.5)',
         radarCenter: 'Radar center coordinates {lat, lon}'
       }
     };
   }
 }
 
-module.exports = ADSBConnector; 
+module.exports = ADSBConnector;

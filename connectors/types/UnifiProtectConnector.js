@@ -1474,6 +1474,7 @@ class UnifiProtectConnector extends BaseConnector {
     const eventTypeMapping = {
       'smartDetectZone': 'smartDetectZone',
       'smartDetectLine': 'smartDetectLine', 
+      'smartDetectLoiterZone': 'smartDetectLoiterZone',
       'smartAudioDetect': 'smartAudioDetect',
       'motion': 'motion',
       'ring': 'ring',
@@ -1512,10 +1513,17 @@ class UnifiProtectConnector extends BaseConnector {
     // Queue event for processing
     this.queueEvent(event);
     
-    // Emit the event
+    // Emit the event locally
     this.emit('event', event);
     this.emit(`event:${mappedEventType}`, event);
     this.emit(`connector:${this.id}:event`, event);
+    
+    // Publish to EventBus if available
+    if (this.eventBus) {
+      this.eventBus.publishEvent(event).catch(error => {
+        this.logger.error('Failed to publish event to EventBus:', error);
+      });
+    }
     
     // Handle specific event types
     this.handleSpecificEventType(event, item);
@@ -1675,13 +1683,18 @@ class UnifiProtectConnector extends BaseConnector {
   }
 
   /**
-   * Handle specific event types with enhanced processing
+   * Handle specific event types with specialized logic
    */
   handleSpecificEventType(event, item) {
-    switch (event.type) {
+    switch (item.type) {
       case 'smartDetectZone':
+        this.handleSmartDetectionEvent(event, item);
+        break;
       case 'smartDetectLine':
         this.handleSmartDetectionEvent(event, item);
+        break;
+      case 'smartDetectLoiterZone':
+        this.handleLoiteringDetectionEvent(event, item);
         break;
       case 'smartAudioDetect':
         this.handleSmartAudioDetectionEvent(event, item);
@@ -1737,25 +1750,42 @@ class UnifiProtectConnector extends BaseConnector {
    * Handle smart audio detection events
    */
   handleSmartAudioDetectionEvent(event, item) {
-    const audioContext = {
-      audioType: item.smartDetectTypes?.[0] || 'unknown',
-      confidence: item.score || 0.5,
-      duration: item.start && item.end ? item.end - item.start : undefined,
-      attributes: {
-        detectionTypes: item.smartDetectTypes || [],
-        ...item.attributes
-      },
-      timestamp: event.timestamp
-    };
-
-    // Emit audio detection event with context
-    this.emit('audio:detected', {
-      cameraId: event.deviceId,
-      audioContext,
-      event: event.data
+    const detectionTypes = item.smartDetectTypes || [];
+    const confidence = item.score || 50.0;
+    
+    this.logger.info(`Smart audio detection (${detectionTypes.join(', ') || 'unknown'}) on camera ${item.device} with ${confidence}% confidence`);
+    
+    // Emit specialized event
+    this.emit('smartAudioDetect', {
+      cameraId: item.device,
+      detectionTypes,
+      confidence,
+      timestamp: event.timestamp,
+      eventId: item.id
     });
+  }
 
-    this.logger.info(`Audio detection (${audioContext.audioType}) on camera ${event.deviceId} with ${(audioContext.confidence * 100).toFixed(1)}% confidence`);
+  /**
+   * Handle loitering detection events
+   */
+  handleLoiteringDetectionEvent(event, item) {
+    const detectionTypes = item.smartDetectTypes || [];
+    const confidence = item.score || 50.0;
+    const duration = item.end && item.start ? item.end - item.start : 0;
+    
+    this.logger.info(`Loitering detection (${detectionTypes.join(', ') || 'unknown'}) on camera ${item.device} with ${confidence}% confidence for ${duration}ms`);
+    
+    // Emit specialized event
+    this.emit('loiteringDetect', {
+      cameraId: item.device,
+      detectionTypes,
+      confidence,
+      duration,
+      timestamp: event.timestamp,
+      eventId: item.id,
+      startTime: item.start ? new Date(item.start).toISOString() : undefined,
+      endTime: item.end ? new Date(item.end).toISOString() : undefined
+    });
   }
 
   /**

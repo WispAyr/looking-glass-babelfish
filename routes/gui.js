@@ -1,0 +1,1391 @@
+const express = require('express');
+const router = express.Router();
+const winston = require('winston');
+
+// Create logger instance
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.errors({ stack: true }),
+    winston.format.json()
+  ),
+  defaultMeta: { service: 'gui-routes' },
+  transports: [
+    new winston.transports.Console({
+      format: winston.format.combine(
+        winston.format.colorize(),
+        winston.format.simple()
+      )
+    })
+  ]
+});
+
+// Import services (these will be injected from the main server)
+let layoutManager, guiEditor;
+let connectorRegistry = null;
+
+// Middleware to inject services
+function injectServices(services) {
+  layoutManager = services.layoutManager;
+  guiEditor = services.guiEditor;
+  connectorRegistry = services.connectorRegistry;
+}
+
+// Layout management endpoints
+router.get('/layouts', async (req, res) => {
+  try {
+    if (!layoutManager) {
+      return res.status(500).json({ success: false, error: 'Layout Manager not initialized' });
+    }
+    
+    const layouts = layoutManager.getAllLayouts();
+    const activeLayout = layoutManager.getActiveLayout();
+    
+    res.json({
+      success: true,
+      data: {
+        layouts,
+        activeLayout: activeLayout ? activeLayout.id : null,
+        stats: layoutManager.getLayoutStats()
+      }
+    });
+  } catch (error) {
+    logger.error('Failed to get layouts', { error: error.message });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/layouts/:layoutId', async (req, res) => {
+  try {
+    if (!layoutManager) {
+      return res.status(500).json({ success: false, error: 'Layout Manager not initialized' });
+    }
+    
+    const layout = layoutManager.getLayout(req.params.layoutId);
+    if (!layout) {
+      return res.status(404).json({ success: false, error: 'Layout not found' });
+    }
+    
+    res.json({ success: true, data: layout });
+  } catch (error) {
+    logger.error('Failed to get layout', { error: error.message });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/layouts', async (req, res) => {
+  try {
+    if (!layoutManager) {
+      return res.status(500).json({ success: false, error: 'Layout Manager not initialized' });
+    }
+    
+    const layout = await layoutManager.createLayout(req.body);
+    res.status(201).json({ success: true, data: layout });
+  } catch (error) {
+    logger.error('Failed to create layout', { error: error.message });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.put('/layouts/:layoutId', async (req, res) => {
+  try {
+    if (!layoutManager) {
+      return res.status(500).json({ success: false, error: 'Layout Manager not initialized' });
+    }
+    
+    const layout = await layoutManager.updateLayout(req.params.layoutId, req.body);
+    res.json({ success: true, data: layout });
+  } catch (error) {
+    logger.error('Failed to update layout', { error: error.message });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.delete('/layouts/:layoutId', async (req, res) => {
+  try {
+    if (!layoutManager) {
+      return res.status(500).json({ success: false, error: 'Layout Manager not initialized' });
+    }
+    
+    await layoutManager.deleteLayout(req.params.layoutId);
+    res.json({ success: true, message: 'Layout deleted successfully' });
+  } catch (error) {
+    logger.error('Failed to delete layout', { error: error.message });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/layouts/:layoutId/activate', async (req, res) => {
+  try {
+    if (!layoutManager) {
+      return res.status(500).json({ success: false, error: 'Layout Manager not initialized' });
+    }
+    
+    const layout = await layoutManager.setActiveLayout(req.params.layoutId);
+    res.json({ success: true, data: layout });
+  } catch (error) {
+    logger.error('Failed to activate layout', { error: error.message });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/layouts/from-template/:templateId', async (req, res) => {
+  try {
+    if (!layoutManager) {
+      return res.status(500).json({ success: false, error: 'Layout Manager not initialized' });
+    }
+    
+    const layout = await layoutManager.createFromTemplate(req.params.templateId, req.body);
+    res.status(201).json({ success: true, data: layout });
+  } catch (error) {
+    logger.error('Failed to create layout from template', { error: error.message });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/layouts/templates', async (req, res) => {
+  try {
+    if (!layoutManager) {
+      return res.status(500).json({ success: false, error: 'Layout Manager not initialized' });
+    }
+    
+    const templates = layoutManager.getLayoutTemplates();
+    res.json({ success: true, data: templates });
+  } catch (error) {
+    logger.error('Failed to get layout templates', { error: error.message });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GUI Editor endpoints
+router.post('/editor/start/:layoutId', async (req, res) => {
+  try {
+    if (!guiEditor || !layoutManager) {
+      return res.status(500).json({ success: false, error: 'GUI Editor or Layout Manager not initialized' });
+    }
+    
+    const layout = guiEditor.startEditing(req.params.layoutId, layoutManager);
+    res.json({ success: true, data: layout });
+  } catch (error) {
+    logger.error('Failed to start editing', { error: error.message });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/editor/stop', async (req, res) => {
+  try {
+    if (!guiEditor) {
+      return res.status(500).json({ success: false, error: 'GUI Editor not initialized' });
+    }
+    
+    guiEditor.stopEditing();
+    res.json({ success: true, message: 'Editing stopped' });
+  } catch (error) {
+    logger.error('Failed to stop editing', { error: error.message });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/editor/state', async (req, res) => {
+  try {
+    if (!guiEditor) {
+      return res.status(500).json({ success: false, error: 'GUI Editor not initialized' });
+    }
+    
+    const state = guiEditor.getEditorState();
+    res.json({ success: true, data: state });
+  } catch (error) {
+    logger.error('Failed to get editor state', { error: error.message });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/editor/components', async (req, res) => {
+  try {
+    if (!guiEditor) {
+      return res.status(500).json({ success: false, error: 'GUI Editor not initialized' });
+    }
+    
+    const { componentType, position } = req.body;
+    const component = guiEditor.addComponent(componentType, position);
+    res.json({ success: true, data: component });
+  } catch (error) {
+    logger.error('Failed to add component', { error: error.message });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.delete('/editor/components/:componentId', async (req, res) => {
+  try {
+    if (!guiEditor) {
+      return res.status(500).json({ success: false, error: 'GUI Editor not initialized' });
+    }
+    
+    const component = guiEditor.removeComponent(req.params.componentId);
+    res.json({ success: true, data: component });
+  } catch (error) {
+    logger.error('Failed to remove component', { error: error.message });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.put('/editor/components/:componentId', async (req, res) => {
+  try {
+    if (!guiEditor) {
+      return res.status(500).json({ success: false, error: 'GUI Editor not initialized' });
+    }
+    
+    const component = guiEditor.updateComponent(req.params.componentId, req.body);
+    res.json({ success: true, data: component });
+  } catch (error) {
+    logger.error('Failed to update component', { error: error.message });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/editor/components/:componentId/move', async (req, res) => {
+  try {
+    if (!guiEditor) {
+      return res.status(500).json({ success: false, error: 'GUI Editor not initialized' });
+    }
+    
+    const component = guiEditor.moveComponent(req.params.componentId, req.body);
+    res.json({ success: true, data: component });
+  } catch (error) {
+    logger.error('Failed to move component', { error: error.message });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/editor/components/:componentId/select', async (req, res) => {
+  try {
+    if (!guiEditor) {
+      return res.status(500).json({ success: false, error: 'GUI Editor not initialized' });
+    }
+    
+    const componentId = guiEditor.selectComponent(req.params.componentId);
+    res.json({ success: true, data: { componentId } });
+  } catch (error) {
+    logger.error('Failed to select component', { error: error.message });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/editor/components/library', async (req, res) => {
+  try {
+    if (!guiEditor) {
+      return res.status(500).json({ success: false, error: 'GUI Editor not initialized' });
+    }
+    
+    const library = guiEditor.getComponentLibrary();
+    res.json({ success: true, data: library });
+  } catch (error) {
+    logger.error('Failed to get component library', { error: error.message });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/editor/save', async (req, res) => {
+  try {
+    if (!guiEditor) {
+      return res.status(500).json({ success: false, error: 'GUI Editor not initialized' });
+    }
+    
+    const layout = await guiEditor.saveLayout();
+    res.json({ success: true, data: layout });
+  } catch (error) {
+    logger.error('Failed to save layout', { error: error.message });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/editor/undo', async (req, res) => {
+  try {
+    if (!guiEditor) {
+      return res.status(500).json({ success: false, error: 'GUI Editor not initialized' });
+    }
+    
+    const layout = guiEditor.undo();
+    res.json({ success: true, data: layout });
+  } catch (error) {
+    logger.error('Failed to undo', { error: error.message });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/editor/redo', async (req, res) => {
+  try {
+    if (!guiEditor) {
+      return res.status(500).json({ success: false, error: 'GUI Editor not initialized' });
+    }
+    
+    const layout = guiEditor.redo();
+    res.json({ success: true, data: layout });
+  } catch (error) {
+    logger.error('Failed to redo', { error: error.message });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Connector integration endpoints
+router.get('/connectors/ui-config', async (req, res) => {
+  try {
+    if (!connectorRegistry) {
+      return res.status(500).json({ success: false, error: 'Connector Registry not initialized' });
+    }
+    
+    const connectors = connectorRegistry.getConnectors();
+    const uiConfigs = connectors.map(connector => ({
+      id: connector.id,
+      name: connector.name,
+      type: connector.type,
+      uiConfig: connector.getGuiConfig ? connector.getGuiConfig() : null,
+      capabilities: connector.getCapabilities ? connector.getCapabilities() : []
+    }));
+    
+    res.json({ success: true, data: uiConfigs });
+  } catch (error) {
+    logger.error('Failed to get connector UI configs', { error: error.message });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/connectors/:connectorId/ui-config', async (req, res) => {
+  try {
+    if (!connectorRegistry) {
+      return res.status(500).json({ success: false, error: 'Connector Registry not initialized' });
+    }
+    
+    const connector = connectorRegistry.getConnectorById(req.params.connectorId);
+    if (!connector) {
+      return res.status(404).json({ success: false, error: 'Connector not found' });
+    }
+    
+    const uiConfig = {
+      id: connector.id,
+      name: connector.name,
+      type: connector.type,
+      uiConfig: connector.getGuiConfig ? connector.getGuiConfig() : null,
+      capabilities: connector.getCapabilities ? connector.getCapabilities() : []
+    };
+    
+    res.json({ success: true, data: uiConfig });
+  } catch (error) {
+    logger.error('Failed to get connector UI config', { error: error.message });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Main web GUI index
+router.get('/web', (req, res) => {
+  if (!connectorRegistry) {
+    return res.status(500).send('Connector Registry not initialized');
+  }
+  // Find all connectors with a web interface
+  const connectors = connectorRegistry.getConnectors().filter(connector => {
+    return (
+      connector.type === 'web-gui' ||
+      connector.type === 'gui-designer' ||
+      connector.webInterface
+    );
+  });
+
+  // Build HTML
+  let html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Web GUIs</title>
+  <style>
+    body { font-family: sans-serif; background: #f8f9fa; margin: 0; padding: 2em; }
+    h1 { color: #333; }
+    ul { list-style: none; padding: 0; }
+    li { margin: 1em 0; }
+    a { color: #007bff; text-decoration: none; font-size: 1.2em; }
+    a:hover { text-decoration: underline; }
+    .desc { color: #666; font-size: 0.95em; }
+    .box { background: #fff; border-radius: 8px; box-shadow: 0 2px 8px #0001; padding: 1.5em; max-width: 500px; margin: 2em auto; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h1>Available Web GUIs</h1>
+    <ul>`;
+
+  if (connectors.length === 0) {
+    html += '<li>No web GUIs found.</li>';
+  } else {
+    connectors.forEach(connector => {
+      let url = '#';
+      if (connector.webInterface && connector.webInterface.route) {
+        url = connector.webInterface.route;
+      } else if (connector.type === 'web-gui') {
+        url = '/gui/web-gui';
+      } else if (connector.type === 'gui-designer') {
+        url = '/gui/designer';
+      }
+      html += `<li><a href="${url}" target="_blank">${connector.name || connector.id}</a><div class="desc">${connector.description || connector.type}</div></li>`;
+    });
+  }
+
+  html += `</ul>
+  </div>
+</body>
+</html>`;
+  res.send(html);
+});
+
+// Redirect /gui to /web for convenience
+router.get('/', (req, res) => {
+  res.redirect('/gui/web');
+});
+
+// Web GUI interface
+router.get('/web-gui', (req, res) => {
+  if (!connectorRegistry) {
+    return res.status(500).send('Connector Registry not initialized');
+  }
+  
+  const webGuiConnector = connectorRegistry.getConnector('web-gui');
+  if (!webGuiConnector) {
+    return res.status(404).send('Web GUI Connector not found');
+  }
+
+  // Get system status
+  const connectors = connectorRegistry.getConnectors();
+  const connectedCount = connectors.filter(c => c.status === 'connected').length;
+  const totalCount = connectors.length;
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Looking Glass Web GUI</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { 
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      color: #333;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .header {
+      background: rgba(255,255,255,0.95);
+      backdrop-filter: blur(10px);
+      border-radius: 15px;
+      padding: 30px;
+      margin-bottom: 30px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+    }
+    .header h1 {
+      color: #2d3748;
+      font-size: 2.5em;
+      margin-bottom: 10px;
+      text-align: center;
+    }
+    .header p {
+      color: #718096;
+      text-align: center;
+      font-size: 1.1em;
+    }
+    .dashboard {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 20px;
+      margin-bottom: 30px;
+    }
+    .card {
+      background: rgba(255,255,255,0.95);
+      backdrop-filter: blur(10px);
+      border-radius: 15px;
+      padding: 25px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+      transition: transform 0.3s ease;
+    }
+    .card:hover {
+      transform: translateY(-5px);
+    }
+    .card h3 {
+      color: #2d3748;
+      margin-bottom: 15px;
+      font-size: 1.3em;
+    }
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 15px;
+      margin-top: 20px;
+    }
+    .status-item {
+      background: #f7fafc;
+      padding: 15px;
+      border-radius: 10px;
+      text-align: center;
+    }
+    .status-item .number {
+      font-size: 2em;
+      font-weight: bold;
+      color: #4299e1;
+    }
+    .status-item .label {
+      color: #718096;
+      font-size: 0.9em;
+      margin-top: 5px;
+    }
+    .connector-list {
+      list-style: none;
+    }
+    .connector-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 0;
+      border-bottom: 1px solid #e2e8f0;
+    }
+    .connector-item:last-child {
+      border-bottom: none;
+    }
+    .connector-name {
+      font-weight: 500;
+    }
+    .connector-status {
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 0.8em;
+      font-weight: 500;
+    }
+    .status-connected {
+      background: #c6f6d5;
+      color: #22543d;
+    }
+    .status-disconnected {
+      background: #fed7d7;
+      color: #742a2a;
+    }
+    .quick-actions {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+      margin-top: 20px;
+    }
+    .action-btn {
+      background: linear-gradient(135deg, #4299e1, #3182ce);
+      color: white;
+      border: none;
+      padding: 15px 20px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 1em;
+      font-weight: 500;
+      transition: all 0.3s ease;
+      text-decoration: none;
+      display: inline-block;
+      text-align: center;
+    }
+    .action-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 5px 15px rgba(66, 153, 225, 0.4);
+    }
+    .footer {
+      text-align: center;
+      color: rgba(255,255,255,0.8);
+      margin-top: 40px;
+      font-size: 0.9em;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🔍 Looking Glass</h1>
+      <p>Web-based monitoring and control interface</p>
+    </div>
+
+    <div class="dashboard">
+      <div class="card">
+        <h3>📊 System Status</h3>
+        <div class="status-grid">
+          <div class="status-item">
+            <div class="number">${connectedCount}</div>
+            <div class="label">Connected</div>
+          </div>
+          <div class="status-item">
+            <div class="number">${totalCount}</div>
+            <div class="label">Total</div>
+          </div>
+          <div class="status-item">
+            <div class="number">${Math.round((connectedCount/totalCount)*100)}%</div>
+            <div class="label">Uptime</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>🔌 Active Connectors</h3>
+        <ul class="connector-list">
+          ${connectors.map(connector => `
+            <li class="connector-item">
+              <span class="connector-name">${connector.name || connector.id}</span>
+              <span class="connector-status status-${connector.status}">${connector.status}</span>
+            </li>
+          `).join('')}
+        </ul>
+      </div>
+
+      <div class="card">
+        <h3>⚡ Quick Actions</h3>
+        <div class="quick-actions">
+          <a href="/api/connectors" class="action-btn" target="_blank">API Status</a>
+          <a href="/api/analytics" class="action-btn" target="_blank">Analytics</a>
+          <a href="/health" class="action-btn" target="_blank">Health Check</a>
+          <a href="/gui/web" class="action-btn">All GUIs</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <p>Looking Glass Platform - Real-time monitoring and control</p>
+    </div>
+  </div>
+
+  <script>
+    // Auto-refresh every 30 seconds
+    setTimeout(() => {
+      window.location.reload();
+    }, 30000);
+  </script>
+</body>
+</html>`;
+
+  res.send(html);
+});
+
+// GUI Designer interface
+router.get('/designer', (req, res) => {
+  if (!connectorRegistry) {
+    return res.status(500).send('Connector Registry not initialized');
+  }
+  
+  const guiDesignerConnector = connectorRegistry.getConnector('gui-designer');
+  if (!guiDesignerConnector) {
+    return res.status(404).send('GUI Designer Connector not found');
+  }
+
+  // Get layouts
+  const layouts = guiDesignerConnector.listLayouts();
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GUI Designer - Looking Glass</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { 
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f8f9fa; 
+      padding: 2em; 
+    }
+    .container { max-width: 1200px; margin: 0 auto; }
+    h1 { color: #333; margin-bottom: 1em; }
+    .layout-grid { 
+      display: grid; 
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); 
+      gap: 1em; 
+      margin-top: 1em; 
+    }
+    .layout-card { 
+      background: white; 
+      padding: 1.5em; 
+      border-radius: 8px; 
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
+    }
+    .layout-name { font-weight: bold; margin-bottom: 0.5em; }
+    .layout-actions { margin-top: 1em; }
+    .btn { 
+      padding: 0.5em 1em; 
+      border: none; 
+      border-radius: 4px; 
+      cursor: pointer; 
+      text-decoration: none; 
+      display: inline-block; 
+      margin-right: 0.5em; 
+    }
+    .btn-primary { background: #007bff; color: white; }
+    .btn-danger { background: #dc3545; color: white; }
+    .btn-secondary { background: #6c757d; color: white; }
+    .empty-state { text-align: center; color: #666; padding: 2em; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🎨 GUI Designer</h1>
+    <p>Manage custom GUI layouts and designs.</p>
+    
+    <div class="layout-grid">
+      ${layouts.length > 0 ? layouts.map(layout => `
+        <div class="layout-card">
+          <div class="layout-name">${layout}</div>
+          <div class="layout-actions">
+            <a href="/gui/designer/edit/${layout}" class="btn btn-primary">Edit</a>
+            <button onclick="deleteLayout('${layout}')" class="btn btn-danger">Delete</button>
+          </div>
+        </div>
+      `).join('') : `
+        <div class="empty-state">
+          <h3>No layouts found</h3>
+          <p>Create your first layout to get started.</p>
+          <a href="/gui/designer/new" class="btn btn-primary">Create Layout</a>
+        </div>
+      `}
+    </div>
+  </div>
+  
+  <script>
+    async function deleteLayout(id) {
+      if (confirm('Are you sure you want to delete this layout?')) {
+        try {
+          const response = await fetch('/api/layouts/' + id, { method: 'DELETE' });
+          if (response.ok) {
+            location.reload();
+          } else {
+            alert('Failed to delete layout');
+          }
+        } catch (error) {
+          alert('Error deleting layout: ' + error.message);
+        }
+      }
+    }
+  </script>
+</body>
+</html>`;
+
+  res.send(html);
+});
+
+// Configuration management interface
+router.get('/config', (req, res) => {
+  if (!connectorRegistry) {
+    return res.status(500).send('Connector Registry not initialized');
+  }
+
+  // Get current connectors
+  const connectors = connectorRegistry.getConnectors();
+  
+  // Get available connector types
+  const connectorTypes = Array.from(connectorRegistry.getTypes()).map(type => ({
+    type: type.type,
+    name: type.metadata.name,
+    description: type.metadata.description
+  }));
+
+  // Check if this is first load (no connectors)
+  const isFirstLoad = connectors.length === 0;
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Configuration - Looking Glass</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { 
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f8f9fa; 
+      padding: 2em; 
+    }
+    .container { max-width: 1400px; margin: 0 auto; }
+    h1 { color: #333; margin-bottom: 1em; }
+    .tabs { 
+      display: flex; 
+      border-bottom: 2px solid #dee2e6; 
+      margin-bottom: 2em; 
+    }
+    .tab { 
+      padding: 1em 2em; 
+      cursor: pointer; 
+      border-bottom: 2px solid transparent; 
+      transition: all 0.3s; 
+    }
+    .tab.active { 
+      border-bottom-color: #007bff; 
+      color: #007bff; 
+      font-weight: bold; 
+    }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+    .connector-grid { 
+      display: grid; 
+      grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); 
+      gap: 1em; 
+      margin-top: 1em; 
+    }
+    .connector-card { 
+      background: white; 
+      padding: 1.5em; 
+      border-radius: 8px; 
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
+      border-left: 4px solid #28a745; 
+    }
+    .connector-card.disconnected { border-left-color: #dc3545; }
+    .connector-card.connecting { border-left-color: #ffc107; }
+    .connector-header { 
+      display: flex; 
+      justify-content: space-between; 
+      align-items: center; 
+      margin-bottom: 1em; 
+    }
+    .connector-name { font-weight: bold; font-size: 1.1em; }
+    .connector-status { 
+      padding: 0.25em 0.5em; 
+      border-radius: 4px; 
+      font-size: 0.8em; 
+      font-weight: bold; 
+    }
+    .status-connected { background: #d4edda; color: #155724; }
+    .status-disconnected { background: #f8d7da; color: #721c24; }
+    .status-connecting { background: #fff3cd; color: #856404; }
+    .connector-description { color: #666; margin-bottom: 1em; }
+    .connector-actions { margin-top: 1em; }
+    .btn { 
+      padding: 0.5em 1em; 
+      border: none; 
+      border-radius: 4px; 
+      cursor: pointer; 
+      text-decoration: none; 
+      display: inline-block; 
+      margin-right: 0.5em; 
+      font-size: 0.9em; 
+    }
+    .btn-primary { background: #007bff; color: white; }
+    .btn-success { background: #28a745; color: white; }
+    .btn-danger { background: #dc3545; color: white; }
+    .btn-warning { background: #ffc107; color: #212529; }
+    .btn-secondary { background: #6c757d; color: white; }
+    .form-group { margin-bottom: 1em; }
+    .form-label { display: block; margin-bottom: 0.5em; font-weight: bold; }
+    .form-input { 
+      width: 100%; 
+      padding: 0.5em; 
+      border: 1px solid #ddd; 
+      border-radius: 4px; 
+      font-size: 1em; 
+    }
+    .form-textarea { 
+      width: 100%; 
+      padding: 0.5em; 
+      border: 1px solid #ddd; 
+      border-radius: 4px; 
+      font-size: 1em; 
+      min-height: 100px; 
+      font-family: monospace; 
+    }
+    .modal { 
+      display: none; 
+      position: fixed; 
+      top: 0; 
+      left: 0; 
+      width: 100%; 
+      height: 100%; 
+      background: rgba(0,0,0,0.5); 
+      z-index: 1000; 
+    }
+    .modal-content { 
+      background: white; 
+      margin: 5% auto; 
+      padding: 2em; 
+      border-radius: 8px; 
+      max-width: 600px; 
+      max-height: 80vh; 
+      overflow-y: auto; 
+    }
+    .modal-header { 
+      display: flex; 
+      justify-content: space-between; 
+      align-items: center; 
+      margin-bottom: 1em; 
+      padding-bottom: 1em; 
+      border-bottom: 1px solid #eee; 
+    }
+    .close { 
+      font-size: 1.5em; 
+      cursor: pointer; 
+      color: #666; 
+    }
+    .alert { 
+      padding: 1em; 
+      border-radius: 4px; 
+      margin-bottom: 1em; 
+    }
+    .alert-success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+    .alert-error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+    .alert-warning { background: #fff3cd; color: #856404; border: 1px solid #ffeaa7; }
+    .server-actions { 
+      background: white; 
+      padding: 1.5em; 
+      border-radius: 8px; 
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
+      margin-top: 2em; 
+    }
+    .server-actions h3 { margin-bottom: 1em; }
+    .action-buttons { display: flex; gap: 1em; }
+    .welcome-message {
+      background: #e3f2fd;
+      border: 1px solid #2196f3;
+      border-radius: 8px;
+      padding: 1.5em;
+      margin-bottom: 2em;
+    }
+    .quick-setup {
+      background: white;
+      border-radius: 8px;
+      padding: 1.5em;
+      margin-bottom: 2em;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .quick-setup h3 { margin-bottom: 1em; color: #333; }
+    .setup-options {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 1em;
+      margin-top: 1em;
+    }
+    .setup-option {
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 1em;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+    .setup-option:hover {
+      border-color: #007bff;
+      background: #f8f9fa;
+    }
+    .setup-option.selected {
+      border-color: #007bff;
+      background: #e3f2fd;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>⚙️ Configuration</h1>
+    <p>Manage connectors and system configuration.</p>
+    
+    ${isFirstLoad ? `
+    <div class="welcome-message">
+      <h2>🎉 Welcome to Looking Glass!</h2>
+      <p>This appears to be your first time setting up the system. Let's get you started with some common configurations.</p>
+    </div>
+    
+    <div class="quick-setup">
+      <h3>🚀 Quick Setup</h3>
+      <p>Choose a preset configuration to get started quickly:</p>
+      <div class="setup-options">
+        <div class="setup-option" onclick="loadPreset('unifi-protect')">
+          <h4>📹 UniFi Protect</h4>
+          <p>Connect to UniFi Protect cameras for motion detection and recording</p>
+        </div>
+        <div class="setup-option" onclick="loadPreset('telegram')">
+          <h4>💬 Telegram Bot</h4>
+          <p>Set up notifications via Telegram bot</p>
+        </div>
+        <div class="setup-option" onclick="loadPreset('mqtt')">
+          <h4>📡 MQTT</h4>
+          <p>Connect to MQTT broker for IoT integration</p>
+        </div>
+        <div class="setup-option" onclick="loadPreset('adsb')">
+          <h4>✈️ ADSB</h4>
+          <p>Track aircraft with ADSB receiver</p>
+        </div>
+      </div>
+    </div>
+    ` : ''}
+    
+    <div class="tabs">
+      <div class="tab active" onclick="showTab('connectors')">Connectors</div>
+      <div class="tab" onclick="showTab('add')">Add Connector</div>
+      <div class="tab" onclick="showTab('server')">Server</div>
+    </div>
+    
+    <div id="connectors" class="tab-content active">
+      <h2>Active Connectors</h2>
+      ${connectors.length === 0 ? `
+        <div class="alert alert-warning">
+          <strong>No connectors configured.</strong> Add your first connector to get started!
+        </div>
+      ` : `
+        <div class="connector-grid">
+          ${connectors.map(connector => `
+            <div class="connector-card ${connector.status}">
+              <div class="connector-header">
+                <div class="connector-name">${connector.name || connector.id}</div>
+                <div class="connector-status status-${connector.status}">${connector.status}</div>
+              </div>
+              <div class="connector-description">${connector.description || connector.type}</div>
+              <div class="connector-actions">
+                <button onclick="editConnector('${connector.id}')" class="btn btn-primary">Edit</button>
+                <button onclick="toggleConnector('${connector.id}')" class="btn btn-${connector.status === 'connected' ? 'danger' : 'success'}">
+                  ${connector.status === 'connected' ? 'Disconnect' : 'Connect'}
+                </button>
+                <button onclick="deleteConnector('${connector.id}')" class="btn btn-danger">Delete</button>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      `}
+    </div>
+    
+    <div id="add" class="tab-content">
+      <h2>Add New Connector</h2>
+      <form id="addConnectorForm">
+        <div class="form-group">
+          <label class="form-label">Connector Type</label>
+          <select id="connectorType" class="form-input" onchange="updateConfigTemplate()">
+            <option value="">Select a connector type...</option>
+            ${connectorTypes.map(type => `
+              <option value="${type.type}">${type.name} - ${type.description}</option>
+            `).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Connector ID</label>
+          <input type="text" id="connectorId" class="form-input" placeholder="e.g., telegram-bot" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Name</label>
+          <input type="text" id="connectorName" class="form-input" placeholder="e.g., Telegram Bot" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Description</label>
+          <input type="text" id="connectorDescription" class="form-input" placeholder="e.g., Telegram bot for notifications">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Configuration (JSON)</label>
+          <textarea id="connectorConfig" class="form-textarea" placeholder="{}"></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary">Add Connector</button>
+      </form>
+    </div>
+    
+    <div id="server" class="tab-content">
+      <div class="server-actions">
+        <h3>Server Management</h3>
+        <div class="action-buttons">
+          <button onclick="saveConfiguration()" class="btn btn-success">💾 Save Configuration</button>
+          <button onclick="restartServer()" class="btn btn-warning">🔄 Restart Server</button>
+          <button onclick="reloadConnectors()" class="btn btn-secondary">🔄 Reload Connectors</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Edit Connector Modal -->
+  <div id="editModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Edit Connector</h3>
+        <span class="close" onclick="closeModal()">&times;</span>
+      </div>
+      <div id="editForm"></div>
+    </div>
+  </div>
+  
+  <script>
+    // Define showTab function first
+    function showTab(tabName) {
+      // Hide all tabs
+      document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+      document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+      
+      // Show selected tab
+      document.getElementById(tabName).classList.add('active');
+      event.target.classList.add('active');
+    }
+    
+    function updateConfigTemplate() {
+      const type = document.getElementById('connectorType').value;
+      const configTextarea = document.getElementById('connectorConfig');
+      
+      const templates = {
+        'telegram': '{\n  "token": "YOUR_BOT_TOKEN_HERE"\n}',
+        'mqtt': '{\n  "host": "localhost",\n  "port": 1883,\n  "username": "",\n  "password": ""\n}',
+        'unifi-protect': '{\n  "host": "10.0.0.1",\n  "port": 443,\n  "apiKey": "YOUR_API_KEY",\n  "verifySSL": false\n}',
+        'adsb': '{\n  "url": "http://localhost:8080/data/aircraft.json",\n  "pollInterval": 5000\n}'
+      };
+      
+      configTextarea.value = templates[type] || '{}';
+    }
+    
+    async function saveConfiguration() {
+      try {
+        const response = await fetch('/api/config/save', { method: 'POST' });
+        const result = await response.json();
+        
+        if (result.success) {
+          showAlert('Configuration saved successfully!', 'success');
+        } else {
+          showAlert('Failed to save configuration: ' + result.error, 'error');
+        }
+      } catch (error) {
+        showAlert('Error saving configuration: ' + error.message, 'error');
+      }
+    }
+    
+    async function restartServer() {
+      if (confirm('Are you sure you want to restart the server? This will disconnect all clients.')) {
+        try {
+          const response = await fetch('/api/server/restart', { method: 'POST' });
+          const result = await response.json();
+          
+          if (result.success) {
+            showAlert('Server restart initiated. Please wait...', 'warning');
+            setTimeout(() => {
+              window.location.reload();
+            }, 3000);
+          } else {
+            showAlert('Failed to restart server: ' + result.error, 'error');
+          }
+        } catch (error) {
+          showAlert('Error restarting server: ' + error.message, 'error');
+        }
+      }
+    }
+    
+    async function reloadConnectors() {
+      try {
+        const response = await fetch('/api/connectors/reload', { method: 'POST' });
+        const result = await response.json();
+        
+        if (result.success) {
+          showAlert('Connectors reloaded successfully!', 'success');
+          setTimeout(() => window.location.reload(), 1000);
+        } else {
+          showAlert('Failed to reload connectors: ' + result.error, 'error');
+        }
+      } catch (error) {
+        showAlert('Error reloading connectors: ' + error.message, 'error');
+      }
+    }
+    
+    async function toggleConnector(id) {
+      try {
+        const response = await fetch('/api/connectors/' + id + '/toggle', { method: 'POST' });
+        const result = await response.json();
+        
+        if (result.success) {
+          setTimeout(() => window.location.reload(), 1000);
+        } else {
+          showAlert('Failed to toggle connector: ' + result.error, 'error');
+        }
+      } catch (error) {
+        showAlert('Error toggling connector: ' + error.message, 'error');
+      }
+    }
+    
+    async function deleteConnector(id) {
+      if (confirm('Are you sure you want to delete this connector?')) {
+        try {
+          const response = await fetch('/api/connectors/' + id, { method: 'DELETE' });
+          const result = await response.json();
+          
+          if (result.success) {
+            showAlert('Connector deleted successfully!', 'success');
+            setTimeout(() => window.location.reload(), 1000);
+          } else {
+            showAlert('Failed to delete connector: ' + result.error, 'error');
+          }
+        } catch (error) {
+          showAlert('Error deleting connector: ' + error.message, 'error');
+        }
+      }
+    }
+    
+    function editConnector(id) {
+      // TODO: Implement edit modal
+      alert('Edit functionality coming soon!');
+    }
+    
+    function closeModal() {
+      document.getElementById('editModal').style.display = 'none';
+    }
+    
+    function showAlert(message, type) {
+      const alert = document.createElement('div');
+      alert.className = 'alert alert-' + type;
+      alert.textContent = message;
+      
+      const container = document.querySelector('.container');
+      container.insertBefore(alert, container.firstChild);
+      
+      setTimeout(() => alert.remove(), 5000);
+    }
+    
+    // Handle form submission
+    document.addEventListener('DOMContentLoaded', function() {
+      const form = document.getElementById('addConnectorForm');
+      if (form) {
+        form.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          
+          const formData = {
+            id: document.getElementById('connectorId').value,
+            type: document.getElementById('connectorType').value,
+            name: document.getElementById('connectorName').value,
+            description: document.getElementById('connectorDescription').value,
+            config: JSON.parse(document.getElementById('connectorConfig').value || '{}')
+          };
+          
+          try {
+            const response = await fetch('/api/connectors', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(formData)
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+              showAlert('Connector added successfully!', 'success');
+              form.reset();
+              document.getElementById('connectorConfig').value = '{}';
+            } else {
+              showAlert('Failed to add connector: ' + result.error, 'error');
+            }
+          } catch (error) {
+            showAlert('Error adding connector: ' + error.message, 'error');
+          }
+        });
+      }
+    });
+  </script>
+</body>
+</html>`;
+
+  res.send(html);
+});
+
+/**
+ * POST /api/config/defaults
+ * Create default configuration if none exists
+ */
+router.post('/defaults', async (req, res) => {
+  try {
+    if (!connectorRegistry) {
+      return res.status(500).json({
+        success: false,
+        error: 'Connector Registry not initialized'
+      });
+    }
+
+    const connectors = connectorRegistry.getConnectors();
+    
+    // Only create defaults if no connectors exist
+    if (connectors.length === 0) {
+      const defaultConnectors = [
+        {
+          id: 'unifi-protect-main',
+          type: 'unifi-protect',
+          name: 'UniFi Protect',
+          description: 'Main UniFi Protect system',
+          config: {
+            host: '10.0.0.1',
+            port: 443,
+            apiKey: 'YOUR_API_KEY_HERE',
+            verifySSL: false
+          }
+        },
+        {
+          id: 'telegram-bot',
+          type: 'telegram',
+          name: 'Telegram Bot',
+          description: 'Telegram bot for notifications',
+          config: {
+            token: 'YOUR_BOT_TOKEN_HERE'
+          }
+        }
+      ];
+
+      const results = [];
+      for (const connector of defaultConnectors) {
+        try {
+          const result = await connectorRegistry.createConnector(connector);
+          results.push({ ...connector, success: true, result });
+        } catch (error) {
+          results.push({ ...connector, success: false, error: error.message });
+        }
+      }
+
+      res.json({
+        success: true,
+        message: 'Default configuration created',
+        results
+      });
+    } else {
+      res.json({
+        success: true,
+        message: 'Configuration already exists, no defaults needed',
+        connectors: connectors.length
+      });
+    }
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * GET /api/config/status
+ * Get configuration status and health
+ */
+router.get('/status', async (req, res) => {
+  try {
+    if (!connectorRegistry) {
+      return res.status(500).json({
+        success: false,
+        error: 'Connector Registry not initialized'
+      });
+    }
+
+    const connectors = connectorRegistry.getConnectors();
+    const isFirstLoad = connectors.length === 0;
+    
+    const status = {
+      isFirstLoad,
+      totalConnectors: connectors.length,
+      connectedConnectors: connectors.filter(c => c.status === 'connected').length,
+      connectorTypes: Array.from(new Set(connectors.map(c => c.type))),
+      health: {
+        registry: !!connectorRegistry,
+        database: true, // TODO: Add database health check
+        services: true  // TODO: Add service health checks
+      }
+    };
+
+    res.json({
+      success: true,
+      status
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+module.exports = {
+  router,
+  injectServices
+}; 

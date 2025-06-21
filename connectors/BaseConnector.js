@@ -391,6 +391,20 @@ class BaseConnector extends EventEmitter {
       capabilities: []
     };
   }
+  
+  /**
+   * Set entity manager reference
+   */
+  setEntityManager(entityManager) {
+    this.entityManager = entityManager;
+  }
+
+  /**
+   * Set event bus reference
+   */
+  setEventBus(eventBus) {
+    this.eventBus = eventBus;
+  }
 }
 
 module.exports = BaseConnector; 

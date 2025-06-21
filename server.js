@@ -32,6 +32,16 @@ const ZoneManager = require('./services/zoneManager');
 const AnalyticsEngine = require('./services/analyticsEngine');
 const DashboardService = require('./services/dashboardService');
 
+// Import layout and GUI services
+const LayoutManager = require('./services/layoutManager');
+const GuiEditor = require('./services/guiEditor');
+
+// Import speed calculation system
+const SpeedCalculationService = require('./services/speedCalculationService');
+
+// Import airport vector service
+const AirportVectorService = require('./services/airportVectorService');
+
 // Import default rules
 const defaultRules = require('./config/defaultRules');
 
@@ -41,15 +51,31 @@ const UnifiProtectConnector = require('./connectors/types/UnifiProtectConnector'
 const MqttConnector = require('./connectors/types/MqttConnector');
 const WebGuiConnector = require('./connectors/types/WebGuiConnector');
 const MapConnector = require('./connectors/types/MapConnector');
+const SpeedCalculationConnector = require('./connectors/types/SpeedCalculationConnector');
+const RadarConnector = require('./connectors/types/RadarConnector');
 
 // Import analytics routes
 const analyticsRouter = require('./routes/analytics');
+
+// Import speed calculation routes
+const { router: speedRouter, SpeedRoutes } = require('./routes/speed');
+
+// Import radar routes
+const { router: radarRouter, injectServices: injectRadarServices } = require('./routes/radar');
 
 // Import map integration service
 const MapIntegrationService = require('./services/mapIntegrationService');
 
 // Import map routes
 const mapRouter = require('./routes/map');
+
+// Import GUI routes
+const { router: guiRouter, injectServices: injectGuiServices } = require('./routes/gui');
+
+// Import new health monitoring and security services
+const HealthMonitor = require('./services/healthMonitor');
+const SecurityMiddleware = require('./middleware/security');
+const { router: healthRouter, HealthRoutes } = require('./routes/health');
 
 // Initialize logger
 const logger = winston.createLogger({
@@ -88,8 +114,26 @@ let zoneManager;
 let analyticsEngine;
 let dashboardService;
 
+// Layout and GUI services
+let layoutManager;
+let guiEditor;
+
+// Speed calculation system
+let speedCalculationService;
+let speedCalculationConnector;
+
+// Radar system
+let radarConnector;
+
+// Airport vector service
+let airportVectorService;
+
 // Map integration service
 let mapIntegrationService;
+
+// New health monitoring and security services
+let healthMonitor;
+let securityMiddleware;
 
 // Main application setup
 const app = express();
@@ -101,29 +145,21 @@ const io = new Server(server, {
   }
 });
 
+// Initialize security middleware
+securityMiddleware = new SecurityMiddleware(config.security);
+
 // Middleware
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
-      scriptSrcAttr: ["'unsafe-inline'"],
-      styleSrc: ["'self'", "'unsafe-inline'", "https://cdnjs.cloudflare.com"],
-      imgSrc: ["'self'", "data:", "https:"],
-      connectSrc: ["'self'", "ws:", "wss:"],
-      fontSrc: ["'self'", "https:", "data:", "https://cdnjs.cloudflare.com"],
-      objectSrc: ["'none'"],
-      mediaSrc: ["'self'"],
-      frameSrc: ["'none'"]
-    }
-  }
-}));
+app.use(securityMiddleware.getHelmetConfig());
 app.use(compression());
-app.use(cors(config.server.cors));
+app.use(cors(securityMiddleware.getCorsConfig()));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(morgan('combined', { stream: { write: message => logger.info(message.trim()) } }));
+
+// Add security middleware
+app.use(securityMiddleware.getRateLimiter());
+app.use(securityMiddleware.requestLogger());
 
 // Broadcast function for real-time updates
 function broadcastToClients(event, data) {
@@ -308,6 +344,42 @@ function setupCameraEvents() {
     }
   });
 
+  // Handle line crossing events specifically for speed calculation
+  connectorRegistry.on('smartDetectLine', (data) => {
+    logger.info(`Line crossing detected on camera: ${data.cameraId}`);
+    broadcastToClients('lineCrossingDetected', data);
+    
+    // Process through analytics engine
+    if (analyticsEngine) {
+      analyticsEngine.processEvent({
+        cameraId: data.cameraId,
+        eventType: 'lineCrossing',
+        data: data.event,
+        timestamp: data.timestamp
+      });
+    }
+    
+    // Route to speed calculation system
+    if (speedCalculationService) {
+      speedCalculationService.processLineCrossingEvent({
+        cameraId: data.cameraId,
+        smartContext: data.smartContext,
+        timestamp: data.timestamp,
+        data: data.event
+      });
+    }
+    
+    // Route to rule engine for MQTT publishing
+    if (ruleEngine) {
+      ruleEngine.processEvent({
+        type: 'lineCrossing',
+        source: 'unifi-protect-websocket',
+        timestamp: new Date().toISOString(),
+        data: data
+      });
+    }
+  });
+
   connectorRegistry.on('recording:event', (data) => {
     logger.info(`Recording event on camera: ${data.cameraId}`);
     broadcastToClients('recordingEvent', data);
@@ -459,7 +531,13 @@ injectServices({
   get dashboardService() { return dashboardService; },
   get ruleEngine() { return ruleEngine; },
   get flowOrchestrator() { return flowOrchestrator; },
-  get mapIntegrationService() { return mapIntegrationService; }
+  get mapIntegrationService() { return mapIntegrationService; },
+  get layoutManager() { return layoutManager; },
+  get guiEditor() { return guiEditor; },
+  get speedCalculationService() { return speedCalculationService; },
+  get speedCalculationConnector() { return speedCalculationConnector; },
+  get radarConnector() { return radarConnector; },
+  get airportVectorService() { return airportVectorService; }
 });
 
 // Connector event handling
@@ -634,8 +712,22 @@ async function startServer() {
     analyticsEngine = new AnalyticsEngine(config.analytics || {}, logger);
     dashboardService = new DashboardService(config.dashboard || {}, logger);
 
+    // Initialize speed calculation system
+    speedCalculationService = new SpeedCalculationService(config.speedCalculation || {}, logger);
+
+    // Initialize airport vector service
+    airportVectorService = new AirportVectorService(config.airportVector || {}, logger);
+
+    // Initialize layout and GUI services
+    layoutManager = new LayoutManager(config.layouts || {}, logger);
+    guiEditor = new GuiEditor(config.guiEditor || {}, logger);
+
     // Initialize map integration service
     mapIntegrationService = new MapIntegrationService(config.mapIntegration || {}, logger);
+
+    // Initialize health monitor
+    healthMonitor = new HealthMonitor(config.health || {}, logger);
+    healthMonitor.start();
 
     // Initialize connector registry
     connectorRegistry = new ConnectorRegistry(logger);
@@ -645,12 +737,14 @@ async function startServer() {
     connectorRegistry.registerType('mqtt', MqttConnector);
     connectorRegistry.registerType('web-gui', WebGuiConnector);
     connectorRegistry.registerType('map', MapConnector);
+    connectorRegistry.registerType('speed-calculation', SpeedCalculationConnector);
+    connectorRegistry.registerType('radar', RadarConnector);
 
     // Auto-discover and register connector types
     await connectorRegistry.autoDiscoverTypes();
 
     // Initialize the registry to load connectors from config
-    connectorRegistry.initialize();
+    await connectorRegistry.initialize();
 
     // Auto-register Web GUI and Map connectors
     await autoRegisterGuiAndMapConnectors();
@@ -659,6 +753,10 @@ async function startServer() {
     connectorRegistry.getConnectors().forEach(connector => {
       if (connector.setEntityManager) {
         connector.setEntityManager(entityManager);
+      }
+      // Set EventBus reference for connectors that support it
+      if (connector.setEventBus && eventBus) {
+        connector.setEventBus(eventBus);
       }
     });
     
@@ -706,6 +804,35 @@ async function startServer() {
       logger.info('Flow system initialized');
     }
 
+    // Initialize speed calculation connector if not already registered
+    const existingSpeedConnector = connectorRegistry.getConnector('speed-calculation-main');
+    if (!existingSpeedConnector) {
+      speedCalculationConnector = new SpeedCalculationConnector({
+        id: 'speed-calculation-main',
+        name: 'Speed Calculation System',
+        description: 'ANPR-based speed calculation between detection points',
+        logger: logger,
+        speedService: config.speedCalculation || {}
+      });
+      
+      // Register the connector
+      connectorRegistry.registerConnector(speedCalculationConnector);
+      logger.info('Speed calculation connector registered');
+    } else {
+      speedCalculationConnector = existingSpeedConnector;
+    }
+
+    // Initialize radar connector
+    const adsbConnector = connectorRegistry.getConnector('adsb-main');
+    if (adsbConnector) {
+      radarConnector = new RadarConnector({
+        id: 'radar-main',
+        name: 'Main Radar Display',
+        description: 'Unified radar view'
+      }, adsbConnector, airportVectorService);
+      connectorRegistry.registerConnector(radarConnector);
+    }
+
     // Setup event listeners
     setupConnectorEvents();
     setupEntityEvents();
@@ -732,6 +859,9 @@ async function startServer() {
       entityManager,
       eventProcessor
     });
+    
+    // Initialize layout manager
+    await layoutManager.initialize();
     
     // Initialize flow system
     if (flowOrchestrator) {
@@ -774,7 +904,41 @@ async function startServer() {
       dashboardService,
       ruleEngine,
       flowOrchestrator,
-      mapIntegrationService
+      mapIntegrationService,
+      layoutManager,
+      guiEditor,
+      speedCalculationService,
+      speedCalculationConnector,
+      radarConnector
+    });
+    
+    // Set up GUI routes
+    injectGuiServices({
+      layoutManager,
+      guiEditor,
+      connectorRegistry
+    });
+
+    // Set up radar routes
+    injectRadarServices({
+      radarConnector,
+      adsbConnector: connectorRegistry.getConnector('adsb-main'),
+      connectorRegistry,
+      airportVectorService
+    });
+
+    // Initialize speed calculation routes
+    new SpeedRoutes({
+      speedCalculationConnector,
+      mapConnector: connectorRegistry.getConnector('main-map'),
+      unifiConnector: connectorRegistry.getConnector('unifi-protect-main')
+    });
+
+    // Initialize health routes
+    new HealthRoutes({
+      healthMonitor,
+      databaseService: null, // Will be added when database service is enhanced
+      connectorRegistry
     });
     
     // Make services available to API routes via app.locals
@@ -788,6 +952,13 @@ async function startServer() {
     app.locals.unifiAPI = unifiAPI;
     app.locals.mqttBroker = mqttBroker;
     app.locals.mapIntegrationService = mapIntegrationService;
+    app.locals.healthMonitor = healthMonitor;
+    app.locals.layoutManager = layoutManager;
+    app.locals.guiEditor = guiEditor;
+    app.locals.speedCalculationService = speedCalculationService;
+    app.locals.speedCalculationConnector = speedCalculationConnector;
+    app.locals.radarConnector = radarConnector;
+    app.locals.airportVectorService = airportVectorService;
     
     // Flow system services
     if (config.flow.enabled) {
@@ -797,17 +968,8 @@ async function startServer() {
       app.locals.actionFramework = actionFramework;
     }
     
-    // Root health check endpoint
-    app.get('/health', (req, res) => {
-      res.json({
-        status: 'OK',
-        service: 'Babelfish Looking Glass',
-        timestamp: new Date().toISOString(),
-        version: '1.0.0',
-        uptime: process.uptime(),
-        environment: config.server.environment
-      });
-    });
+    // Mount health routes
+    app.use('/health', healthRouter);
     
     // Mount API routes
     app.use('/api', apiRouter);
@@ -815,19 +977,34 @@ async function startServer() {
     // Mount analytics routes
     app.use('/api/analytics', analyticsRouter);
     
+    // Mount speed calculation routes
+    app.use('/api', speedRouter);
+    
+    // Mount radar routes
+    app.use('/radar', radarRouter);
+    
     // Mount map routes
     app.use('/api/map', mapRouter);
+    
+    // Mount GUI routes
+    app.use('/gui', guiRouter);
+    
+    // Add error handling middleware
+    app.use(securityMiddleware.errorHandler());
     
     // Start server
     server.listen(config.server.port, config.server.host, () => {
       logger.info(`🚀 Babelfish Looking Glass server running on http://${config.server.host}:${config.server.port}`);
       logger.info(`📡 WebSocket available at ws://${config.server.host}:${config.server.port}`);
       logger.info(`🔍 Health check: http://${config.server.host}:${config.server.port}/health`);
+      logger.info(`📊 Metrics: http://${config.server.host}:${config.server.port}/health/metrics`);
       logger.info(`🌐 Web UI: http://${config.server.host}:${config.server.port}`);
       logger.info(`🔧 Environment: ${config.server.environment}`);
       logger.info(`🔌 Connector API: http://${config.server.host}:${config.server.port}/api/connectors`);
       logger.info(`📊 Analytics API: http://${config.server.host}:${config.server.port}/api/analytics`);
       logger.info(`📈 Dashboard API: http://${config.server.host}:${config.server.port}/api/analytics/dashboard`);
+      logger.info(`🚗 Speed Calculation API: http://${config.server.host}:${config.server.port}/api/speed`);
+      logger.info(`🛩️ Radar API: http://${config.server.host}:${config.server.port}/radar`);
       
       if (mqttBroker) {
         logger.info(`📨 MQTT broker connected to ${config.mqtt.broker.host}:${config.mqtt.broker.port}`);

@@ -70,23 +70,97 @@ const config = {
     maxFiles: parseInt(process.env.LOG_MAX_FILES) || 5
   },
 
+  // Dashboard Configuration
+  dashboard: {
+    enabled: process.env.DASHBOARD_ENABLED !== 'false',
+    refreshInterval: parseInt(process.env.DASHBOARD_REFRESH_INTERVAL) || 5000,
+    maxEvents: parseInt(process.env.DASHBOARD_MAX_EVENTS) || 100,
+    maxAlerts: parseInt(process.env.DASHBOARD_MAX_ALERTS) || 50,
+    retentionHours: parseInt(process.env.DASHBOARD_RETENTION_HOURS) || 24,
+    realTimeUpdates: {
+      enabled: process.env.DASHBOARD_REALTIME_ENABLED !== 'false',
+      maxSubscribers: parseInt(process.env.DASHBOARD_MAX_SUBSCRIBERS) || 100
+    },
+    speedAlerts: {
+      enabled: process.env.SPEED_ALERTS_ENABLED !== 'false',
+      threshold: parseInt(process.env.SPEED_ALERT_THRESHOLD) || 30,
+      cooldownMinutes: parseInt(process.env.SPEED_ALERT_COOLDOWN) || 5
+    }
+  },
+
+  // Health Monitoring Configuration
+  health: {
+    enabled: process.env.HEALTH_MONITORING_ENABLED !== 'false',
+    checkInterval: parseInt(process.env.HEALTH_CHECK_INTERVAL) || 30000, // 30 seconds
+    memoryThreshold: parseFloat(process.env.HEALTH_MEMORY_THRESHOLD) || 0.8, // 80%
+    cpuThreshold: parseFloat(process.env.HEALTH_CPU_THRESHOLD) || 0.7, // 70%
+    diskThreshold: parseFloat(process.env.HEALTH_DISK_THRESHOLD) || 0.9, // 90%
+    connectionThreshold: parseInt(process.env.HEALTH_CONNECTION_THRESHOLD) || 1000,
+    errorThreshold: parseInt(process.env.HEALTH_ERROR_THRESHOLD) || 100,
+    alertRetention: parseInt(process.env.HEALTH_ALERT_RETENTION) || 10
+  },
+
   // Security Configuration
   security: {
     rateLimit: {
       windowMs: 15 * 60 * 1000, // 15 minutes
-      max: 100 // limit each IP to 100 requests per windowMs
+      max: parseInt(process.env.RATE_LIMIT_MAX) || 100, // limit each IP to 100 requests per windowMs
+      message: 'Too many requests from this IP, please try again later.',
+      standardHeaders: true,
+      legacyHeaders: false
+    },
+    strictRateLimit: {
+      windowMs: 15 * 60 * 1000, // 15 minutes
+      max: parseInt(process.env.STRICT_RATE_LIMIT_MAX) || 10, // limit each IP to 10 requests per windowMs
+      message: 'Too many requests to sensitive endpoint, please try again later.',
+      standardHeaders: true,
+      legacyHeaders: false
     },
     helmet: {
-      enabled: true,
+      enabled: process.env.HELMET_ENABLED !== 'false',
       contentSecurityPolicy: {
         directives: {
           defaultSrc: ["'self'"],
-          styleSrc: ["'self'", "'unsafe-inline'"],
-          scriptSrc: ["'self'"],
+          scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+          scriptSrcAttr: ["'unsafe-inline'"],
+          styleSrc: ["'self'", "'unsafe-inline'", "https://cdnjs.cloudflare.com"],
           imgSrc: ["'self'", "data:", "https:"],
-          connectSrc: ["'self'", "wss:", "ws:"]
+          connectSrc: ["'self'", "ws:", "wss:"],
+          fontSrc: ["'self'", "https:", "data:", "https://cdnjs.cloudflare.com"],
+          objectSrc: ["'none'"],
+          mediaSrc: ["'self'"],
+          frameSrc: ["'none'"]
         }
-      }
+      },
+      hsts: {
+        maxAge: 31536000,
+        includeSubDomains: true,
+        preload: true
+      },
+      noSniff: true,
+      referrerPolicy: { policy: 'strict-origin-when-cross-origin' }
+    },
+    cors: {
+      origin: (origin, callback) => {
+        // Allow requests with no origin (mobile apps, etc.)
+        if (!origin) return callback(null, true);
+        
+        const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || ['*'];
+        
+        if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+          callback(null, true);
+        } else {
+          callback(new Error('Not allowed by CORS'));
+        }
+      },
+      credentials: true,
+      methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key']
+    },
+    apiKeys: process.env.API_KEYS?.split(',') || [],
+    requestValidation: {
+      enabled: process.env.REQUEST_VALIDATION_ENABLED !== 'false',
+      strictMode: process.env.REQUEST_VALIDATION_STRICT === 'true'
     }
   },
 
@@ -185,36 +259,37 @@ const config = {
     }
   },
 
-  // Dashboard Configuration
-  dashboard: {
-    enabled: process.env.DASHBOARD_ENABLED !== 'false',
-    refreshInterval: parseInt(process.env.DASHBOARD_REFRESH_INTERVAL) || 5000,
-    maxEvents: parseInt(process.env.DASHBOARD_MAX_EVENTS) || 100,
-    maxAlerts: parseInt(process.env.DASHBOARD_MAX_ALERTS) || 50,
-    retentionHours: parseInt(process.env.DASHBOARD_RETENTION_HOURS) || 24,
-    realTimeUpdates: {
-      enabled: process.env.DASHBOARD_REALTIME_ENABLED !== 'false',
-      maxSubscribers: parseInt(process.env.DASHBOARD_MAX_SUBSCRIBERS) || 100
-    },
-    speedAlerts: {
+  // Speed Calculation System Configuration
+  speedCalculation: {
+    enabled: process.env.SPEED_CALCULATION_ENABLED !== 'false',
+    minTimeBetweenDetections: parseInt(process.env.SPEED_MIN_TIME) || 1000, // 1 second
+    maxTimeBetweenDetections: parseInt(process.env.SPEED_MAX_TIME) || 300000, // 5 minutes
+    minSpeedThreshold: parseInt(process.env.SPEED_MIN_THRESHOLD) || 5, // 5 km/h
+    maxSpeedThreshold: parseInt(process.env.SPEED_MAX_THRESHOLD) || 200, // 200 km/h
+    confidenceThreshold: parseFloat(process.env.SPEED_CONFIDENCE_THRESHOLD) || 0.8,
+    retentionHours: parseInt(process.env.SPEED_RETENTION_HOURS) || 24,
+    alerts: {
       enabled: process.env.SPEED_ALERTS_ENABLED !== 'false',
-      threshold: parseFloat(process.env.SPEED_ALERT_THRESHOLD) || 100, // km/h
-      severity: {
-        high: parseFloat(process.env.SPEED_ALERT_HIGH) || 120,
-        medium: parseFloat(process.env.SPEED_ALERT_MEDIUM) || 100
-      }
-    }
+      threshold: parseInt(process.env.SPEED_ALERT_THRESHOLD) || 100, // km/h
+      highThreshold: parseInt(process.env.SPEED_ALERT_HIGH) || 120, // km/h
+      mediumThreshold: parseInt(process.env.SPEED_ALERT_MEDIUM) || 100 // km/h
+    },
+    realTimeUpdates: process.env.SPEED_REALTIME_UPDATES !== 'false',
+    webGuiIntegration: process.env.SPEED_WEBGUI_INTEGRATION !== 'false'
   },
 
-  // Database Configuration (for future use)
+  // Database Configuration
   database: {
-    enabled: process.env.DB_ENABLED === 'true',
-    type: process.env.DB_TYPE || 'sqlite',
-    host: process.env.DB_HOST,
-    port: parseInt(process.env.DB_PORT),
-    name: process.env.DB_NAME || 'babelfish',
-    username: process.env.DB_USERNAME,
-    password: process.env.DB_PASSWORD
+    path: process.env.DATABASE_PATH || 'data/babelfish.db',
+    maxConnections: parseInt(process.env.DATABASE_MAX_CONNECTIONS) || 10,
+    connectionTimeout: parseInt(process.env.DATABASE_CONNECTION_TIMEOUT) || 30000,
+    queryTimeout: parseInt(process.env.DATABASE_QUERY_TIMEOUT) || 10000,
+    enableWAL: process.env.DATABASE_ENABLE_WAL !== 'false',
+    enableForeignKeys: process.env.DATABASE_ENABLE_FOREIGN_KEYS !== 'false',
+    journalMode: process.env.DATABASE_JOURNAL_MODE || 'WAL',
+    synchronous: process.env.DATABASE_SYNCHRONOUS || 'NORMAL',
+    cacheSize: parseInt(process.env.DATABASE_CACHE_SIZE) || 10000,
+    tempStore: process.env.DATABASE_TEMP_STORE || 'MEMORY'
   }
 };
 
