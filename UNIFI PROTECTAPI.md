@@ -24,7 +24,7 @@ Content-Type: application/json
 https://10.0.0.1/proxy/protect/integration/v1/
 ```
 
-**Note**: Use "integration" (singular), not "integrations" (plural) as used in the Network API.
+
 
 ## Available Endpoints
 

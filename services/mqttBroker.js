@@ -28,19 +28,21 @@ class MQTTBroker extends EventEmitter {
   async connect() {
     return new Promise((resolve, reject) => {
       const options = {
-        clientId: this.config.broker.clientId,
+        clientId: this.config.broker?.clientId || 'babelfish-mqtt-broker',
         clean: true,
         connectTimeout: 4000,
-        reconnectPeriod: 1000,
-        keepalive: 60
+        reconnectPeriod: 5000,
+        keepalive: 60,
+        maxReconnectAttempts: 10,
+        reschedulePings: true
       };
 
-      if (this.config.broker.username) {
+      if (this.config.broker?.username) {
         options.username = this.config.broker.username;
         options.password = this.config.broker.password;
       }
 
-      const url = `mqtt://${this.config.broker.host}:${this.config.broker.port}`;
+      const url = `mqtt://${this.config.broker?.host || 'localhost'}:${this.config.broker?.port || 1883}`;
       
       this.logger.info(`Connecting to MQTT broker at ${url}`);
       

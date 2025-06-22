@@ -22,7 +22,7 @@ const logger = winston.createLogger({
 });
 
 // Import services (these will be injected from the main server)
-let adsbConnector, connectorRegistry, aircraftDataService, airspaceService, squawkCodeService;
+let adsbConnector, connectorRegistry, aircraftDataService, airspaceService, squawkCodeService, remotionConnector;
 
 // Middleware to inject services
 function injectServices(services) {
@@ -31,6 +31,7 @@ function injectServices(services) {
   aircraftDataService = services.aircraftDataService;
   airspaceService = services.airspaceService;
   squawkCodeService = services.squawkCodeService;
+  remotionConnector = services.remotionConnector;
 }
 
 // Main historical flight interface
@@ -51,6 +52,10 @@ router.get('/', (req, res) => {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Flight History - Looking Glass</title>
+  
+  <!-- Leaflet CSS for maps -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { 
@@ -135,6 +140,21 @@ router.get('/', (req, res) => {
     
     .btn:active {
       transform: translateY(0);
+    }
+    
+    .btn.render-video {
+      background: #ff6600;
+      color: #fff;
+    }
+    
+    .btn.render-video:hover {
+      background: #ff8800;
+    }
+    
+    .btn.render-video:disabled {
+      background: #666;
+      cursor: not-allowed;
+      transform: none;
     }
     
     .stats {
@@ -279,7 +299,7 @@ router.get('/', (req, res) => {
     }
     
     .flight-path {
-      height: 200px;
+      height: 300px;
       background: rgba(0,0,0,0.5);
       border: 1px solid rgba(0,255,0,0.3);
       border-radius: 6px;
@@ -287,9 +307,47 @@ router.get('/', (req, res) => {
       overflow: hidden;
     }
     
+    .flight-path-map {
+      width: 100%;
+      height: 100%;
+      border-radius: 6px;
+    }
+    
     .flight-path canvas {
       width: 100%;
       height: 100%;
+    }
+    
+    .render-controls {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
+      flex-wrap: wrap;
+    }
+    
+    .render-status {
+      margin-top: 10px;
+      padding: 10px;
+      border-radius: 4px;
+      font-size: 0.9em;
+    }
+    
+    .render-status.rendering {
+      background: rgba(255, 102, 0, 0.2);
+      border: 1px solid #ff6600;
+      color: #ff6600;
+    }
+    
+    .render-status.completed {
+      background: rgba(0, 255, 0, 0.2);
+      border: 1px solid #00ff00;
+      color: #00ff00;
+    }
+    
+    .render-status.error {
+      background: rgba(255, 0, 0, 0.2);
+      border: 1px solid #ff0000;
+      color: #ff0000;
     }
     
     .alerts {
@@ -377,6 +435,10 @@ router.get('/', (req, res) => {
       .flight-details {
         grid-template-columns: 1fr;
       }
+      
+      .render-controls {
+        flex-direction: column;
+      }
     }
   </style>
 </head>
@@ -447,8 +509,12 @@ router.get('/', (req, res) => {
   
   <button class="refresh-btn" onclick="loadFlightHistory()" title="Refresh">↻</button>
   
+  <!-- Leaflet JavaScript for maps -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  
   <script>
     let currentFlights = [];
+    let flightMaps = new Map();
     
     // Load flight history on page load
     document.addEventListener('DOMContentLoaded', function() {
@@ -508,135 +574,408 @@ router.get('/', (req, res) => {
       
       container.innerHTML = flights.map(flight => createFlightCard(flight)).join('');
       
-      // Initialize flight path canvases
+      // Initialize flight path maps
       flights.forEach(flight => {
-        if (flight.flightPath && flight.flightPath.length > 0) {
-          renderFlightPath(flight.icao24, flight.flightPath);
+        try {
+          if (flight.flightPath && Array.isArray(flight.flightPath) && flight.flightPath.length > 0) {
+            renderFlightPathMap(flight.icao24, flight.flightPath);
+          } else if (flight.startPosition && flight.currentPosition) {
+            // Create a simple path from start to current position
+            const simplePath = [
+              { lat: flight.startPosition.lat, lon: flight.startPosition.lon },
+              { lat: flight.currentPosition.lat, lon: flight.currentPosition.lon }
+            ];
+            renderFlightPathMap(flight.icao24, simplePath);
+          } else if (flight.startPosition && flight.endPosition) {
+            // Create a simple path from start to end position
+            const simplePath = [
+              { lat: flight.startPosition.lat, lon: flight.startPosition.lon },
+              { lat: flight.endPosition.lat, lon: flight.endPosition.lon }
+            ];
+            renderFlightPathMap(flight.icao24, simplePath);
+          } else {
+            // No position data available, render empty map
+            renderFlightPathMap(flight.icao24, []);
+          }
+        } catch (error) {
+          console.error('Error initializing flight path map for', flight.icao24, ':', error);
+          // Render empty map as fallback
+          renderFlightPathMap(flight.icao24, []);
         }
       });
     }
     
     function createFlightCard(flight) {
-      const startTime = new Date(flight.startTime).toLocaleString();
-      const endTime = flight.endTime ? new Date(flight.endTime).toLocaleString() : 'Active';
-      const duration = flight.duration ? formatDuration(flight.duration) : 'Active';
-      
-      const alerts = [];
-      if (flight.emergency) alerts.push('<span class="alert emergency">EMERGENCY</span>');
-      if (flight.squawk === '7500') alerts.push('<span class="alert emergency">HIJACK</span>');
-      if (flight.squawk === '7600') alerts.push('<span class="alert warning">COMM FAILURE</span>');
-      if (flight.squawk === '7700') alerts.push('<span class="alert emergency">EMERGENCY</span>');
-      
-      const statusClass = flight.status === 'active' ? 'active' : 
-                         flight.emergency ? 'emergency' : 'completed';
-      
-      return \`
-        <div class="flight-card">
-          <div class="flight-header">
-            <div>
-              <div class="flight-callsign">\${flight.callsign || 'Unknown'}</div>
-              <div class="flight-registration">\${flight.registration || flight.icao24}</div>
+      try {
+        // Validate flight object
+        if (!flight || typeof flight !== 'object') {
+          console.error('Invalid flight data:', flight);
+          return '<div class="flight-card"><div class="error">Invalid flight data</div></div>';
+        }
+        
+        const startTime = flight.startTime ? new Date(flight.startTime).toLocaleString() : 'Unknown';
+        const endTime = flight.endTime ? new Date(flight.endTime).toLocaleString() : 'Active';
+        const duration = flight.duration ? formatDuration(flight.duration) : 'Active';
+        
+        const alerts = [];
+        if (flight.emergency) alerts.push('<span class="alert emergency">EMERGENCY</span>');
+        if (flight.squawk === '7500') alerts.push('<span class="alert emergency">HIJACK</span>');
+        if (flight.squawk === '7600') alerts.push('<span class="alert warning">COMM FAILURE</span>');
+        if (flight.squawk === '7700') alerts.push('<span class="alert emergency">EMERGENCY</span>');
+        
+        const statusClass = flight.status === 'active' ? 'active' : 
+                           flight.emergency ? 'emergency' : 'completed';
+        
+        return \`
+          <div class="flight-card">
+            <div class="flight-header">
+              <div>
+                <div class="flight-callsign">\${flight.callsign || 'Unknown'}</div>
+                <div class="flight-registration">\${flight.registration || flight.icao24 || 'N/A'}</div>
+              </div>
+              <div class="flight-status \${statusClass}">\${(flight.status || 'unknown').toUpperCase()}</div>
             </div>
-            <div class="flight-status \${statusClass}">\${flight.status.toUpperCase()}</div>
+            
+            <div class="flight-details">
+              <div class="detail-section">
+                <h3>Flight Information</h3>
+                <div class="detail-row">
+                  <span class="detail-label">ICAO24:</span>
+                  <span class="detail-value">\${flight.icao24 || 'N/A'}</span>
+                </div>
+                <div class="detail-row">
+                  <span class="detail-label">Start Time:</span>
+                  <span class="detail-value">\${startTime}</span>
+                </div>
+                <div class="detail-row">
+                  <span class="detail-label">End Time:</span>
+                  <span class="detail-value">\${endTime}</span>
+                </div>
+                <div class="detail-row">
+                  <span class="detail-label">Duration:</span>
+                  <span class="detail-value">\${duration}</span>
+                </div>
+                <div class="detail-row">
+                  <span class="detail-label">Squawk:</span>
+                  <span class="detail-value \${flight.squawk === '7500' || flight.squawk === '7700' ? 'emergency' : ''}">\${flight.squawk || 'N/A'}</span>
+                </div>
+              </div>
+              
+              <div class="detail-section">
+                <h3>Position Data</h3>
+                <div class="detail-row">
+                  <span class="detail-label">Start Position:</span>
+                  <span class="detail-value">\${formatPosition(flight.startPosition)}</span>
+                </div>
+                <div class="detail-row">
+                  <span class="detail-label">Current/End Position:</span>
+                  <span class="detail-value">\${formatPosition(flight.currentPosition || flight.endPosition)}</span>
+                </div>
+                <div class="detail-row">
+                  <span class="detail-label">Max Altitude:</span>
+                  <span class="detail-value">\${flight.maxAltitude ? flight.maxAltitude + ' ft' : 'N/A'}</span>
+                </div>
+                <div class="detail-row">
+                  <span class="detail-label">Max Speed:</span>
+                  <span class="detail-value">\${flight.maxSpeed ? flight.maxSpeed + ' kts' : 'N/A'}</span>
+                </div>
+                <div class="detail-row">
+                  <span class="detail-label">Distance:</span>
+                  <span class="detail-value">\${flight.totalDistance ? flight.totalDistance.toFixed(1) + ' nm' : 'N/A'}</span>
+                </div>
+              </div>
+              
+              <div class="detail-section">
+                <h3>Aircraft Information</h3>
+                <div class="detail-row">
+                  <span class="detail-label">Type:</span>
+                  <span class="detail-value">\${flight.aircraftInfo?.type || 'N/A'}</span>
+                </div>
+                <div class="detail-row">
+                  <span class="detail-label">Operator:</span>
+                  <span class="detail-value">\${flight.aircraftInfo?.operator || 'N/A'}</span>
+                </div>
+                <div class="detail-row">
+                  <span class="detail-label">Manufacturer:</span>
+                  <span class="detail-value">\${flight.aircraftInfo?.manufacturer || 'N/A'}</span>
+                </div>
+                <div class="detail-row">
+                  <span class="detail-label">Model:</span>
+                  <span class="detail-value">\${flight.aircraftInfo?.model || 'N/A'}</span>
+                </div>
+              </div>
+              
+              <div class="detail-section">
+                <h3>Airspace Information</h3>
+                \${flight.airspaceInfo && Array.isArray(flight.airspaceInfo) && flight.airspaceInfo.length > 0 ? 
+                  flight.airspaceInfo.map(airspace => \`
+                    <div class="detail-row">
+                      <span class="detail-label">\${airspace.type || 'Unknown'}:</span>
+                      <span class="detail-value">\${airspace.name || 'N/A'}</span>
+                    </div>
+                  \`).join('') : 
+                  '<div class="detail-row"><span class="detail-label">No airspace data</span></div>'
+                }
+              </div>
+              
+              <div class="detail-section">
+                <h3>Flight Path</h3>
+                <div class="flight-path">
+                  <div id="map-\${flight.icao24 || 'unknown'}" class="flight-path-map"></div>
+                </div>
+                <div class="render-controls">
+                  <button class="btn render-video" onclick="renderFlightVideo('\${flight.icao24 || ''}', '\${flight.callsign || flight.icao24 || 'Unknown'}')">
+                    🎬 Render Flight Video
+                  </button>
+                  <button class="btn render-video" onclick="renderFlightTimeline('\${flight.icao24 || ''}', '\${flight.callsign || flight.icao24 || 'Unknown'}')">
+                    📊 Render Timeline
+                  </button>
+                </div>
+                <div id="render-status-\${flight.icao24 || 'unknown'}" class="render-status" style="display: none;"></div>
+              </div>
+            </div>
+            
+            \${alerts.length > 0 ? \`
+              <div style="padding: 0 20px 20px;">
+                <div class="alerts">\${alerts.join('')}</div>
+              </div>
+            \` : ''}
           </div>
-          
-          <div class="flight-details">
-            <div class="detail-section">
-              <h3>Flight Information</h3>
-              <div class="detail-row">
-                <span class="detail-label">ICAO24:</span>
-                <span class="detail-value">\${flight.icao24}</span>
-              </div>
-              <div class="detail-row">
-                <span class="detail-label">Start Time:</span>
-                <span class="detail-value">\${startTime}</span>
-              </div>
-              <div class="detail-row">
-                <span class="detail-label">End Time:</span>
-                <span class="detail-value">\${endTime}</span>
-              </div>
-              <div class="detail-row">
-                <span class="detail-label">Duration:</span>
-                <span class="detail-value">\${duration}</span>
-              </div>
-              <div class="detail-row">
-                <span class="detail-label">Squawk:</span>
-                <span class="detail-value \${flight.squawk === '7500' || flight.squawk === '7700' ? 'emergency' : ''}">\${flight.squawk || 'N/A'}</span>
-              </div>
-            </div>
-            
-            <div class="detail-section">
-              <h3>Position Data</h3>
-              <div class="detail-row">
-                <span class="detail-label">Start Position:</span>
-                <span class="detail-value">\${formatPosition(flight.startPosition)}</span>
-              </div>
-              <div class="detail-row">
-                <span class="detail-label">Current/End Position:</span>
-                <span class="detail-value">\${formatPosition(flight.currentPosition || flight.endPosition)}</span>
-              </div>
-              <div class="detail-row">
-                <span class="detail-label">Max Altitude:</span>
-                <span class="detail-value">\${flight.maxAltitude ? flight.maxAltitude + ' ft' : 'N/A'}</span>
-              </div>
-              <div class="detail-row">
-                <span class="detail-label">Max Speed:</span>
-                <span class="detail-value">\${flight.maxSpeed ? flight.maxSpeed + ' kts' : 'N/A'}</span>
-              </div>
-              <div class="detail-row">
-                <span class="detail-label">Distance:</span>
-                <span class="detail-value">\${flight.totalDistance ? flight.totalDistance.toFixed(1) + ' nm' : 'N/A'}</span>
-              </div>
-            </div>
-            
-            <div class="detail-section">
-              <h3>Aircraft Information</h3>
-              <div class="detail-row">
-                <span class="detail-label">Type:</span>
-                <span class="detail-value">\${flight.aircraftInfo?.type || 'N/A'}</span>
-              </div>
-              <div class="detail-row">
-                <span class="detail-label">Operator:</span>
-                <span class="detail-value">\${flight.aircraftInfo?.operator || 'N/A'}</span>
-              </div>
-              <div class="detail-row">
-                <span class="detail-label">Manufacturer:</span>
-                <span class="detail-value">\${flight.aircraftInfo?.manufacturer || 'N/A'}</span>
-              </div>
-              <div class="detail-row">
-                <span class="detail-label">Model:</span>
-                <span class="detail-value">\${flight.aircraftInfo?.model || 'N/A'}</span>
-              </div>
-            </div>
-            
-            <div class="detail-section">
-              <h3>Airspace Information</h3>
-              \${flight.airspaceInfo && flight.airspaceInfo.length > 0 ? 
-                flight.airspaceInfo.map(airspace => \`
-                  <div class="detail-row">
-                    <span class="detail-label">\${airspace.type}:</span>
-                    <span class="detail-value">\${airspace.name}</span>
-                  </div>
-                \`).join('') : 
-                '<div class="detail-row"><span class="detail-label">No airspace data</span></div>'
-              }
-            </div>
-            
-            <div class="detail-section">
-              <h3>Flight Path</h3>
-              <div class="flight-path">
-                <canvas id="path-\${flight.icao24}" width="400" height="200"></canvas>
-              </div>
+        \`;
+      } catch (error) {
+        console.error('Error creating flight card:', error, flight);
+        return \`
+          <div class="flight-card">
+            <div class="error" style="padding: 20px; color: #ff0000; text-align: center;">
+              Error displaying flight data for \${flight?.icao24 || 'Unknown'}
             </div>
           </div>
+        \`;
+      }
+    }
+    
+    function renderFlightPathMap(icao24, flightPath) {
+      const mapContainer = document.getElementById(\`map-\${icao24}\`);
+      if (!mapContainer) return;
+      
+      // Destroy existing map if it exists
+      if (flightMaps.has(icao24)) {
+        flightMaps.get(icao24).remove();
+      }
+      
+      // Validate flight path data
+      if (!flightPath || !Array.isArray(flightPath) || flightPath.length === 0) {
+        // Create a simple placeholder map if no flight path data
+        const map = L.map(\`map-\${icao24}\`).setView([55.5, -4.5], 8);
+        
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+        
+        // Add a message overlay
+        const messageDiv = document.createElement('div');
+        messageDiv.style.cssText = \`
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          background: rgba(0, 0, 0, 0.8);
+          color: #00ff00;
+          padding: 20px;
+          border-radius: 10px;
+          text-align: center;
+          z-index: 1000;
+          font-family: monospace;
+        \`;
+        messageDiv.innerHTML = 'No flight path data available';
+        mapContainer.appendChild(messageDiv);
+        
+        flightMaps.set(icao24, map);
+        return;
+      }
+      
+      // Create new map
+      const map = L.map(\`map-\${icao24}\`).setView([55.5, -4.5], 8);
+      
+      // Add tile layer (OpenStreetMap)
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors'
+      }).addTo(map);
+      
+      try {
+        // Create flight path coordinates with validation
+        const pathCoords = flightPath
+          .filter(point => point && typeof point.lat === 'number' && typeof point.lon === 'number')
+          .map(point => [point.lat, point.lon]);
+        
+        // Draw flight path if we have valid coordinates
+        if (pathCoords.length > 1) {
+          const pathLine = L.polyline(pathCoords, {
+            color: '#00ff00',
+            weight: 3,
+            opacity: 0.8
+          }).addTo(map);
           
-          \${alerts.length > 0 ? \`
-            <div style="padding: 0 20px 20px;">
-              <div class="alerts">\${alerts.join('')}</div>
-            </div>
-          \` : ''}
-        </div>
-      \`;
+          // Fit map to path bounds
+          map.fitBounds(pathLine.getBounds(), { padding: [20, 20] });
+        }
+        
+        // Add start and end markers if we have valid coordinates
+        if (pathCoords.length > 0) {
+          const startMarker = L.marker(pathCoords[0], {
+            icon: L.divIcon({
+              className: 'start-marker',
+              html: '🟢',
+              iconSize: [20, 20]
+            })
+          }).addTo(map);
+          
+          if (pathCoords.length > 1) {
+            const endMarker = L.marker(pathCoords[pathCoords.length - 1], {
+              icon: L.divIcon({
+                className: 'end-marker',
+                html: '🔴',
+                iconSize: [20, 20]
+              })
+            }).addTo(map);
+          }
+        }
+      } catch (error) {
+        console.error('Error rendering flight path map:', error);
+        // Add error message to map
+        const errorDiv = document.createElement('div');
+        errorDiv.style.cssText = \`
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          background: rgba(255, 0, 0, 0.8);
+          color: #fff;
+          padding: 20px;
+          border-radius: 10px;
+          text-align: center;
+          z-index: 1000;
+          font-family: monospace;
+        \`;
+        errorDiv.innerHTML = 'Error rendering flight path';
+        mapContainer.appendChild(errorDiv);
+      }
+      
+      // Store map reference
+      flightMaps.set(icao24, map);
+    }
+    
+    async function renderFlightVideo(icao24, callsign) {
+      const statusElement = document.getElementById(\`render-status-\${icao24}\`);
+      const button = event.target;
+      
+      try {
+        button.disabled = true;
+        button.textContent = '🎬 Rendering...';
+        statusElement.className = 'render-status rendering';
+        statusElement.textContent = 'Rendering flight video...';
+        statusElement.style.display = 'block';
+        
+        const response = await fetch('/history/api/render-flight-video', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            icao24: icao24,
+            callsign: callsign,
+            template: 'flight-path-enhanced'
+          })
+        });
+        
+        if (!response.ok) {
+          throw new Error('Failed to start video render');
+        }
+        
+        const result = await response.json();
+        
+        // Poll for render status
+        pollRenderStatus(result.renderId, icao24);
+        
+      } catch (error) {
+        console.error('Error rendering flight video:', error);
+        statusElement.className = 'render-status error';
+        statusElement.textContent = 'Error: ' + error.message;
+        button.disabled = false;
+        button.textContent = '🎬 Render Flight Video';
+      }
+    }
+    
+    async function renderFlightTimeline(icao24, callsign) {
+      const statusElement = document.getElementById(\`render-status-\${icao24}\`);
+      const button = event.target;
+      
+      try {
+        button.disabled = true;
+        button.textContent = '📊 Rendering...';
+        statusElement.className = 'render-status rendering';
+        statusElement.textContent = 'Rendering flight timeline...';
+        statusElement.style.display = 'block';
+        
+        const response = await fetch('/history/api/render-flight-timeline', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            icao24: icao24,
+            callsign: callsign,
+            template: 'event-timeline'
+          })
+        });
+        
+        if (!response.ok) {
+          throw new Error('Failed to start timeline render');
+        }
+        
+        const result = await response.json();
+        
+        // Poll for render status
+        pollRenderStatus(result.renderId, icao24);
+        
+      } catch (error) {
+        console.error('Error rendering flight timeline:', error);
+        statusElement.className = 'render-status error';
+        statusElement.textContent = 'Error: ' + error.message;
+        button.disabled = false;
+        button.textContent = '📊 Render Timeline';
+      }
+    }
+    
+    async function pollRenderStatus(renderId, icao24) {
+      const statusElement = document.getElementById(\`render-status-\${icao24}\`);
+      const button = event.target;
+      
+      try {
+        const response = await fetch(\`/history/api/render-status/\${renderId}\`);
+        const status = await response.json();
+        
+        if (status.status === 'completed') {
+          statusElement.className = 'render-status completed';
+          statusElement.textContent = \`Video completed! \${status.outputPath ? '<a href="' + status.outputPath + '" target="_blank">Download</a>' : ''}\`;
+          button.disabled = false;
+          button.textContent = button.textContent.includes('Flight Video') ? '🎬 Render Flight Video' : '📊 Render Timeline';
+        } else if (status.status === 'failed') {
+          statusElement.className = 'render-status error';
+          statusElement.textContent = 'Render failed: ' + (status.error || 'Unknown error');
+          button.disabled = false;
+          button.textContent = button.textContent.includes('Flight Video') ? '🎬 Render Flight Video' : '📊 Render Timeline';
+        } else {
+          // Still rendering, poll again in 2 seconds
+          setTimeout(() => pollRenderStatus(renderId, icao24), 2000);
+        }
+      } catch (error) {
+        console.error('Error polling render status:', error);
+        statusElement.className = 'render-status error';
+        statusElement.textContent = 'Error checking render status: ' + error.message;
+        button.disabled = false;
+        button.textContent = button.textContent.includes('Flight Video') ? '🎬 Render Flight Video' : '📊 Render Timeline';
+      }
     }
     
     function formatDuration(ms) {
@@ -654,77 +993,21 @@ router.get('/', (req, res) => {
     }
     
     function formatPosition(pos) {
-      if (!pos || !pos.lat || !pos.lon) return 'N/A';
-      return \`\${pos.lat.toFixed(4)}, \${pos.lon.toFixed(4)}\`;
-    }
-    
-    function renderFlightPath(icao24, flightPath) {
-      const canvas = document.getElementById(\`path-\${icao24}\`);
-      if (!canvas) return;
-      
-      const ctx = canvas.getContext('2d');
-      const width = canvas.width;
-      const height = canvas.height;
-      
-      // Clear canvas
-      ctx.clearRect(0, 0, width, height);
-      
-      if (flightPath.length < 2) return;
-      
-      // Find bounds
-      let minLat = Math.min(...flightPath.map(p => p.lat));
-      let maxLat = Math.max(...flightPath.map(p => p.lat));
-      let minLon = Math.min(...flightPath.map(p => p.lon));
-      let maxLon = Math.max(...flightPath.map(p => p.lon));
-      
-      // Add padding
-      const latPadding = (maxLat - minLat) * 0.1;
-      const lonPadding = (maxLon - minLon) * 0.1;
-      minLat -= latPadding;
-      maxLat += latPadding;
-      minLon -= lonPadding;
-      maxLon += lonPadding;
-      
-      // Draw flight path
-      ctx.strokeStyle = '#00ff00';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      
-      flightPath.forEach((point, index) => {
-        const x = ((point.lon - minLon) / (maxLon - minLon)) * width;
-        const y = height - ((point.lat - minLat) / (maxLat - minLat)) * height;
-        
-        if (index === 0) {
-          ctx.moveTo(x, y);
-        } else {
-          ctx.lineTo(x, y);
-        }
-      });
-      
-      ctx.stroke();
-      
-      // Draw start and end points
-      if (flightPath.length > 0) {
-        const start = flightPath[0];
-        const end = flightPath[flightPath.length - 1];
-        
-        const startX = ((start.lon - minLon) / (maxLon - minLon)) * width;
-        const startY = height - ((start.lat - minLat) / (maxLat - minLat)) * height;
-        const endX = ((end.lon - minLon) / (maxLon - minLon)) * width;
-        const endY = height - ((end.lat - minLat) / (maxLat - minLat)) * height;
-        
-        // Start point (green)
-        ctx.fillStyle = '#00ff00';
-        ctx.beginPath();
-        ctx.arc(startX, startY, 4, 0, 2 * Math.PI);
-        ctx.fill();
-        
-        // End point (red)
-        ctx.fillStyle = '#ff0000';
-        ctx.beginPath();
-        ctx.arc(endX, endY, 4, 0, 2 * Math.PI);
-        ctx.fill();
+      if (!pos || typeof pos !== 'object' || pos.lat === null || pos.lat === undefined || pos.lon === null || pos.lon === undefined) {
+        return 'N/A';
       }
+      
+      // Validate that lat and lon are numbers
+      if (typeof pos.lat !== 'number' || typeof pos.lon !== 'number') {
+        return 'N/A';
+      }
+      
+      // Check for valid coordinate ranges
+      if (pos.lat < -90 || pos.lat > 90 || pos.lon < -180 || pos.lon > 180) {
+        return 'Invalid';
+      }
+      
+      return \`\${pos.lat.toFixed(4)}, \${pos.lon.toFixed(4)}\`;
     }
     
     async function exportData() {
@@ -787,40 +1070,104 @@ router.get('/api/flights', async (req, res) => {
     // Get active flights
     const activeFlights = adsbConnector.getActiveFlights();
     
+    // Transform active flights to match expected structure
+    const transformedActiveFlights = activeFlights.map(flight => ({
+      icao24: flight.icao24,
+      callsign: flight.callsign,
+      registration: flight.registration,
+      startTime: flight.startTime,
+      endTime: flight.lastUpdate, // Use lastUpdate as endTime for active flights
+      duration: flight.duration,
+      status: 'active',
+      startPosition: flight.startPosition ? {
+        lat: flight.startPosition.lat,
+        lon: flight.startPosition.lon
+      } : null,
+      endPosition: flight.currentPosition ? {
+        lat: flight.currentPosition.lat,
+        lon: flight.currentPosition.lon
+      } : null,
+      currentPosition: flight.currentPosition ? {
+        lat: flight.currentPosition.lat,
+        lon: flight.currentPosition.lon
+      } : null,
+      maxAltitude: flight.currentPosition?.altitude || null,
+      maxSpeed: flight.currentPosition?.speed || null,
+      totalDistance: null, // Will be calculated if needed
+      emergency: flight.emergency || false,
+      squawk: flight.squawk,
+      airspaceInfo: flight.airspaceInfo || [],
+      squawkInfo: flight.squawkInfo || null,
+      aircraftInfo: flight.aircraftInfo || null,
+      flightPath: flight.flightPath || null,
+      alerts: flight.alerts || []
+    }));
+    
     // Get historical flights from aircraft data service
     let historicalFlights = [];
     if (aircraftDataService) {
       try {
-        const history = await aircraftDataService.getAircraftHistory(null, hours);
-        historicalFlights = history.map(flight => ({
-          icao24: flight.icao24,
-          callsign: flight.callsign,
-          registration: flight.registration,
-          startTime: flight.start_time,
-          endTime: flight.end_time,
-          duration: flight.end_time ? new Date(flight.end_time) - new Date(flight.start_time) : null,
-          status: flight.status,
-          startPosition: {
-            lat: flight.start_lat,
-            lon: flight.start_lon
-          },
-          endPosition: {
-            lat: flight.end_lat,
-            lon: flight.end_lon
-          },
-          maxAltitude: flight.max_altitude,
-          maxSpeed: flight.max_speed,
-          totalDistance: flight.total_distance,
-          emergency: false,
-          squawk: null
-        }));
+        // Get all aircraft history for the specified hours
+        const history = await aircraftDataService.getRecentEvents(hours, 'flight_started');
+        historicalFlights = history.map(event => {
+          try {
+            const eventData = JSON.parse(event.event_data);
+            return {
+              icao24: event.icao24,
+              callsign: eventData.callsign || null,
+              registration: null, // Will be looked up from BaseStation if needed
+              startTime: event.timestamp,
+              endTime: eventData.endTime || null,
+              duration: eventData.duration || null,
+              status: eventData.endTime ? 'completed' : 'active', // Always set status
+              startPosition: eventData.startPosition ? {
+                lat: eventData.startPosition.lat,
+                lon: eventData.startPosition.lon
+              } : null,
+              endPosition: eventData.endPosition ? {
+                lat: eventData.endPosition.lat,
+                lon: eventData.endPosition.lon
+              } : null,
+              currentPosition: eventData.endPosition ? {
+                lat: eventData.endPosition.lat,
+                lon: eventData.endPosition.lon
+              } : null,
+              maxAltitude: eventData.maxAltitude || null,
+              maxSpeed: eventData.maxSpeed || null,
+              totalDistance: eventData.totalDistance || null,
+              emergency: eventData.emergency || false,
+              squawk: eventData.startPosition?.squawk || null,
+              airspaceInfo: [],
+              squawkInfo: null,
+              aircraftInfo: null,
+              flightPath: null,
+              alerts: []
+            };
+          } catch (parseError) {
+            logger.warn('Failed to parse flight event data', { 
+              icao24: event.icao24, 
+              error: parseError.message 
+            });
+            return null;
+          }
+        }).filter(flight => flight !== null);
       } catch (error) {
         logger.warn('Failed to get historical flights from aircraft data service', { error: error.message });
       }
     }
     
     // Combine and filter flights
-    let allFlights = [...activeFlights, ...historicalFlights];
+    let allFlights = [...transformedActiveFlights, ...historicalFlights];
+    
+    // Deduplicate flights by ICAO24, keeping the most recent one
+    const flightMap = new Map();
+    allFlights.forEach(flight => {
+      const existing = flightMap.get(flight.icao24);
+      if (!existing || new Date(flight.startTime) > new Date(existing.startTime)) {
+        flightMap.set(flight.icao24, flight);
+      }
+    });
+    allFlights = Array.from(flightMap.values());
     
     // Apply filters
     if (status !== 'all') {
@@ -881,52 +1228,99 @@ router.get('/api/export', async (req, res) => {
     // Get flights (same logic as above)
     const activeFlights = adsbConnector.getActiveFlights();
     
+    // Transform active flights to match expected structure
+    const transformedActiveFlights = activeFlights.map(flight => ({
+      icao24: flight.icao24,
+      callsign: flight.callsign,
+      registration: flight.registration,
+      startTime: flight.startTime,
+      endTime: flight.lastUpdate,
+      duration: flight.duration,
+      status: 'active',
+      startPosition: flight.startPosition,
+      endPosition: flight.currentPosition,
+      currentPosition: flight.currentPosition,
+      maxAltitude: flight.maxAltitude,
+      maxSpeed: flight.maxSpeed,
+      totalDistance: flight.totalDistance,
+      squawk: flight.squawk,
+      emergency: flight.emergency,
+      airspaceInfo: flight.airspaceInfo || [],
+      squawkInfo: flight.squawkInfo || null,
+      aircraftInfo: flight.aircraftInfo || null,
+      flightPath: flight.flightPath || null,
+      alerts: flight.alerts || []
+    }));
+    
+    // Get historical flights from aircraft data service
     let historicalFlights = [];
     if (aircraftDataService) {
       try {
-        const history = await aircraftDataService.getAircraftHistory(null, hours);
-        historicalFlights = history.map(flight => ({
-          icao24: flight.icao24,
-          callsign: flight.callsign,
-          registration: flight.registration,
-          startTime: flight.start_time,
-          endTime: flight.end_time,
-          duration: flight.end_time ? new Date(flight.end_time) - new Date(flight.start_time) : null,
-          status: flight.status,
-          startPosition: {
-            lat: flight.start_lat,
-            lon: flight.start_lon
-          },
-          endPosition: {
-            lat: flight.end_lat,
-            lon: flight.end_lon
-          },
-          maxAltitude: flight.max_altitude,
-          maxSpeed: flight.max_speed,
-          totalDistance: flight.total_distance,
-          emergency: false,
-          squawk: null
-        }));
+        // Get all aircraft history for the specified hours
+        const history = await aircraftDataService.getRecentEvents(hours, 'flight_started');
+        historicalFlights = history.map(event => {
+          try {
+            const eventData = JSON.parse(event.event_data);
+            return {
+              icao24: event.icao24,
+              callsign: eventData.callsign || null,
+              registration: null, // Will be looked up from BaseStation if needed
+              startTime: event.timestamp,
+              endTime: eventData.endTime || null,
+              duration: eventData.duration || null,
+              status: eventData.endTime ? 'completed' : 'active',
+              startPosition: eventData.startPosition || null,
+              endPosition: eventData.endPosition || null,
+              currentPosition: eventData.currentPosition || null,
+              maxAltitude: eventData.maxAltitude || null,
+              maxSpeed: eventData.maxSpeed || null,
+              totalDistance: eventData.totalDistance || null,
+              squawk: eventData.squawk || null,
+              emergency: eventData.emergency || false,
+              airspaceInfo: eventData.airspaceInfo || [],
+              squawkInfo: eventData.squawkInfo || null,
+              aircraftInfo: eventData.aircraftInfo || null,
+              flightPath: eventData.flightPath || null,
+              alerts: eventData.alerts || []
+            };
+          } catch (error) {
+            logger.error('Error parsing historical flight data:', error);
+            return null;
+          }
+        }).filter(Boolean);
       } catch (error) {
-        logger.warn('Failed to get historical flights for export', { error: error.message });
+        logger.error('Error getting historical flights:', error);
       }
     }
     
-    let allFlights = [...activeFlights, ...historicalFlights];
+    // Combine and deduplicate flights
+    const allFlights = [...transformedActiveFlights, ...historicalFlights];
+    const flightMap = new Map();
     
-    // Apply filters
+    allFlights.forEach(flight => {
+      const key = flight.icao24;
+      if (!flightMap.has(key) || flight.status === 'active') {
+        flightMap.set(key, flight);
+      }
+    });
+    
+    const flights = Array.from(flightMap.values());
+    
+    // Filter flights based on criteria
+    let filteredFlights = flights;
+    
     if (status !== 'all') {
-      allFlights = allFlights.filter(flight => flight.status === status);
+      filteredFlights = filteredFlights.filter(flight => flight.status === status);
     }
     
     if (callsign) {
-      allFlights = allFlights.filter(flight => 
+      filteredFlights = filteredFlights.filter(flight => 
         flight.callsign && flight.callsign.toLowerCase().includes(callsign.toLowerCase())
       );
     }
     
     if (registration) {
-      allFlights = allFlights.filter(flight => 
+      filteredFlights = filteredFlights.filter(flight => 
         flight.registration && flight.registration.toLowerCase().includes(registration.toLowerCase())
       );
     }
@@ -934,40 +1328,271 @@ router.get('/api/export', async (req, res) => {
     // Generate CSV
     const csvHeaders = [
       'ICAO24', 'Callsign', 'Registration', 'Start Time', 'End Time', 'Duration (ms)',
-      'Status', 'Start Lat', 'Start Lon', 'End Lat', 'End Lon',
-      'Max Altitude', 'Max Speed', 'Total Distance', 'Emergency', 'Squawk'
+      'Status', 'Start Lat', 'Start Lon', 'End Lat', 'End Lon', 'Max Altitude (ft)',
+      'Max Speed (kts)', 'Total Distance (nm)', 'Squawk', 'Emergency'
     ];
     
-    const csvRows = allFlights.map(flight => [
+    const csvRows = filteredFlights.map(flight => [
       flight.icao24,
       flight.callsign || '',
       flight.registration || '',
       flight.startTime,
       flight.endTime || '',
       flight.duration || '',
-      flight.status,
+      flight.status || '',
       flight.startPosition?.lat || '',
       flight.startPosition?.lon || '',
-      flight.endPosition?.lat || '',
-      flight.endPosition?.lon || '',
+      (flight.currentPosition || flight.endPosition)?.lat || '',
+      (flight.currentPosition || flight.endPosition)?.lon || '',
       flight.maxAltitude || '',
       flight.maxSpeed || '',
       flight.totalDistance || '',
-      flight.emergency ? 'true' : 'false',
-      flight.squawk || ''
+      flight.squawk || '',
+      flight.emergency ? 'true' : 'false'
     ]);
     
     const csvContent = [csvHeaders, ...csvRows]
-      .map(row => row.map(cell => `"${cell}"`).join(','))
-      .join('\\n');
+      .map(row => row.map(field => `"${field}"`).join(','))
+      .join('\n');
     
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename="flight_history_${new Date().toISOString().split('T')[0]}.csv"`);
     res.send(csvContent);
     
   } catch (error) {
-    logger.error('Error exporting flight data', { error: error.message, stack: error.stack });
+    logger.error('Error exporting flight data:', error);
     res.status(500).json({ error: 'Failed to export flight data' });
+  }
+});
+
+// API endpoint to render flight video using Remotion
+router.post('/api/render-flight-video', async (req, res) => {
+  try {
+    if (!remotionConnector) {
+      return res.status(500).json({ error: 'Remotion Connector not initialized' });
+    }
+    
+    const { icao24, callsign, template = 'flight-path-enhanced' } = req.body;
+    
+    if (!icao24) {
+      return res.status(400).json({ error: 'ICAO24 is required' });
+    }
+    
+    // Get flight data
+    let flightData = null;
+    
+    // Try to get from active flights first
+    if (connectorRegistry) {
+      const adsbConnector = connectorRegistry.getConnector('adsb-main');
+      if (adsbConnector) {
+        const activeFlights = adsbConnector.getActiveFlights();
+        flightData = activeFlights.find(f => f.icao24 === icao24);
+      }
+    }
+    
+    // If not found in active flights, try historical data
+    if (!flightData && aircraftDataService) {
+      try {
+        const history = await aircraftDataService.getRecentEvents(24, 'flight_started');
+        const historicalFlight = history.find(event => event.icao24 === icao24);
+        if (historicalFlight) {
+          const eventData = JSON.parse(historicalFlight.event_data);
+          flightData = {
+            icao24: historicalFlight.icao24,
+            callsign: eventData.callsign,
+            startTime: historicalFlight.timestamp,
+            endTime: eventData.endTime,
+            flightPath: eventData.flightPath,
+            startPosition: eventData.startPosition,
+            endPosition: eventData.endPosition,
+            ...eventData
+          };
+        }
+      } catch (error) {
+        logger.error('Error getting historical flight data:', error);
+      }
+    }
+    
+    if (!flightData) {
+      return res.status(404).json({ error: 'Flight not found' });
+    }
+    
+    // Create video render job
+    const renderId = await remotionConnector.createFlightVideo({
+      callsign: callsign || flightData.callsign || icao24,
+      registration: flightData.registration,
+      startTime: flightData.startTime,
+      endTime: flightData.endTime,
+      flightPath: flightData.flightPath,
+      startPosition: flightData.startPosition,
+      endPosition: flightData.endPosition,
+      template: template,
+      outputPath: `./renders/flight-${icao24}-${Date.now()}.mp4`,
+      quality: 'high',
+      fps: 30,
+      duration: 15
+    });
+    
+    res.json({ 
+      renderId: renderId.renderId,
+      message: 'Flight video render started',
+      flightData: {
+        icao24,
+        callsign: flightData.callsign,
+        startTime: flightData.startTime,
+        endTime: flightData.endTime
+      }
+    });
+    
+  } catch (error) {
+    logger.error('Error starting flight video render:', error);
+    res.status(500).json({ error: 'Failed to start video render: ' + error.message });
+  }
+});
+
+// API endpoint to render flight timeline using Remotion
+router.post('/api/render-flight-timeline', async (req, res) => {
+  try {
+    if (!remotionConnector) {
+      return res.status(500).json({ error: 'Remotion Connector not initialized' });
+    }
+    
+    const { icao24, callsign, template = 'event-timeline' } = req.body;
+    
+    if (!icao24) {
+      return res.status(400).json({ error: 'ICAO24 is required' });
+    }
+    
+    // Get flight data and related events
+    let flightData = null;
+    let relatedEvents = [];
+    
+    // Try to get from active flights first
+    if (connectorRegistry) {
+      const adsbConnector = connectorRegistry.getConnector('adsb-main');
+      if (adsbConnector) {
+        const activeFlights = adsbConnector.getActiveFlights();
+        flightData = activeFlights.find(f => f.icao24 === icao24);
+      }
+    }
+    
+    // If not found in active flights, try historical data
+    if (!flightData && aircraftDataService) {
+      try {
+        const history = await aircraftDataService.getRecentEvents(24, 'flight_started');
+        const historicalFlight = history.find(event => event.icao24 === icao24);
+        if (historicalFlight) {
+          const eventData = JSON.parse(historicalFlight.event_data);
+          flightData = {
+            icao24: historicalFlight.icao24,
+            callsign: eventData.callsign,
+            startTime: historicalFlight.timestamp,
+            endTime: eventData.endTime,
+            ...eventData
+          };
+        }
+      } catch (error) {
+        logger.error('Error getting historical flight data:', error);
+      }
+    }
+    
+    if (!flightData) {
+      return res.status(404).json({ error: 'Flight not found' });
+    }
+    
+    // Get related events for this aircraft
+    if (aircraftDataService) {
+      try {
+        const events = await aircraftDataService.getRecentEvents(24);
+        relatedEvents = events.filter(event => event.icao24 === icao24);
+      } catch (error) {
+        logger.error('Error getting related events:', error);
+      }
+    }
+    
+    // Create timeline render job
+    const renderId = await remotionConnector.createEventTimeline({
+      eventTypes: ['flight_started', 'airspace:entry', 'airspace:exit', 'speed:alert'],
+      startTime: flightData.startTime,
+      endTime: flightData.endTime || new Date().toISOString(),
+      aircraftFilter: icao24,
+      template: template,
+      outputPath: `./renders/timeline-${icao24}-${Date.now()}.mp4`,
+      quality: 'high',
+      fps: 30,
+      duration: 20
+    });
+    
+    res.json({ 
+      renderId: renderId.renderId,
+      message: 'Flight timeline render started',
+      flightData: {
+        icao24,
+        callsign: flightData.callsign,
+        startTime: flightData.startTime,
+        endTime: flightData.endTime,
+        eventCount: relatedEvents.length
+      }
+    });
+    
+  } catch (error) {
+    logger.error('Error starting flight timeline render:', error);
+    res.status(500).json({ error: 'Failed to start timeline render: ' + error.message });
+  }
+});
+
+// API endpoint to check render status
+router.get('/api/render-status/:renderId', async (req, res) => {
+  try {
+    if (!remotionConnector) {
+      return res.status(500).json({ error: 'Remotion Connector not initialized' });
+    }
+    
+    const { renderId } = req.params;
+    
+    const status = await remotionConnector.getRenderStatus(renderId);
+    
+    res.json(status);
+    
+  } catch (error) {
+    logger.error('Error checking render status:', error);
+    res.status(500).json({ error: 'Failed to check render status: ' + error.message });
+  }
+});
+
+// API endpoint to cancel render
+router.post('/api/cancel-render/:renderId', async (req, res) => {
+  try {
+    if (!remotionConnector) {
+      return res.status(500).json({ error: 'Remotion Connector not initialized' });
+    }
+    
+    const { renderId } = req.params;
+    
+    await remotionConnector.cancelRender({ renderId });
+    
+    res.json({ message: 'Render cancelled successfully' });
+    
+  } catch (error) {
+    logger.error('Error cancelling render:', error);
+    res.status(500).json({ error: 'Failed to cancel render: ' + error.message });
+  }
+});
+
+// API endpoint to list active renders
+router.get('/api/active-renders', async (req, res) => {
+  try {
+    if (!remotionConnector) {
+      return res.status(500).json({ error: 'Remotion Connector not initialized' });
+    }
+    
+    const activeRenders = remotionConnector.listActiveRenders();
+    
+    res.json({ activeRenders });
+    
+  } catch (error) {
+    logger.error('Error listing active renders:', error);
+    res.status(500).json({ error: 'Failed to list active renders: ' + error.message });
   }
 });
 

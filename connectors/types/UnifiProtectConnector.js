@@ -109,15 +109,25 @@ class UnifiProtectConnector extends BaseConnector {
       
       this.logger.debug(`Attempting to connect to UniFi Protect at ${host}`);
       
-      // Test API key authentication by making a request to the meta info endpoint
-      try {
-        const response = await this.makeRequest('GET', '/proxy/protect/integration/v1/meta/info');
-        this.logger.info('Successfully authenticated with UniFi Protect API');
-        this.logger.debug('API Info:', response);
-      } catch (error) {
-        const errorMessage = error?.message || String(error);
-        this.logger.error('API key authentication failed:', errorMessage);
-        throw new Error(`Failed to authenticate with UniFi Protect API: ${errorMessage}`);
+      // Try session-based authentication first if configured
+      if (this.config.useSessionAuth && this.config.username && this.config.password) {
+        try {
+          this.logger.debug('Attempting session-based authentication...');
+          const bootstrapData = await this.authenticateWithSession();
+          if (bootstrapData && bootstrapData.accessKey) {
+            this.logger.info('Successfully authenticated with UniFi Protect using session-based auth');
+            this.cacheBootstrapData(bootstrapData);
+          } else {
+            throw new Error('Session authentication failed - no bootstrap data received');
+          }
+        } catch (sessionError) {
+          this.logger.warn('Session-based authentication failed, falling back to API key:', sessionError.message);
+          // Fall back to API key authentication
+          await this.authenticateWithAPIKey();
+        }
+      } else {
+        // Use API key authentication
+        await this.authenticateWithAPIKey();
       }
       
       // Load initial camera data
@@ -134,6 +144,21 @@ class UnifiProtectConnector extends BaseConnector {
     } catch (error) {
       this.logger.error('Failed to connect to UniFi Protect:', error.message);
       throw error;
+    }
+  }
+  
+  /**
+   * Authenticate using API key
+   */
+  async authenticateWithAPIKey() {
+    try {
+      const response = await this.makeRequest('GET', '/proxy/protect/integration/v1/meta/info');
+      this.logger.info('Successfully authenticated with UniFi Protect API using API key');
+      this.logger.debug('API Info:', response);
+    } catch (error) {
+      const errorMessage = error?.message || String(error);
+      this.logger.error('API key authentication failed:', errorMessage);
+      throw new Error(`Failed to authenticate with UniFi Protect API: ${errorMessage}`);
     }
   }
   
@@ -872,14 +897,13 @@ class UnifiProtectConnector extends BaseConnector {
     const baseUrl = `${protocol}://${host}:${port}`;
     const url = `${baseUrl}${path}`;
     
-    // Set up request options with API key authentication
+    // Set up request options
     const options = {
       method,
       url,
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
-        'X-API-KEY': this.apiKey,
         ...headers
       },
       httpsAgent: new https.Agent({
@@ -889,6 +913,21 @@ class UnifiProtectConnector extends BaseConnector {
       validateStatus: (status) => status < 500 // Accept 4xx errors for debugging
     };
     
+    // Use session authentication if available, otherwise use API key
+    if (this.sessionToken && this.cookies && this.csrfToken) {
+      // Session-based authentication
+      options.headers['Authorization'] = `Bearer ${this.sessionToken}`;
+      options.headers['X-CSRF-Token'] = this.csrfToken;
+      options.headers['Cookie'] = this.cookies;
+      this.logger.debug('Using session-based authentication');
+    } else if (this.apiKey) {
+      // API key authentication
+      options.headers['X-API-KEY'] = this.apiKey;
+      this.logger.debug('Using API key authentication');
+    } else {
+      throw new Error('No authentication method available - neither session token nor API key found');
+    }
+    
     // Add request body if provided
     if (data) {
       options.data = data;
@@ -897,7 +936,10 @@ class UnifiProtectConnector extends BaseConnector {
     try {
       this.logger.debug(`Making ${method} request to: ${url}`);
       this.logger.debug(`Headers:`, { 
-        'X-API-KEY': this.apiKey ? `${this.apiKey.substring(0, 8)}...` : 'Missing',
+        'Authorization': options.headers['Authorization'] ? 'Bearer [session]' : 'None',
+        'X-API-KEY': options.headers['X-API-KEY'] ? `${this.apiKey?.substring(0, 8)}...` : 'None',
+        'X-CSRF-Token': options.headers['X-CSRF-Token'] ? 'Present' : 'None',
+        'Cookie': options.headers['Cookie'] ? 'Present' : 'None',
         'Content-Type': options.headers['Content-Type'],
         'Accept': options.headers['Accept']
       });
@@ -924,9 +966,16 @@ class UnifiProtectConnector extends BaseConnector {
         
         // Handle authentication errors
         if (status === 401) {
-          this.logger.error('Authentication failed - check API key');
+          this.logger.error('Authentication failed - check credentials');
           this.logger.error(`URL attempted: ${url}`);
-          throw new Error(`Authentication failed (401): ${statusText} - Check API key`);
+          throw new Error(`Authentication failed (401): ${statusText} - Check credentials`);
+        }
+        
+        // Handle 2FA required
+        if (status === 499 && data && data.code === 'MFA_AUTH_REQUIRED') {
+          this.logger.error('2FA authentication required');
+          this.logger.error(`URL attempted: ${url}`);
+          throw new Error('2FA authentication required - use session-based authentication');
         }
         
         // Handle not found errors
@@ -2104,6 +2153,12 @@ class UnifiProtectConnector extends BaseConnector {
         case 'smart':
           await this.handleSmartEvent(event);
           break;
+        case 'smartDetectLine':
+          await this.handleSmartDetectLineEvent(event);
+          break;
+        case 'smartDetectZone':
+          await this.handleSmartDetectZoneEvent(event);
+          break;
         case 'recording':
           await this.handleRecordingEvent(event);
           break;
@@ -2192,6 +2247,88 @@ class UnifiProtectConnector extends BaseConnector {
     
     // Emit smart event
     this.emit('smart:detected', {
+      cameraId,
+      entityId,
+      event: event.data,
+      timestamp: event.timestamp
+    });
+  }
+  
+  /**
+   * Handle smart detection line crossing events
+   */
+  async handleSmartDetectLineEvent(event) {
+    const cameraId = event.data?.cameraId || event.data?.id;
+    if (!cameraId) {
+      this.logger.warn('Smart detect line event missing camera ID');
+      return;
+    }
+    
+    // Find corresponding entity
+    const entityId = `camera-${cameraId}`;
+    const entity = this.entityManager?.getEntity(entityId);
+    
+    if (entity) {
+      // Update entity with smart detect line event data
+      await this.entityManager.updateEntity(entityId, {
+        data: {
+          ...entity.data,
+          lastSmartDetectLineEvent: {
+            timestamp: event.timestamp,
+            type: event.data?.type,
+            score: event.data?.score,
+            object: event.data?.object,
+            direction: event.data?.direction
+          }
+        }
+      });
+      
+      this.logger.info(`Smart detect line event processed for camera: ${cameraId}`);
+    }
+    
+    // Emit smart detect line event
+    this.emit('smartDetectLine', {
+      cameraId,
+      entityId,
+      event: event.data,
+      timestamp: event.timestamp
+    });
+  }
+  
+  /**
+   * Handle smart detection zone events
+   */
+  async handleSmartDetectZoneEvent(event) {
+    const cameraId = event.data?.cameraId || event.data?.id;
+    if (!cameraId) {
+      this.logger.warn('Smart detect zone event missing camera ID');
+      return;
+    }
+    
+    // Find corresponding entity
+    const entityId = `camera-${cameraId}`;
+    const entity = this.entityManager?.getEntity(entityId);
+    
+    if (entity) {
+      // Update entity with smart detect zone event data
+      await this.entityManager.updateEntity(entityId, {
+        data: {
+          ...entity.data,
+          lastSmartDetectZoneEvent: {
+            timestamp: event.timestamp,
+            type: event.data?.type,
+            score: event.data?.score,
+            object: event.data?.object,
+            zone: event.data?.zone
+          }
+        }
+      });
+      
+      this.logger.info(`Smart detect zone event processed for camera: ${cameraId}`);
+    }
+    
+    // Emit smart detect zone event
+    this.emit('smartDetectZone', {
       cameraId,
       entityId,
       event: event.data,
@@ -3602,13 +3739,17 @@ class UnifiProtectConnector extends BaseConnector {
    */
   async getCameraSnapshot(cameraId, quality = 'high') {
     try {
-      // Use the existing UniFi Protect API to get snapshot
-      const snapshot = await this.unifiAPI.getCameraSnapshot(cameraId, {
-        quality: quality === 'high' ? 'high' : 'medium',
-        timestamp: new Date().toISOString()
+      // Use the existing makeRequest method to get snapshot
+      const response = await this.makeRequest('GET', `/proxy/protect/integration/v1/cameras/${cameraId}/snapshot?highQuality=${quality === 'high' ? 'true' : 'false'}`, null, {
+        'Accept': 'image/jpeg'
       });
 
-      return snapshot.url;
+      if (response) {
+        this.logger.debug(`Got snapshot for camera ${cameraId}`);
+        return response;
+      } else {
+        throw new Error('No snapshot data in response');
+      }
     } catch (error) {
       this.logger.error(`Failed to get camera snapshot:`, error);
       throw new Error(`Failed to get camera snapshot: ${error.message}`);

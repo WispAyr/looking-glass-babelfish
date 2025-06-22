@@ -76,10 +76,13 @@ A **unified spatial intelligence platform** that:
 - **Hikvision**: IP camera integration with advanced analytics
 - **Ankke DVR**: Digital video recorder support and management
 - **ADSB**: Aircraft tracking and aviation monitoring
+- **APRS**: Amateur radio station tracking, weather data, and message monitoring with automatic map integration
+- **NOTAM**: UK NOTAM data integration with geospatial analysis, proximity alerts, and temporal analysis
 - **Map Connector**: Spatial configuration and real-time visualization
 - **Web GUI Connector**: Modern web interface with component system
 - **Speed Calculation**: ANPR-based vehicle speed monitoring
 - **GUI Designer**: Visual layout editor and component management
+- **Overwatch**: Central event processing and orchestration system
 
 ### 🗺️ **Advanced Spatial Intelligence**
 - **Real-Time Map System**: Interactive spatial visualization with drag-and-drop configuration
@@ -119,6 +122,18 @@ A **unified spatial intelligence platform** that:
 - **Emergency Monitoring**: Highlight emergency aircraft and situations
 - **Data Export**: Export radar data in JSON or CSV formats
 - **WebSocket Updates**: Real-time updates via WebSocket connections
+
+### 📻 **APRS & Amateur Radio System**
+- **Automatic Map Integration**: Seamless integration with map system for real-time visualization
+- **Station Tracking**: Real-time tracking of APRS stations with position, course, and speed
+- **Weather Data**: Live weather station data including temperature, pressure, humidity, and wind
+- **Message Monitoring**: APRS text message monitoring and display
+- **UK Coverage**: Focused on UK APRS network with configurable geographic bounds
+- **Spatial Context**: Automatic spatial element creation for map visualization
+- **Real-time Broadcasting**: Instant updates to all connected map connectors
+- **Station Filtering**: Filter stations by type, activity, and geographic area
+- **Weather Integration**: Weather data automatically linked to station positions
+- **Performance Monitoring**: Track API calls, station counts, and system performance
 
 ### 📊 **Unified Dashboard & Monitoring**
 - **Single Pane of Glass**: All zones, cameras, and analytics in one interface
@@ -185,49 +200,31 @@ A **unified spatial intelligence platform** that:
 - **Parking Facility Management**: Vehicle tracking, occupancy monitoring, and revenue optimization
 - **Public Transit**: Real-time vehicle tracking and passenger analytics
 - **Logistics & Fleet Management**: Vehicle tracking, route optimization, and delivery monitoring
-- **Traffic Flow Analysis**: Real-time traffic pattern analysis and congestion detection
-
-### 🏭 **Industrial & IoT Applications**
-- **Smart Manufacturing**: Production line monitoring, quality control, and predictive maintenance
-- **Warehouse Management**: Inventory tracking, personnel monitoring, and automation
-- **Energy Management**: Power plant monitoring, grid management, and consumption analytics
-- **Environmental Monitoring**: Air quality, weather, and pollution tracking
-- **Agricultural IoT**: Crop monitoring, livestock tracking, and automated irrigation
 
 ### 🛩️ **Aviation & Aerospace**
-- **Airport Operations**: Aircraft tracking, ground vehicle monitoring, and safety management
-- **Flight Training**: Student pilot tracking and performance monitoring
-- **Emergency Response**: Search and rescue operations with real-time aircraft tracking
-- **Military Applications**: Tactical awareness and mission planning
-- **Drone Operations**: UAV tracking, geofencing, and regulatory compliance
+- **Airport Security**: Aircraft tracking, runway monitoring, and security perimeter management
+- **Flight Training**: Student pilot tracking and safety monitoring
+- **Emergency Response**: Search and rescue coordination with real-time aircraft data
+- **Air Traffic Management**: Local airspace monitoring and traffic coordination
+- **NOTAM Integration**: Real-time NOTAM data with geospatial analysis and proximity alerts
 
-### 🚐 **Mobile & Communications Van Deployments**
+### 🏭 **Industrial & Manufacturing**
+- **Factory Automation**: IoT sensor integration with production line monitoring
+- **Safety Compliance**: Worker safety monitoring and incident prevention
+- **Quality Control**: Automated inspection and defect detection
+- **Supply Chain**: Real-time tracking of materials and finished goods
+
+### 🏠 **Smart Cities & Infrastructure**
+- **Traffic Management**: Real-time traffic flow monitoring and optimization
+- **Public Safety**: Emergency response coordination and incident management
+- **Environmental Monitoring**: Air quality, noise, and pollution tracking
+- **Utility Management**: Power, water, and waste management optimization
+
+### 🚐 **Mobile & Communications**
+- **Communications Vans**: Mobile command centers with full system capabilities
 - **Event Security**: Temporary security deployments with rapid setup
-- **Emergency Response**: Mobile command centers with real-time situational awareness
-- **Construction Site Monitoring**: Temporary security and safety monitoring
-- **Film Production**: Location security and crew management
-- **Military Operations**: Mobile tactical operations centers
-
-### 🏠 **Smart Cities & Municipal**
-- **City-Wide Monitoring**: Integration of traffic cameras, environmental sensors, and public safety
-- **Public Safety**: Police, fire, and emergency services coordination
-- **Infrastructure Monitoring**: Bridge, road, and utility monitoring
-- **Public Events**: Large event security and crowd management
-- **Environmental Protection**: Pollution monitoring and wildlife tracking
-
-### 🏥 **Healthcare & Medical**
-- **Hospital Security**: Patient safety, staff tracking, and emergency response
-- **Medical Device Monitoring**: Equipment tracking and maintenance scheduling
-- **Patient Flow Management**: Optimize patient movement and reduce wait times
-- **Infection Control**: Monitor compliance with safety protocols
-- **Research Facilities**: Secure monitoring of sensitive research areas
-
-### 🎓 **Education & Research**
-- **Campus Security**: Student safety, facility monitoring, and emergency response
-- **Research Laboratories**: Secure monitoring of sensitive research areas
-- **Student Analytics**: Attendance tracking and behavioral analysis
-- **Facility Management**: Building automation and energy optimization
-- **Distance Learning**: Remote classroom monitoring and engagement tracking
+- **Disaster Response**: Emergency communications and coordination systems
+- **Field Operations**: Remote monitoring and control capabilities
 
 ---
 
@@ -236,597 +233,128 @@ A **unified spatial intelligence platform** that:
 ### Prerequisites
 - Node.js 18+ 
 - npm or yarn
-- UniFi Protect system (optional, for video features)
+- SQLite3 (included with Node.js)
 
-### Installation & Setup
+### Installation
 
-1. **Clone and install dependencies**
+1. **Clone the repository**
    ```bash
    git clone <repository-url>
    cd bablefish-lookingglass
+   ```
+
+2. **Install dependencies**
+   ```bash
    npm install
    ```
 
-2. **Run the setup wizard**
+3. **Configure environment**
    ```bash
-   npm run setup
+   cp env.example env.complete
+   # Edit env.complete with your configuration
    ```
-   
-   The setup wizard will guide you through:
-   - System configuration
-   - Database setup
-   - Connector discovery and configuration
-   - UniFi Protect setup
-   - MQTT configuration
-   - Map and GUI settings
-   - Default rules import
 
-3. **Start the server**
+4. **Run setup wizard**
+   ```bash
+   node setup.js
+   ```
+
+5. **Start the server**
    ```bash
    npm start
    ```
 
-4. **Access the web interface**
-   - Open `http://localhost:3000/` in your browser
-   - Explore the API at `/api/*`
-   - Access radar interface at `/radar`
-
-### Alternative: Manual Configuration
-
-1. **Copy environment file**
-   ```bash
-   cp env.example .env
+6. **Access the web interface**
+   ```
+   http://localhost:3000
    ```
 
-2. **Edit configuration**
-   - Update `.env` with your settings
-   - Configure connectors in `config/connectors.json`
+### Quick Configuration
 
-3. **Start the server**
-   ```bash
-   npm start
+1. **Add your first connector** (e.g., UniFi Protect):
+   ```json
+   {
+     "id": "unifi-protect",
+     "type": "unifi-protect",
+     "name": "Security Cameras",
+     "config": {
+       "host": "192.168.1.1",
+       "port": 443,
+       "protocol": "https",
+       "apiKey": "your-api-key"
+     }
+   }
    ```
 
----
+2. **Configure map zones** for your deployment area
 
-## 🔧 Configuration Management
+3. **Set up automation rules** for your use case
 
-### Database Storage
-The system uses SQLite for persistent storage of:
-- **Connector configurations** - All connector settings and capabilities
-- **Entities** - Cameras, devices, and other discovered resources
-- **Events** - Historical event data and analytics
-- **Spatial elements** - Map configurations and spatial data
-- **Analytics** - Speed calculations, people counts, plate tracking
-- **Rules** - Automation rules and configurations
-- **System configurations** - Application settings and preferences
-
-### Configuration API
-Access configuration management via REST API:
-
-```bash
-# Get all configuration templates
-GET /api/config/templates
-
-# Get configurations by category
-GET /api/config/connectors
-GET /api/config/maps
-GET /api/config/rules
-
-# Create/update configuration
-POST /api/config/connectors/my-connector
-{
-  "type": "unifi-protect",
-  "config": { "host": "192.168.1.100", "apiKey": "..." }
-}
-
-# Validate configuration
-POST /api/config/validate
-{
-  "templateName": "unifi-protect",
-  "config": { "host": "192.168.1.100" }
-}
-
-# Export/import configurations
-GET /api/config/export
-POST /api/config/import
-```
-
-### Setup Wizard API
-Manage the setup process programmatically:
-
-```bash
-# Get setup status
-GET /api/setup/status
-
-# Start setup process
-POST /api/setup/start
-
-# Navigate setup steps
-GET /api/setup/current
-POST /api/setup/next
-POST /api/setup/previous
-
-# Submit step data
-POST /api/setup/submit
-{
-  "data": { "host": "192.168.1.100", "apiKey": "..." }
-}
-```
-
----
-
-## 🗄️ Database Management
-
-### Database Statistics
-```bash
-GET /api/database/stats
-```
-
-### Database Cleanup
-```bash
-POST /api/database/cleanup
-```
-
-### Data Retention
-- **Events**: 30 days (configurable)
-- **Analytics**: 90 days (configurable)
-- **Configurations**: Indefinite (versioned)
-- **Spatial data**: Indefinite
-
----
-
-## 🔄 Flow System & Automation
-
-The platform includes a sophisticated flow system for event processing and automation.
-
-### Core Components
-
-#### Event Bus
-- **Event Normalization**: Standardizes events from all sources
-- **Event Routing**: Routes events to appropriate rules and subscribers
-- **Event Storage**: Maintains event history with configurable limits
-- **Real-time Broadcasting**: Sends events to WebSocket clients and MQTT
-
-#### Rule Engine
-- **Complex Conditions**: Support for multiple condition types and operators
-- **Action Execution**: Execute multiple actions per rule
-- **Rule Chaining**: Chain rules together for complex workflows
-- **Performance Optimization**: Efficient rule matching and execution
-
-#### Action Framework
-- **Extensible Actions**: Add custom actions for specific needs
-- **Action Types**: Notifications, MQTT publishing, logging, data storage
-- **Error Handling**: Robust error handling and retry mechanisms
-- **Context Sharing**: Share context between actions in a rule
-
-#### Flow Orchestrator
-- **Complex Workflows**: Define multi-step workflows with conditions
-- **Flow Management**: Create, update, and manage flows
-- **Auto-generation**: Automatically generate flows for new event types
-- **Flow Statistics**: Track flow execution and performance
-
-### API Endpoints
-- `GET /api/flows/status` - Get flow system status
-- `GET /api/flows` - List all flows
-- `POST /api/flows` - Create new flow
-- `PUT /api/flows/:id` - Update flow
-- `DELETE /api/flows/:id` - Delete flow
-- `POST /api/flows/:id/execute` - Execute flow manually
-
-### Configuration
-```javascript
-// config/config.js
-module.exports = {
-  flow: {
-    enabled: true,
-    eventBus: {
-      maxEvents: 1000,
-      processingInterval: 100
-    },
-    ruleEngine: {
-      maxRules: 100,
-      executionTimeout: 30000
-    },
-    actionFramework: {
-      maxActions: 50,
-      executionTimeout: 10000
-    },
-    orchestrator: {
-      maxFlows: 50,
-      flowExecutionTimeout: 60000
-    }
-  }
-}
-```
-
----
-
-## 📊 Analytics & Zone Management
-
-The platform includes comprehensive analytics and zone management capabilities.
-
-### Analytics Engine
-- **Event Processing**: Process camera events for analytics
-- **Derived Metrics**: Calculate speed, occupancy, and patterns
-- **Plate Tracking**: Track vehicles across multiple detection points
-- **Historical Analysis**: Store and analyze historical data
-- **Real-time Dashboards**: Live analytics with customizable widgets
-
-### Zone Manager
-- **Zone Definition**: Define monitoring zones with custom properties
-- **Camera Assignment**: Assign cameras to zones for coverage
-- **Zone Analytics**: Track zone-specific metrics and events
-- **Cross-zone Tracking**: Monitor objects moving between zones
-- **Zone Templates**: Pre-defined zone types for common use cases
-
-### Dashboard Service
-- **Unified View**: Single pane of glass for all monitoring data
-- **Real-time Updates**: Live data updates via Server-Sent Events
-- **Alert Management**: Centralized alert generation and management
-- **Performance Metrics**: Track system performance and usage
-- **Customizable Layouts**: Drag-and-drop dashboard configuration
-
-### API Endpoints
-- `GET /api/analytics/stats` - Get analytics statistics
-- `GET /api/analytics/zones/:zoneId` - Get zone analytics
-- `GET /api/analytics/people-count` - Get people count data
-- `GET /api/analytics/speed-calculations` - Get speed calculations
-- `GET /api/zones` - List all zones
-- `POST /api/zones` - Create new zone
-- `PUT /api/zones/:id` - Update zone
-- `DELETE /api/zones/:id` - Delete zone
-
----
-
-## 🛩️ Radar System
-
-The Looking Glass platform includes a comprehensive radar system for ADSB aircraft tracking and visualization.
-
-### Features
-- **Real-time Aircraft Tracking**: Display aircraft positions, trails, and information
-- **Zone Management**: Define and monitor spatial zones for aircraft
-- **Advanced Filtering**: Filter aircraft by altitude, speed, distance, type, callsign, and squawk
-- **Radar Visualization**: Classic radar scope display with sweep animation
-- **Emergency Monitoring**: Highlight emergency aircraft and situations
-- **Data Export**: Export radar data in JSON or CSV formats
-- **WebSocket Updates**: Real-time updates via WebSocket connections
-
-### Access
-- **Radar Interface**: `http://localhost:3000/radar`
-- **Radar API**: `http://localhost:3000/radar/api/*`
-- **Integration API**: `http://localhost:3000/api/radar/*`
-
-### Configuration
-```javascript
-// config/config.js
-module.exports = {
-  radar: {
-    range: 50, // nautical miles
-    center: { lat: 51.5074, lon: -0.1278 }, // London
-    showTrails: true,
-    trailLength: 20,
-    showLabels: true,
-    showZones: true,
-    sweepAnimation: true,
-    sweepSpeed: 4, // seconds per sweep
-    colorByAltitude: false,
-    colorBySpeed: false,
-    colorByType: false
-  }
-}
-```
-
-### API Endpoints
-
-#### Radar Display
-- `GET /radar/api/display` - Get current radar display data
-- `POST /radar/api/configure` - Configure radar settings
-- `POST /radar/api/filters` - Set radar filters
-
-#### Aircraft Management
-- `GET /radar/api/aircraft` - Get aircraft data
-- `POST /radar/api/aircraft/highlight` - Highlight specific aircraft
-- `GET /radar/api/aircraft/:icao24/trail` - Get aircraft trail
-
-#### Zone Management
-- `GET /radar/api/zones` - List all zones
-- `POST /radar/api/zones` - Create new zone
-- `PUT /radar/api/zones/:id` - Update zone
-- `DELETE /radar/api/zones/:id` - Delete zone
-
-#### Data Export
-- `GET /radar/api/export?format=json` - Export as JSON
-- `GET /radar/api/export?format=csv` - Export as CSV
-
-#### Integration
-- `GET /api/radar/status` - Get radar and ADSB status
-- `POST /api/radar/sync-adsb` - Sync ADSB data to radar
-
-### Zone Types
-- **Parking**: Aircraft parking areas
-- **Taxiway**: Aircraft taxi routes
-- **Runway**: Active runways
-- **Approach**: Approach paths
-- **Departure**: Departure paths
-- **Emergency**: Emergency areas
-- **Custom**: Custom defined zones
-
-### Testing
-Run the radar system test:
-```bash
-node test-radar-system.js
-```
-
----
-
-## 🎨 GUI Configuration System
-
-The platform includes a comprehensive GUI configuration system for creating custom interfaces.
-
-### Features
-- **Visual Layout Editor**: Drag-and-drop interface design
-- **Component Library**: Pre-built components for common use cases
-- **Real-time Preview**: See changes instantly as you design
-- **Template System**: Save and reuse layout templates
-- **Responsive Design**: Automatic adaptation to different screen sizes
-- **Theme Management**: Customizable themes and styling
-- **Component Configuration**: Visual property editors for all components
-- **Undo/Redo**: Full history of design changes
-
-### Component Types
-- **Layout Components**: Header, sidebar, content areas
-- **Data Components**: Charts, tables, gauges
-- **Media Components**: Camera feeds, camera grids
-- **Control Components**: Buttons, forms, controls
-- **Information Components**: Status indicators, alerts
-- **Map Components**: Interactive maps with markers
-- **Specialized Components**: Events panels, analytics panels
-
-### API Endpoints
-- `GET /api/gui/config` - Get GUI configuration
-- `GET /api/gui/pages` - Get all GUI pages
-- `POST /api/gui/pages` - Create GUI page
-- `GET /api/gui/components` - Get all GUI components
-- `POST /api/gui/components` - Create GUI component
-- `GET /api/gui/status` - Get GUI status and metrics
-
----
-
-## 🏥 Health Monitoring System
-
-The platform includes comprehensive health monitoring for system reliability.
-
-### Features
-- **System Health Checks**: Memory, CPU, disk, and connection monitoring
-- **Performance Metrics**: Response times, throughput, and resource utilization
-- **Alerting**: Threshold-based alerts with configurable severity levels
-- **Database Health**: Query performance and connection monitoring
-- **Connector Health**: Status monitoring for all connected systems
-- **Real-time Metrics**: Live performance data and trends
-
-### API Endpoints
-- `GET /health` - Basic health check
-- `GET /health/detailed` - Detailed health status
-- `GET /health/database` - Database health
-- `GET /health/connectors` - Connector health
-- `GET /health/metrics` - Performance metrics
-- `GET /health/system` - System information
-- `GET /ready` - Kubernetes readiness check
-- `GET /live` - Kubernetes liveness check
-
-### Configuration
-```javascript
-// config/config.js
-module.exports = {
-  health: {
-    enabled: true,
-    checkInterval: 30000, // 30 seconds
-    memoryThreshold: 0.8, // 80%
-    cpuThreshold: 0.7, // 70%
-    diskThreshold: 0.9, // 90%
-    connectionThreshold: 1000,
-    errorThreshold: 100,
-    alertRetention: 10
-  }
-}
-```
-
----
-
-## 🚗 Speed Calculation System
-
-Advanced ANPR-based vehicle speed monitoring system.
-
-### Features
-- **ANPR Integration**: Automatic license plate recognition
-- **Speed Calculation**: Calculate vehicle speeds between detection points
-- **Real-time Alerts**: Instant speed violation notifications
-- **Historical Analysis**: Speed data retention and analysis
-- **Multi-lane Support**: Support for multiple lanes per detection point
-- **Configurable Thresholds**: Customizable speed limits and alert levels
-
-### API Endpoints
-- `GET /api/speed/stats` - Get speed calculation statistics
-- `GET /api/speed/calculations` - Get speed calculations
-- `GET /api/speed/alerts` - Get speed alerts
-- `GET /api/speed/tracking/:plateNumber` - Get tracking data for plate
-- `GET /api/speed/detection-points` - List detection points
-- `POST /api/speed/detection-points` - Register detection point
-- `PUT /api/speed/detection-points/:id` - Update detection point
-- `DELETE /api/speed/detection-points/:id` - Remove detection point
-- `POST /api/speed/connect-unifi` - Connect to UniFi Protect
-- `POST /api/speed/process-anpr` - Process ANPR event manually
-- `GET /api/speed/realtime` - Real-time speed data (SSE)
-
-### Configuration
-```javascript
-// config/config.js
-module.exports = {
-  speedCalculation: {
-    enabled: true,
-    minTimeBetweenDetections: 1000, // 1 second
-    maxTimeBetweenDetections: 300000, // 5 minutes
-    minSpeedThreshold: 5, // 5 km/h
-    maxSpeedThreshold: 200, // 200 km/h
-    confidenceThreshold: 0.8,
-    retentionHours: 24,
-    alerts: {
-      enabled: true,
-      threshold: 100, // km/h
-      highThreshold: 120, // km/h
-      mediumThreshold: 100 // km/h
-    }
-  }
-}
-```
-
----
-
-## 🔌 Extending the Platform
-
-### Adding New Connectors
-Create a new file in `connectors/types/`, export a class extending `BaseConnector`, and define capabilities/metadata:
-
-```javascript
-const BaseConnector = require('../BaseConnector');
-
-class MyCustomConnector extends BaseConnector {
-  static getCapabilityDefinitions() {
-    return [
-      {
-        id: 'my:capability',
-        name: 'My Capability',
-        description: 'Description of my capability',
-        category: 'custom',
-        operations: ['create', 'read', 'update', 'delete'],
-        dataTypes: ['my-data'],
-        events: ['my:event']
-      }
-    ];
-  }
-  
-  async executeCapability(capabilityId, operation, parameters) {
-    // Implementation
-  }
-}
-
-module.exports = MyCustomConnector;
-```
-
-### Adding New Maps
-Instantiate a new `MapConnector` with a unique ID:
-
-```javascript
-const mapConnector = new MapConnector({
-  id: 'my-custom-map',
-  name: 'My Custom Map',
-  config: {
-    autoRegisterConnectors: true,
-    enableWebSockets: true
-  }
-});
-```
-
-### Adding New UI Components
-Use the `WebGuiConnector` API to create pages/components:
-
-```javascript
-await webGuiConnector.execute('gui:components', 'create', {
-  componentId: 'my-component',
-  type: 'custom',
-  data: { /* component data */ }
-});
-```
-
-### Adding Automation
-Define new rules in the `RuleEngine` or flows in the `FlowOrchestrator`:
-
-```javascript
-const rule = {
-  id: 'my-custom-rule',
-  name: 'My Custom Rule',
-  conditions: { /* rule conditions */ },
-  actions: [ /* rule actions */ ]
-};
-```
+4. **Customize the dashboard** for your needs
 
 ---
 
 ## 📚 Documentation
 
-### System Documentation
-- **Connector Architecture**: `docs/connector-architecture.md`
-- **Connector-Map Relationship**: `docs/connector-map-relationship.md`
-- **Analytics System**: `docs/analytics-system.md`
-- **Flow System**: `docs/flow-system.md`
-- **Smart Events**: `docs/smart-events.md`
-- **Speed Calculation**: `docs/speed-calculation-system.md`
-- **Health Monitoring**: `docs/health-monitoring.md`
-- **Real-time Map System**: `docs/realtime-map-system.md`
-- **MQTT Flow**: `docs/mqtt-flow.md`
-- **Line Crossing Speed Detection**: `docs/line-crossing-speed-detection.md`
+### Core Documentation
+- **[Connector System](README-connectors.md)** - Complete guide to the connector architecture
+- **[Configuration Guide](docs/configuration-refactor.md)** - System configuration and setup
+- **[Flow System](docs/flow-system.md)** - Automation and workflow management
+- **[Map System](docs/map-system-summary.md)** - Spatial visualization and management
 
 ### Connector Documentation
-- **ADSB**: `docs/connectors/adsb.md`
-- **Ankke DVR**: `docs/connectors/ankke-dvr.md`
-- **Hikvision**: `docs/connectors/hikvision.md`
-- **LLM**: `docs/connectors/llm.md`
-- **MQTT**: `docs/connectors/mqtt.md`
-- **Telegram**: `docs/connectors/telegram.md`
-- **UniFi Protect**: `docs/connectors/unifi-protect.md`
+- **[UniFi Protect](docs/connectors/unifi-protect.md)** - Video management integration
+- **[MQTT](docs/connectors/mqtt.md)** - IoT and messaging integration
+- **[Telegram](docs/connectors/telegram.md)** - Notification and communication
+- **[ADSB](docs/connectors/adsb.md)** - Aircraft tracking and aviation
+- **[APRS](docs/connectors/aprs.md)** - Amateur radio and weather data
+- **[Hikvision](docs/connectors/hikvision.md)** - IP camera integration
+- **[Ankke DVR](docs/connectors/ankke-dvr.md)** - DVR system integration
+- **[LLM](docs/connectors/llm.md)** - AI and natural language processing
+- **[Overwatch](docs/connectors/overwatch.md)** - Event processing and orchestration
+
+### System Documentation
+- **[Analytics System](docs/analytics-system.md)** - Data analysis and reporting
+- **[Health Monitoring](docs/health-monitoring.md)** - System health and performance
+- **[Smart Events](docs/smart-events.md)** - Intelligent event processing
+- **[Real-time Map System](docs/realtime-map-system.md)** - Spatial visualization
+- **[Speed Calculation](docs/speed-calculation-system.md)** - Vehicle speed monitoring
+- **[Line Crossing Detection](docs/line-crossing-speed-detection.md)** - Boundary monitoring
 
 ---
 
-## 🧪 Testing
+## 🔧 Development
 
-The platform includes comprehensive test scripts for all major features:
-
-```bash
-# Test individual connectors
-node test-unifi-protect-connector.js
-node test-mqtt-connector.js
-node test-telegram-connector.js
-node test-llm-connector.js
-
-# Test system features
-node test-speed-calculation-system.js
-node test-radar-system.js
-node test-web-gui-connector.js
-
-# Test integrations
-node test-adsb-map-integration.js
-node test-map-unifi-sync.js
-node test-llm-autonomous-system.js
-
-# Test analytics and zones
-node test-zone-analytics.js
+### Project Structure
+```
+bablefish-lookingglass/
+├── connectors/          # Connector implementations
+├── config/             # Configuration files
+├── docs/               # Documentation
+├── middleware/         # Express middleware
+├── routes/             # API routes
+├── services/           # Core services
+├── templates/          # UI templates
+└── test-*.js          # Test files
 ```
 
----
+### Running Tests
+```bash
+# Test all connectors
+node test-connectors.js
 
-## 📊 Status & Roadmap
+# Test specific functionality
+node test-unifi-protect.js
+node test-adsb-connector.js
+node test-speed-calculation-system.js
+```
 
-### Current Status
-- **✅ Production-ready**: Modular, extensible, and supports real-time operations
-- **✅ Database integration**: Persistent storage for configurations and data
-- **✅ Setup wizard**: Guided initial configuration
-- **✅ Health monitoring**: Real-time system health and performance monitoring
-- **✅ Speed calculation**: ANPR-based vehicle speed monitoring
-- **✅ Radar system**: ADSB aircraft tracking and visualization
-- **✅ GUI configuration**: Visual layout editor and component system
-- **✅ Multi-connector support**: UniFi Protect, MQTT, Telegram, LLM, ADSB, and more
-- **✅ Flow system**: Complete event processing and automation
-- **✅ Analytics engine**: Comprehensive analytics and zone management
-- **✅ Dashboard service**: Unified monitoring interface
-
-### Planned Features
-- **🔄 Machine Learning Integration**: Advanced analytics and predictive capabilities
-- **🔄 Mobile Applications**: Native iOS and Android apps
-- **🔄 Cloud Integration**: Multi-site synchronization and cloud backup
-- **🔄 Advanced Analytics**: Business intelligence and reporting
-- **🔄 API Marketplace**: Third-party integrations and extensions
-- **🔄 Edge Computing**: Distributed processing for large deployments
+### Adding New Connectors
+1. Create connector class in `connectors/types/`
+2. Implement required methods from `BaseConnector`
+3. Add configuration validation
+4. Create documentation in `docs/connectors/`
+5. Add test file
 
 ---
 
@@ -836,26 +364,22 @@ We welcome contributions! Please see our contributing guidelines for details on:
 - Code style and standards
 - Testing requirements
 - Documentation updates
-- Feature proposals
+- Issue reporting
 
 ---
 
 ## 📄 License
 
-- **License**: MIT License
-- **Copyright**: (c) Babelfish Looking Glass Team
+This project is licensed under the MIT License - see the LICENSE file for details.
 
 ---
 
 ## 🆘 Support
 
-For support and questions:
-1. Check the documentation in the `docs/` directory
-2. Review example scripts in the `examples/` directory
-3. Run test scripts to verify functionality
-4. Check system logs for error messages
-5. Open an issue on our repository
+- **Documentation**: Check the docs folder for detailed guides
+- **Issues**: Report bugs and feature requests via GitHub issues
+- **Discussions**: Join community discussions for help and ideas
 
 ---
 
-*Babelfish Looking Glass - Unifying the world's sensors, one connector at a time.* 🌟 
+*Babelfish Looking Glass - Unified Spatial Intelligence Platform* 

@@ -44,6 +44,21 @@ class SecurityMiddleware {
   }
 
   /**
+   * Get lenient rate limiter for map endpoints
+   */
+  getMapRateLimiter() {
+    return rateLimit({
+      windowMs: 1 * 60 * 1000, // 1 minute
+      max: 300, // limit each IP to 300 requests per minute for map data
+      message: 'Too many map requests, please slow down.',
+      standardHeaders: true,
+      legacyHeaders: false,
+      skipSuccessfulRequests: true, // Don't count successful requests
+      skipFailedRequests: false
+    });
+  }
+
+  /**
    * Get strict rate limiter for sensitive endpoints
    */
   getStrictRateLimiter() {
@@ -64,12 +79,12 @@ class SecurityMiddleware {
       contentSecurityPolicy: {
         directives: {
           defaultSrc: ["'self'"],
-          scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+          scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://unpkg.com", "https://cdnjs.cloudflare.com"],
           scriptSrcAttr: ["'unsafe-inline'"],
-          styleSrc: ["'self'", "'unsafe-inline'", "https://cdnjs.cloudflare.com"],
-          imgSrc: ["'self'", "data:", "https:"],
+          styleSrc: ["'self'", "'unsafe-inline'", "https://cdnjs.cloudflare.com", "https://unpkg.com", "https://fonts.googleapis.com"],
+          imgSrc: ["'self'", "data:", "https:", "https://unpkg.com", "https://cdnjs.cloudflare.com"],
           connectSrc: ["'self'", "ws:", "wss:"],
-          fontSrc: ["'self'", "https:", "data:", "https://cdnjs.cloudflare.com"],
+          fontSrc: ["'self'", "https:", "data:", "https://cdnjs.cloudflare.com", "https://fonts.gstatic.com", "https://unpkg.com"],
           objectSrc: ["'none'"],
           mediaSrc: ["'self'"],
           frameSrc: ["'none'"]

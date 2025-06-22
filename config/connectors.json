@@ -1,49 +1,10 @@
 {
   "connectors": [
     {
-      "id": "web-gui",
-      "type": "web-gui",
-      "name": "Web GUI",
-      "description": "Web-based graphical user interface",
-      "config": {
-        "webInterface": {
-          "enabled": true,
-          "port": "3000",
-          "host": "0.0.0.0"
-        },
-        "autoRegisterWithMaps": true,
-        "autoDiscoverConnectors": true,
-        "theme": "dark",
-        "layout": "default"
-      },
-      "capabilities": {
-        "enabled": [],
-        "disabled": []
-      }
-    },
-    {
-      "id": "main-map",
-      "type": "map",
-      "name": "Main Map",
-      "description": "Primary spatial visualization map",
-      "config": {
-        "autoRegisterConnectors": true,
-        "enableWebSockets": true,
-        "editMode": false,
-        "viewMode": "realtime",
-        "spatialElements": [],
-        "connectorContexts": []
-      },
-      "capabilities": {
-        "enabled": [],
-        "disabled": []
-      }
-    },
-    {
       "id": "adsb-main",
       "type": "adsb",
       "name": "ADSB Receiver",
-      "description": "Connector for dump1090 ADS-B receiver with enhanced features",
+      "description": "Primary ADSB aircraft data receiver with BaseStation integration",
       "config": {
         "url": "http://10.0.1.180/skyaware/data/aircraft.json",
         "pollInterval": 5000,
@@ -52,18 +13,43 @@
           "7600",
           "7700"
         ],
-        "maxAircraftAge": 300000,
         "radarRange": 50,
         "radarCenter": {
           "lat": 55.5074,
           "lon": -4.5933
         },
         "enableSquawkCodeAnalysis": true,
-        "enableBaseStationIntegration": false,
+        "enableBaseStationIntegration": true,
+        "baseStationDbPath": "./aviationdata/BaseStation.sqb",
         "enableAirspaceAwareness": true,
-        "enableFlightTracking": true,
-        "enableAircraftDataService": true,
-        "baseStationDbPath": "./aviationdata/BaseStation.sqb"
+        "airport": {
+          "icao": "EGPK",
+          "name": "Glasgow Prestwick Airport",
+          "lat": 55.5074,
+          "lon": -4.5933,
+          "runways": [
+            {
+              "id": "12/30",
+              "heading": 120,
+              "length": 2987,
+              "active": true,
+              "threshold": {
+                "12": { "lat": 55.5074, "lon": -4.5933 },
+                "30": { "lat": 55.5074, "lon": -4.5933 }
+              }
+            },
+            {
+              "id": "03/21",
+              "heading": 30,
+              "length": 2987,
+              "active": false,
+              "threshold": {
+                "03": { "lat": 55.5074, "lon": -4.5933 },
+                "21": { "lat": 55.5074, "lon": -4.5933 }
+              }
+            }
+          ]
+        }
       },
       "capabilities": {
         "enabled": [
@@ -79,13 +65,206 @@
       }
     },
     {
+      "id": "unifi-protect-main",
+      "type": "unifi-protect",
+      "name": "UniFi Protect System",
+      "description": "Primary UniFi Protect video management system",
+      "config": {
+        "host": "10.0.0.1",
+        "port": 443,
+        "protocol": "https",
+        "apiKey": "dEWe0tk_uFV8dpdg9-iqEGAO_ndEBhjo",
+        "username": "",
+        "password": "",
+        "verifySSL": false,
+        "timeout": 10000,
+        "autoDiscovery": {
+          "enabled": true,
+          "refreshInterval": 300000,
+          "createEntities": true,
+          "subscribeToEvents": true,
+          "eventTypes": [
+            "motion",
+            "smart",
+            "ring",
+            "recording",
+            "connection"
+          ]
+        }
+      },
+      "capabilities": {
+        "enabled": [
+          "camera:management",
+          "camera:video:stream",
+          "camera:event:motion",
+          "system:info"
+        ],
+        "disabled": [
+          "system:users"
+        ]
+      }
+    },
+    {
+      "id": "mqtt-broker-main",
+      "type": "mqtt",
+      "name": "Primary MQTT Broker",
+      "description": "Main MQTT broker for system communication",
+      "config": {
+        "host": "localhost",
+        "port": 1883,
+        "protocol": "mqtt",
+        "clientId": "babelfish-lookingglass-main",
+        "username": "",
+        "password": "",
+        "keepalive": 60,
+        "reconnectPeriod": 5000,
+        "connectTimeout": 30000,
+        "clean": true,
+        "enabled": true,
+        "maxReconnectAttempts": 10,
+        "reschedulePings": true
+      },
+      "capabilities": {
+        "enabled": [
+          "mqtt:publish",
+          "mqtt:subscribe",
+          "mqtt:connection",
+          "mqtt:topics"
+        ],
+        "disabled": [
+          "mqtt:history"
+        ]
+      }
+    },
+    {
+      "id": "telegram-bot-main",
+      "type": "telegram",
+      "name": "Telegram Bot",
+      "description": "Telegram bot for notifications and alerts",
+      "config": {
+        "token": "YOUR_TELEGRAM_BOT_TOKEN",
+        "chatId": "@fhNYM0MnPJQ2NjE8",
+        "enabled": true,
+        "notifications": {
+          "motion": true,
+          "speed": true,
+          "system": true
+        }
+      },
+      "capabilities": {
+        "enabled": [
+          "telegram:send",
+          "telegram:receive",
+          "telegram:notify"
+        ],
+        "disabled": [
+          "telegram:commands"
+        ]
+      }
+    },
+    {
+      "id": "llm-main",
+      "type": "llm",
+      "name": "LLM Integration",
+      "description": "Large Language Model integration for autonomous operations",
+      "config": {
+        "provider": "openai",
+        "apiKey": "YOUR_OPENAI_API_KEY",
+        "model": "gpt-4",
+        "enabled": true,
+        "maxTokens": 1000,
+        "temperature": 0.7
+      },
+      "capabilities": {
+        "enabled": [
+          "llm:generate",
+          "llm:analyze",
+          "llm:respond"
+        ],
+        "disabled": [
+          "llm:train"
+        ]
+      }
+    },
+    {
+      "id": "map-main",
+      "type": "map",
+      "name": "Main Map",
+      "description": "Primary spatial visualization map",
+      "config": {
+        "autoRegisterConnectors": true,
+        "enableWebSockets": true,
+        "editMode": false,
+        "viewMode": "realtime",
+        "spatialElements": [],
+        "connectorContexts": []
+      },
+      "capabilities": {
+        "enabled": [
+          "spatial:config",
+          "visualization:realtime",
+          "integration:connector",
+          "context:spatial"
+        ],
+        "disabled": []
+      }
+    },
+    {
+      "id": "web-gui-main",
+      "type": "web-gui",
+      "name": "Web GUI",
+      "description": "Web-based graphical user interface",
+      "config": {
+        "webInterface": {
+          "enabled": true,
+          "port": 3000,
+          "host": "localhost"
+        },
+        "autoRegisterWithMaps": true,
+        "autoDiscoverConnectors": true,
+        "theme": "dark",
+        "layout": "default"
+      },
+      "capabilities": {
+        "enabled": [
+          "gui:pages",
+          "gui:components",
+          "gui:realtime",
+          "gui:integration"
+        ],
+        "disabled": []
+      }
+    },
+    {
       "id": "speed-calculation-main",
       "type": "speed-calculation",
       "name": "Main Speed Calculation",
       "description": "Primary speed calculation service",
-      "config": {},
+      "config": {
+        "enabled": true,
+        "calculationInterval": 1000,
+        "enableLogging": true,
+        "minTimeBetweenDetections": 1000,
+        "maxTimeBetweenDetections": 300000,
+        "minSpeedThreshold": 5,
+        "maxSpeedThreshold": 200,
+        "confidenceThreshold": 0.8,
+        "retentionHours": 24,
+        "alerts": {
+          "enabled": true,
+          "threshold": 100,
+          "highThreshold": 120,
+          "mediumThreshold": 100
+        },
+        "realTimeUpdates": true,
+        "webGuiIntegration": true
+      },
       "capabilities": {
-        "enabled": [],
+        "enabled": [
+          "speed:calculation",
+          "detection:points",
+          "integration:unifi"
+        ],
         "disabled": []
       }
     },
@@ -95,268 +274,167 @@
       "name": "Main Radar",
       "description": "Primary radar display service",
       "config": {
-        "id": "radar-main",
-        "type": "radar",
-        "name": "Main Radar",
-        "description": "Primary radar display service",
-        "config": {
-          "id": "radar-main",
-          "type": "radar",
-          "name": "Main Radar",
-          "description": "Primary radar display service",
-          "config": {
-            "id": "radar-main",
-            "type": "radar",
-            "name": "Main Radar",
-            "description": "Primary radar display service",
-            "config": {
-              "id": "radar-main",
-              "type": "radar",
-              "name": "Main Radar",
-              "description": "Primary radar display service",
-              "config": {
-                "id": "radar-main",
-                "type": "radar",
-                "name": "Main Radar",
-                "description": "Primary radar display service",
-                "config": {
-                  "id": "radar-main",
-                  "type": "radar",
-                  "name": "Main Radar",
-                  "description": "Primary radar display service",
-                  "config": {
-                    "id": "radar-main",
-                    "type": "radar",
-                    "name": "Main Radar",
-                    "description": "Primary radar display service",
-                    "config": {
-                      "id": "radar-main",
-                      "type": "radar",
-                      "name": "Main Radar",
-                      "description": "Primary radar display service",
-                      "config": {
-                        "id": "radar-main",
-                        "type": "radar",
-                        "name": "Main Radar",
-                        "description": "Primary radar display service",
-                        "config": {
-                          "id": "radar-main",
-                          "type": "radar",
-                          "name": "Main Radar",
-                          "description": "Primary radar display service",
-                          "config": {
-                            "id": "radar-main",
-                            "type": "radar",
-                            "name": "Main Radar",
-                            "description": "Primary radar display service",
-                            "config": {
-                              "id": "radar-main",
-                              "type": "radar",
-                              "name": "Main Radar",
-                              "description": "Primary radar display service",
-                              "config": {
-                                "id": "radar-main",
-                                "type": "radar",
-                                "name": "Main Radar",
-                                "description": "Primary radar display service",
-                                "config": {
-                                  "id": "radar-main",
-                                  "type": "radar",
-                                  "name": "Main Radar",
-                                  "description": "Primary radar display service",
-                                  "config": {
-                                    "id": "radar-main",
-                                    "type": "radar",
-                                    "name": "Main Radar",
-                                    "description": "Primary radar display service",
-                                    "config": {
-                                      "id": "radar-main",
-                                      "type": "radar",
-                                      "name": "Main Radar",
-                                      "description": "Primary radar display service",
-                                      "config": {
-                                        "id": "radar-main",
-                                        "type": "radar",
-                                        "name": "Main Radar",
-                                        "description": "Primary radar display service",
-                                        "config": {
-                                          "id": "radar-main",
-                                          "type": "radar",
-                                          "name": "Main Radar",
-                                          "description": "Primary radar display service",
-                                          "config": {
-                                            "id": "radar-main",
-                                            "type": "radar",
-                                            "name": "Main Radar",
-                                            "description": "Primary radar display service",
-                                            "config": {
-                                              "id": "radar-main",
-                                              "type": "radar",
-                                              "name": "Main Radar",
-                                              "description": "Primary radar display service",
-                                              "config": {
-                                                "id": "radar-main",
-                                                "type": "radar",
-                                                "name": "Main Radar",
-                                                "description": "Primary radar display service",
-                                                "enabled": true,
-                                                "logger": {}
-                                              },
-                                              "capabilities": {
-                                                "enabled": [],
-                                                "disabled": []
-                                              },
-                                              "logger": {}
-                                            },
-                                            "capabilities": {
-                                              "enabled": [],
-                                              "disabled": []
-                                            },
-                                            "logger": {}
-                                          },
-                                          "capabilities": {
-                                            "enabled": [],
-                                            "disabled": []
-                                          },
-                                          "logger": {}
-                                        },
-                                        "capabilities": {
-                                          "enabled": [],
-                                          "disabled": []
-                                        },
-                                        "logger": {}
-                                      },
-                                      "capabilities": {
-                                        "enabled": [],
-                                        "disabled": []
-                                      },
-                                      "logger": {}
-                                    },
-                                    "capabilities": {
-                                      "enabled": [],
-                                      "disabled": []
-                                    },
-                                    "logger": {}
-                                  },
-                                  "capabilities": {
-                                    "enabled": [],
-                                    "disabled": []
-                                  },
-                                  "logger": {}
-                                },
-                                "capabilities": {
-                                  "enabled": [],
-                                  "disabled": []
-                                },
-                                "logger": {}
-                              },
-                              "capabilities": {
-                                "enabled": [],
-                                "disabled": []
-                              },
-                              "logger": {}
-                            },
-                            "capabilities": {
-                              "enabled": [],
-                              "disabled": []
-                            },
-                            "logger": {}
-                          },
-                          "capabilities": {
-                            "enabled": [],
-                            "disabled": []
-                          },
-                          "logger": {}
-                        },
-                        "capabilities": {
-                          "enabled": [],
-                          "disabled": []
-                        },
-                        "logger": {}
-                      },
-                      "capabilities": {
-                        "enabled": [],
-                        "disabled": []
-                      },
-                      "logger": {}
-                    },
-                    "capabilities": {
-                      "enabled": [],
-                      "disabled": []
-                    },
-                    "logger": {}
-                  },
-                  "capabilities": {
-                    "enabled": [],
-                    "disabled": []
-                  },
-                  "logger": {}
-                },
-                "capabilities": {
-                  "enabled": [],
-                  "disabled": []
-                },
-                "logger": {}
-              },
-              "capabilities": {
-                "enabled": [],
-                "disabled": []
-              },
-              "logger": {}
-            },
-            "capabilities": {
-              "enabled": [],
-              "disabled": []
-            },
-            "logger": {}
-          },
-          "capabilities": {
-            "enabled": [],
-            "disabled": []
-          },
-          "logger": {}
+        "enabled": true,
+        "displayRange": 50,
+        "updateInterval": 1000,
+        "center": {
+          "lat": 55.5074,
+          "lon": -4.5933
         },
-        "capabilities": {
-          "enabled": [],
-          "disabled": []
-        },
-        "logger": {}
+        "showAirspace": true,
+        "showTraffic": true
       },
       "capabilities": {
-        "enabled": [],
+        "enabled": [
+          "radar:display",
+          "radar:tracking",
+          "radar:zones"
+        ],
+        "disabled": [
+          "radar:record"
+        ]
+      }
+    },
+    {
+      "id": "aprs-main",
+      "type": "aprs",
+      "name": "APRS UK Tracking",
+      "description": "APRS.fi API integration for UK amateur radio station tracking and visualization",
+      "config": {
+        "apiKey": "52628.6y7Il9Hp5bjt9F",
+        "pollInterval": 30000,
+        "ukBounds": {
+          "north": 60.8604,
+          "south": 49.1623,
+          "east": 1.7633,
+          "west": -8.6500
+        },
+        "enabled": true,
+        "autoConnect": true,
+        "enableWeatherData": true,
+        "enableMessageMonitoring": false,
+        "maxStations": 1000,
+        "stationFilter": {
+          "activeOnly": true,
+          "maxAgeHours": 24,
+          "includeWeather": true,
+          "includeMobile": true
+        }
+      },
+      "capabilities": {
+        "enabled": [
+          "aprs:tracking",
+          "aprs:weather",
+          "aprs:visualization"
+        ],
+        "disabled": [
+          "aprs:messages"
+        ]
+      }
+    },
+    {
+      "id": "remotion-main",
+      "type": "remotion",
+      "name": "Remotion Video Renderer",
+      "description": "Templated video rendering using Remotion with data from other connectors",
+      "config": {
+        "outputDir": "./renders",
+        "templatesDir": "./templates",
+        "remotionProjectDir": "./remotion-project",
+        "defaultFps": 30,
+        "defaultDuration": 10,
+        "quality": "medium",
+        "enableAudio": true,
+        "enableSubtitles": true,
+        "enabled": true,
+        "autoConnect": true
+      },
+      "capabilities": {
+        "enabled": [
+          "video-rendering",
+          "template-management",
+          "data-integration",
+          "flight-visualization",
+          "event-timeline"
+        ],
         "disabled": []
       }
     },
     {
-      "id": "unifi-protect-main",
-      "type": "unifi-protect",
-      "name": "UniFi Protect",
-      "description": "Primary UniFi Protect system",
+      "id": "overwatch-main",
+      "type": "overwatch",
+      "name": "Overwatch System Monitor",
+      "description": "Comprehensive system monitoring and management GUI with real-time event tracking",
       "config": {
-        "host": "10.0.0.1",
-        "port": 443,
-        "protocol": "https",
-        "apiKey": "wye3aapIuxAz2omKg4WFdCSncRBfSzPx",
-        "verifySSL": false,
-        "timeout": 10000,
-        "autoDiscoverCameras": true,
-        "enableWebSocketEvents": true,
-        "enableMotionDetection": true,
-        "enableSmartDetection": true,
-        "enableANPR": true,
-        "enableLineCrossing": true,
-        "eventTypes": [
-          "motion",
-          "smartDetect",
-          "smartDetectLine",
-          "smartDetectZone",
-          "anpr"
-        ]
+        "defaultConnectors": ["unifi-protect-main", "adsb-main"],
+        "maxEventHistory": 1000,
+        "enableWebSockets": true,
+        "autoConnect": true,
+        "healthCheckInterval": 30000,
+        "eventFilterPresets": {
+          "all": {
+            "name": "All Events",
+            "description": "Show all events from all connectors",
+            "filters": {}
+          },
+          "security": {
+            "name": "Security Events",
+            "description": "Show security-related events only",
+            "filters": {
+              "eventType": ["motion", "smartDetect", "loitering", "intrusion"],
+              "priority": ["high", "critical"]
+            }
+          },
+          "aircraft": {
+            "name": "Aircraft Events",
+            "description": "Show aircraft-related events only",
+            "filters": {
+              "source": ["adsb"],
+              "eventType": ["aircraft:detected", "aircraft:emergency", "aircraft:zone"]
+            }
+          },
+          "system": {
+            "name": "System Events",
+            "description": "Show system health and status events",
+            "filters": {
+              "eventType": ["system:status", "connector:status", "health:check"]
+            }
+          }
+        }
       },
       "capabilities": {
         "enabled": [
-          "camera:management",
-          "system:users"
+          "overwatch:flows",
+          "overwatch:rules",
+          "overwatch:events",
+          "overwatch:connectors",
+          "overwatch:system"
+        ],
+        "disabled": []
+      }
+    },
+    {
+      "id": "notam-main",
+      "type": "notam",
+      "name": "UK NOTAM Data",
+      "description": "UK NOTAM data integration with geospatial analysis and proximity alerts",
+      "config": {
+        "notamUrl": "https://github.com/Jonty/uk-notam-archive/blob/main/data/PIB.xml",
+        "pollInterval": 1200000,
+        "ukBounds": {
+          "north": 60.8604,
+          "south": 49.1623,
+          "east": 1.7633,
+          "west": -8.6500
+        }
+      },
+      "capabilities": {
+        "enabled": [
+          "notam:tracking",
+          "notam:geospatial",
+          "notam:proximity",
+          "notam:temporal",
+          "notam:map:visualization"
         ],
         "disabled": []
       }

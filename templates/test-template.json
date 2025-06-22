@@ -1,0 +1,11 @@
+{
+  "id": "test-template",
+  "name": "Test Template",
+  "description": "A test video template",
+  "componentName": "TestComponent",
+  "componentPath": "TestComponent.jsx",
+  "width": 1920,
+  "height": 1080,
+  "createdAt": "2025-06-22T01:51:30.547Z",
+  "updatedAt": "2025-06-22T01:51:30.547Z"
+}

@@ -24,11 +24,10 @@ const logger = winston.createLogger({
 });
 
 // Import services (these will be injected from the main server)
-let unifiAPI, eventProcessor, mqttBroker, cache, connectorRegistry, entityManager, analyticsEngine, dashboardService, flowOrchestrator;
+let eventProcessor, mqttBroker, cache, connectorRegistry, entityManager, analyticsEngine, dashboardService, flowOrchestrator;
 
 // Middleware to inject services
 function injectServices(services) {
-  unifiAPI = services.unifiAPI;
   eventProcessor = services.eventProcessor;
   mqttBroker = services.mqttBroker;
   cache = services.cache;
@@ -859,6 +858,38 @@ router.get('/adsb/debug', (req, res) => {
   }
 });
 
+// Debug endpoint for aircraft data service
+router.get('/aircraft-data/debug', async (req, res) => {
+  try {
+    const aircraftDataService = req.app.locals.aircraftDataService;
+    
+    if (!aircraftDataService) {
+      return res.status(500).json({ success: false, error: 'Aircraft Data Service not found' });
+    }
+    
+    // Test getting recent events
+    const recentEvents = await aircraftDataService.getRecentEvents(24, 'flight_started');
+    
+    const debugInfo = {
+      serviceStatus: 'available',
+      recentEvents: {
+        count: recentEvents.length,
+        events: recentEvents.slice(0, 5).map(event => ({
+          icao24: event.icao24,
+          event_type: event.event_type,
+          timestamp: event.timestamp,
+          event_data: event.event_data ? JSON.parse(event.event_data) : null
+        }))
+      },
+      stats: await aircraftDataService.getStats()
+    };
+    
+    res.json({ success: true, data: debugInfo });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 router.get('/radar/airport-vectors', (req, res) => {
   try {
     const airportVectorService = req.app.locals.airportVectorService;
@@ -1105,6 +1136,100 @@ router.get('/adsb/aircraft/enhanced', async (req, res) => {
       baseStation: baseStationStats.baseStation
     });
   } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Remotion Connector API Routes
+router.post('/connectors/remotion/execute', async (req, res) => {
+  try {
+    const connectorRegistry = req.app.locals.connectorRegistry;
+    if (!connectorRegistry) {
+      return res.status(500).json({ success: false, error: 'Connector Registry not initialized' });
+    }
+
+    const remotionConnector = connectorRegistry.getConnectorsByType('remotion')[0];
+    if (!remotionConnector) {
+      return res.status(404).json({ success: false, error: 'Remotion connector not found' });
+    }
+
+    const { capabilityId, operation, parameters = {} } = req.body;
+
+    if (!capabilityId || !operation) {
+      return res.status(400).json({ success: false, error: 'capabilityId and operation are required' });
+    }
+
+    const result = await remotionConnector.execute(capabilityId, operation, parameters);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    logger.error('Remotion connector execution failed', { error: error.message });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/connectors/remotion/stats', async (req, res) => {
+  try {
+    const connectorRegistry = req.app.locals.connectorRegistry;
+    if (!connectorRegistry) {
+      return res.status(500).json({ success: false, error: 'Connector Registry not initialized' });
+    }
+
+    const remotionConnector = connectorRegistry.getConnectorsByType('remotion')[0];
+    if (!remotionConnector) {
+      return res.status(404).json({ success: false, error: 'Remotion connector not found' });
+    }
+
+    const stats = remotionConnector.getRenderStats();
+    res.json({ success: true, data: stats });
+  } catch (error) {
+    logger.error('Failed to get Remotion stats', { error: error.message });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/connectors/remotion/templates', async (req, res) => {
+  try {
+    const connectorRegistry = req.app.locals.connectorRegistry;
+    if (!connectorRegistry) {
+      return res.status(500).json({ success: false, error: 'Connector Registry not initialized' });
+    }
+
+    const remotionConnector = connectorRegistry.getConnectorsByType('remotion')[0];
+    if (!remotionConnector) {
+      return res.status(404).json({ success: false, error: 'Remotion connector not found' });
+    }
+
+    const templates = await remotionConnector.listTemplates(req.query);
+    res.json({ success: true, data: templates });
+  } catch (error) {
+    logger.error('Failed to get Remotion templates', { error: error.message });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/connectors/remotion/renders', async (req, res) => {
+  try {
+    const connectorRegistry = req.app.locals.connectorRegistry;
+    if (!connectorRegistry) {
+      return res.status(500).json({ success: false, error: 'Connector Registry not initialized' });
+    }
+
+    const remotionConnector = connectorRegistry.getConnectorsByType('remotion')[0];
+    if (!remotionConnector) {
+      return res.status(404).json({ success: false, error: 'Remotion connector not found' });
+    }
+
+    const { renderId } = req.query;
+    
+    if (renderId) {
+      const renderStatus = await remotionConnector.getRenderStatus(renderId);
+      res.json({ success: true, data: renderStatus });
+    } else {
+      const activeRenders = Array.from(remotionConnector.activeRenders.values());
+      res.json({ success: true, data: activeRenders });
+    }
+  } catch (error) {
+    logger.error('Failed to get Remotion renders', { error: error.message });
     res.status(500).json({ success: false, error: error.message });
   }
 });

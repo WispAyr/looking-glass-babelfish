@@ -148,48 +148,14 @@ class MapConnector extends BaseConnector {
   }
 
   /**
-   * Execute capability operations
+   * Override executeCapability to handle integration:connector
    */
   async executeCapability(capabilityId, operation, parameters) {
-    if (this.debug.traceEvents) {
-      this.logger.debug(`Executing capability: ${capabilityId}.${operation}`, parameters);
+    if (capabilityId === 'integration:connector') {
+      return await this.executeConnectorIntegration(operation, parameters);
     }
-
-    const startTime = Date.now();
-    
-    try {
-      let result;
-      switch (capabilityId) {
-        case 'spatial:config':
-          result = await this.executeSpatialConfig(operation, parameters);
-          break;
-        case 'visualization:realtime':
-          result = await this.executeVisualization(operation, parameters);
-          break;
-        case 'integration:connector':
-          result = await this.executeConnectorIntegration(operation, parameters);
-          break;
-        case 'context:spatial':
-          result = await this.executeContextManagement(operation, parameters);
-          break;
-        default:
-          throw new Error(`Unknown capability: ${capabilityId}`);
-      }
-
-      if (this.debug.performanceMetrics) {
-        const duration = Date.now() - startTime;
-        this.logger.debug(`Capability execution completed in ${duration}ms`, {
-          capabilityId,
-          operation,
-          duration
-        });
-      }
-
-      return result;
-    } catch (error) {
-      this.logger.error(`Capability execution failed: ${capabilityId}.${operation}`, error);
-      throw error;
-    }
+    // Fallback to original implementation if not integration:connector
+    return super.executeCapability(capabilityId, operation, parameters);
   }
 
   /**
@@ -242,7 +208,20 @@ class MapConnector extends BaseConnector {
       case 'register':
         return await this.registerConnector(parameters);
       case 'unregister':
-        return await this.unregisterConnector(parameters);
+        // Defensive check to ensure method exists
+        if (typeof this.unregisterConnector === 'function') {
+          return await this.unregisterConnector(parameters);
+        } else {
+          this.logger.warn('unregisterConnector method not found, using fallback');
+          // Fallback implementation
+          const { connectorId } = parameters;
+          if (this.connectorContexts && this.connectorContexts.has(connectorId)) {
+            this.connectorContexts.delete(connectorId);
+            this.logger.info(`Unregistered connector (fallback): ${connectorId}`);
+            return { success: true, connectorId };
+          }
+          return { success: false, message: 'Connector not found' };
+        }
       case 'configure':
         return await this.configureConnector(parameters);
       case 'query':
@@ -633,26 +612,25 @@ class MapConnector extends BaseConnector {
    * Subscribe to a data stream
    */
   async subscribeToDataStream(parameters) {
-    const { dataType, filter, visual } = parameters;
+    const { dataType, filter = {}, visual = {} } = parameters;
     
     const streamId = this.generateStreamId(dataType);
     
-    const stream = {
+    const dataStream = {
       id: streamId,
-      dataType,
-      filter,
-      visual,
-      active: true,
-      subscribers: new Set(),
-      lastData: null
+      dataType: dataType,
+      filter: filter,
+      visual: visual,
+      subscribed: new Date().toISOString(),
+      active: true
     };
 
-    this.dataStreams.set(streamId, stream);
-
+    this.dataStreams.set(streamId, dataStream);
+    
     this.logger.info(`Subscribed to data stream: ${streamId} (${dataType})`);
-    this.emit('data:subscribed', stream);
+    this.emit('stream:subscribed', dataStream);
 
-    return stream;
+    return { success: true, streamId, dataType };
   }
 
   /**
@@ -661,41 +639,213 @@ class MapConnector extends BaseConnector {
   async unsubscribeFromDataStream(parameters) {
     const { streamId } = parameters;
     
-    const stream = this.dataStreams.get(streamId);
-    if (!stream) {
-      throw new Error(`Stream not found: ${streamId}`);
+    const dataStream = this.dataStreams.get(streamId);
+    if (!dataStream) {
+      this.logger.warn(`Data stream not found: ${streamId}`);
+      return { success: false, message: 'Stream not found' };
     }
 
-    stream.active = false;
+    dataStream.active = false;
     this.dataStreams.delete(streamId);
-
+    
     this.logger.info(`Unsubscribed from data stream: ${streamId}`);
-    this.emit('data:unsubscribed', stream);
+    this.emit('stream:unsubscribed', { streamId, dataType: dataStream.dataType });
 
     return { success: true, streamId };
   }
 
   /**
-   * Register a connector for integration
+   * Set data filter for visualization
+   */
+  async setDataFilter(parameters) {
+    const { streamId, filter = {} } = parameters;
+    
+    const dataStream = this.dataStreams.get(streamId);
+    if (!dataStream) {
+      throw new Error(`Data stream not found: ${streamId}`);
+    }
+
+    dataStream.filter = { ...dataStream.filter, ...filter };
+    
+    this.logger.info(`Updated data filter for stream: ${streamId}`);
+    this.emit('filter:updated', { streamId, filter: dataStream.filter });
+
+    return { success: true, streamId, filter: dataStream.filter };
+  }
+
+  /**
+   * Highlight an element on the map
+   */
+  async highlightElement(parameters) {
+    const { elementId, highlight = true, style = {} } = parameters;
+    
+    const element = this.spatialData.get(elementId);
+    if (!element) {
+      throw new Error(`Element not found: ${elementId}`);
+    }
+
+    // Update element with highlight properties
+    const updatedElement = {
+      ...element,
+      highlighted: highlight,
+      highlightStyle: style,
+      metadata: {
+        ...element.metadata,
+        updated: new Date().toISOString()
+      }
+    };
+
+    this.spatialData.set(elementId, updatedElement);
+    
+    this.logger.info(`Highlighted element: ${elementId}`);
+    this.emit('element:highlighted', { elementId, highlighted: highlight, style });
+
+    return { success: true, elementId, highlighted: highlight };
+  }
+
+  /**
+   * Animate an element on the map
+   */
+  async animateElement(parameters) {
+    const { elementId, animation = {}, duration = 1000 } = parameters;
+    
+    const element = this.spatialData.get(elementId);
+    if (!element) {
+      throw new Error(`Element not found: ${elementId}`);
+    }
+
+    // Add animation data to element
+    const updatedElement = {
+      ...element,
+      animation: {
+        ...animation,
+        duration: duration,
+        startTime: new Date().toISOString()
+      },
+      metadata: {
+        ...element.metadata,
+        updated: new Date().toISOString()
+      }
+    };
+
+    this.spatialData.set(elementId, updatedElement);
+    
+    this.logger.info(`Started animation for element: ${elementId}`);
+    this.emit('element:animation:started', { elementId, animation, duration });
+
+    return { success: true, elementId, animation: updatedElement.animation };
+  }
+
+  /**
+   * Register a connector with the map
    */
   async registerConnector(parameters) {
-    const { connectorId, context, capabilities } = parameters;
+    const { connectorId, context = {}, capabilities = [] } = parameters;
     
     const connectorContext = {
       id: connectorId,
-      context: context || {},
-      capabilities: capabilities || [],
+      context: context,
+      capabilities: capabilities,
       registered: new Date().toISOString(),
-      lastSync: null,
-      status: 'registered'
+      lastSync: new Date().toISOString()
     };
 
     this.connectorContexts.set(connectorId, connectorContext);
-
+    
     this.logger.info(`Registered connector: ${connectorId}`);
-    this.emit('connector:registered', connectorContext);
+    this.emit('connector:registered', { connectorId, timestamp: new Date().toISOString() });
 
-    return connectorContext;
+    return { success: true, connectorId };
+  }
+
+  /**
+   * Configure a connector's integration settings
+   */
+  async configureConnector(parameters) {
+    const { connectorId, config = {} } = parameters;
+    
+    const connectorContext = this.connectorContexts.get(connectorId);
+    if (!connectorContext) {
+      throw new Error(`Connector not found: ${connectorId}`);
+    }
+
+    // Update configuration
+    connectorContext.config = { ...connectorContext.config, ...config };
+    connectorContext.lastSync = new Date().toISOString();
+
+    this.logger.info(`Configured connector: ${connectorId}`);
+    this.emit('connector:configured', { connectorId, config, timestamp: new Date().toISOString() });
+
+    return { success: true, connectorId, config: connectorContext.config };
+  }
+
+  /**
+   * Query connector data
+   */
+  async queryConnector(parameters) {
+    const { connectorId, query = {} } = parameters;
+    
+    const connectorContext = this.connectorContexts.get(connectorId);
+    if (!connectorContext) {
+      throw new Error(`Connector not found: ${connectorId}`);
+    }
+
+    // Return connector context data
+    return {
+      success: true,
+      connectorId,
+      data: connectorContext.context,
+      capabilities: connectorContext.capabilities,
+      lastSync: connectorContext.lastSync
+    };
+  }
+
+  /**
+   * Sync data with a connector
+   */
+  async syncConnectorData(parameters) {
+    const { connectorId, data = {} } = parameters;
+    
+    const connectorContext = this.connectorContexts.get(connectorId);
+    if (!connectorContext) {
+      throw new Error(`Connector not found: ${connectorId}`);
+    }
+
+    // Update context with new data
+    connectorContext.context = { ...connectorContext.context, ...data };
+    connectorContext.lastSync = new Date().toISOString();
+
+    this.logger.info(`Synced data with connector: ${connectorId}`);
+    this.emit('connector:synced', { connectorId, data, timestamp: new Date().toISOString() });
+
+    return { success: true, connectorId, lastSync: connectorContext.lastSync };
+  }
+
+  /**
+   * Unregister a connector from the map
+   */
+  async unregisterConnector(parameters) {
+    const { connectorId } = parameters;
+    
+    const connectorContext = this.connectorContexts.get(connectorId);
+    if (!connectorContext) {
+      this.logger.warn(`Connector not found for unregistration: ${connectorId}`);
+      return { success: false, message: 'Connector not found' };
+    }
+
+    // Remove connector context
+    this.connectorContexts.delete(connectorId);
+
+    // Remove any linked elements from this connector
+    const linkedElements = this.getLinkedElements(connectorId);
+    for (const element of linkedElements) {
+      await this.unlinkElementFromConnector(element.id);
+    }
+
+    this.logger.info(`Unregistered connector: ${connectorId}`);
+    this.emit('connector:unregistered', { connectorId, timestamp: new Date().toISOString() });
+
+    return { success: true, connectorId };
   }
 
   /**
@@ -743,6 +893,111 @@ class MapConnector extends BaseConnector {
     }
 
     throw new Error(`Context not found: ${contextId}`);
+  }
+
+  /**
+   * Link contexts together
+   */
+  async linkContext(parameters) {
+    const { sourceContextId, targetContextId, relationship = {} } = parameters;
+    
+    const relationshipId = `rel-${sourceContextId}-${targetContextId}`;
+    
+    const contextRelationship = {
+      id: relationshipId,
+      source: sourceContextId,
+      target: targetContextId,
+      relationship: relationship,
+      created: new Date().toISOString()
+    };
+
+    // Store relationship (could be in a separate Map)
+    if (!this.contextRelationships) {
+      this.contextRelationships = new Map();
+    }
+    this.contextRelationships.set(relationshipId, contextRelationship);
+    
+    this.logger.info(`Linked contexts: ${sourceContextId} -> ${targetContextId}`);
+    this.emit('context:linked', contextRelationship);
+
+    return { success: true, relationshipId, source: sourceContextId, target: targetContextId };
+  }
+
+  /**
+   * Unlink contexts
+   */
+  async unlinkContext(parameters) {
+    const { relationshipId } = parameters;
+    
+    if (!this.contextRelationships || !this.contextRelationships.has(relationshipId)) {
+      this.logger.warn(`Context relationship not found: ${relationshipId}`);
+      return { success: false, message: 'Relationship not found' };
+    }
+
+    const relationship = this.contextRelationships.get(relationshipId);
+    this.contextRelationships.delete(relationshipId);
+    
+    this.logger.info(`Unlinked contexts: ${relationship.source} -> ${relationship.target}`);
+    this.emit('context:unlinked', relationship);
+
+    return { success: true, relationshipId };
+  }
+
+  /**
+   * Export context data
+   */
+  async exportContext(parameters) {
+    const { contextId, format = 'json' } = parameters;
+    
+    let contextData;
+    if (contextId.startsWith('connector:')) {
+      const connectorId = contextId.replace('connector:', '');
+      const connectorContext = this.connectorContexts.get(connectorId);
+      if (connectorContext) {
+        contextData = connectorContext.context;
+      }
+    }
+
+    if (!contextData) {
+      throw new Error(`Context not found: ${contextId}`);
+    }
+
+    const exportData = {
+      contextId,
+      data: contextData,
+      exported: new Date().toISOString(),
+      format
+    };
+
+    this.logger.info(`Exported context: ${contextId}`);
+    this.emit('context:exported', exportData);
+
+    return exportData;
+  }
+
+  /**
+   * Import context data
+   */
+  async importContext(parameters) {
+    const { contextId, data = {}, overwrite = false } = parameters;
+    
+    if (contextId.startsWith('connector:')) {
+      const connectorId = contextId.replace('connector:', '');
+      const connectorContext = this.connectorContexts.get(connectorId);
+      if (connectorContext) {
+        if (overwrite) {
+          connectorContext.context = data;
+        } else {
+          connectorContext.context = { ...connectorContext.context, ...data };
+        }
+        connectorContext.lastSync = new Date().toISOString();
+      }
+    }
+
+    this.logger.info(`Imported context: ${contextId}`);
+    this.emit('context:imported', { contextId, data });
+
+    return { success: true, contextId };
   }
 
   /**

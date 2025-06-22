@@ -1,0 +1,51 @@
+{
+  "id": "flight-path-enhanced",
+  "name": "Enhanced Flight Path Template",
+  "description": "Stunning flight path visualization with enhanced visual effects, data overlays, and smooth animations",
+  "componentName": "EnhancedFlightPathComponent",
+  "componentPath": "EnhancedFlightPathComponent.jsx",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "durationInFrames": 450,
+  "defaultDuration": 15,
+  "metadata": {
+    "version": "2.0",
+    "features": [
+      "Interactive flight path animation",
+      "Real-time data overlays",
+      "Weather integration",
+      "Airspace visualization",
+      "Speed and altitude graphs",
+      "Aircraft information display",
+      "Emergency alerts",
+      "Smooth camera movements",
+      "Particle effects",
+      "Professional typography"
+    ],
+    "supportedData": [
+      "Flight path coordinates",
+      "Aircraft metadata",
+      "Speed and altitude data",
+      "Airspace boundaries",
+      "Weather conditions",
+      "Emergency squawks",
+      "Timeline events"
+    ]
+  },
+  "config": {
+    "mapStyle": "satellite",
+    "animationSpeed": "normal",
+    "showDataOverlays": true,
+    "showAirspace": true,
+    "showWeather": false,
+    "showParticles": true,
+    "cameraMovement": "smooth",
+    "colorScheme": "aviation",
+    "fontFamily": "monospace",
+    "enableAudio": true,
+    "enableSubtitles": true
+  },
+  "createdAt": "2025-06-22T15:50:00.000Z",
+  "updatedAt": "2025-06-22T15:50:00.000Z"
+} 

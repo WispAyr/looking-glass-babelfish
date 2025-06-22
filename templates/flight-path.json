@@ -1,0 +1,11 @@
+{
+  "id": "flight-path",
+  "name": "Flight Path Template",
+  "description": "Flight path visualization template",
+  "componentName": "FlightPathComponent",
+  "componentPath": "FlightPathComponent.jsx",
+  "width": 1920,
+  "height": 1080,
+  "createdAt": "2025-06-22T02:22:51.265Z",
+  "updatedAt": "2025-06-22T02:22:51.265Z"
+}

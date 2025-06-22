@@ -1,597 +1,686 @@
-# Flow System Documentation
+# Flow System
 
 ## Overview
 
-The Babelfish Looking Glass Flow System is a powerful event-driven automation platform that processes events from Unifi Protect systems and executes configurable rules and actions. It provides a complete solution for real-time monitoring, alerting, and automation.
-
-## Architecture
-
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Event Sources │    │   Event Bus     │    │   Rule Engine   │
-│   (Unifi, etc.) │───▶│   (Central Hub) │───▶│   (Processing)  │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-                                │                       │
-                                ▼                       ▼
-                       ┌─────────────────┐    ┌─────────────────┐
-                       │ Flow Orchestrator│    │ Action Framework│
-                       │ (Workflows)     │    │ (15+ Actions)   │
-                       └─────────────────┘    └─────────────────┘
-                                │                       │
-                                ▼                       ▼
-                       ┌─────────────────┐    ┌─────────────────┐
-                       │   Web GUI       │    │   External      │
-                       │   (Dashboard)   │    │   Integrations  │
-                       └─────────────────┘    └─────────────────┘
-```
+The Flow System is a powerful automation and orchestration engine that enables complex workflows and decision trees in the Looking Glass platform. It provides a flexible, event-driven architecture for creating sophisticated automation rules and multi-step processes.
 
 ## Core Components
 
-### 1. Event Bus
+### Flow Orchestrator
+The central component that manages flow execution, scheduling, and monitoring:
+- **Flow Management**: Create, update, delete, and manage flows
+- **Flow Execution**: Execute flows based on triggers and conditions
+- **Flow Monitoring**: Real-time monitoring of flow execution
+- **Flow Statistics**: Track performance and success rates
+- **Flow Templates**: Pre-built flow templates for common scenarios
 
-The Event Bus serves as the central nervous system of the flow system, handling all event routing and processing.
+### Rule Engine
+Advanced rule processing with complex conditions and actions:
+- **Condition Evaluation**: Support for multiple condition types and operators
+- **Action Execution**: Execute multiple actions per rule
+- **Rule Chaining**: Chain rules together for complex workflows
+- **Performance Optimization**: Efficient rule matching and execution
+- **Rule Templates**: Pre-built rule templates for common scenarios
 
-#### Features
+### Action Framework
+Extensible action system for automated responses:
+- **Built-in Actions**: Common actions like notifications, MQTT publishing, logging
+- **Custom Actions**: Extensible framework for custom actions
+- **Action Chaining**: Chain multiple actions together
+- **Error Handling**: Robust error handling and retry mechanisms
+- **Context Sharing**: Share context between actions in a flow
+
+### Event Bus
+Central event processing system:
 - **Event Normalization**: Standardizes events from all sources
-- **Event Routing**: Routes events to appropriate rules and subscribers
+- **Event Routing**: Routes events to appropriate flows and rules
 - **Event Storage**: Maintains event history with configurable limits
 - **Real-time Broadcasting**: Sends events to WebSocket clients and MQTT
 
-#### Event Format
-```javascript
+## Flow Definition
+
+### Basic Flow Structure
+```json
 {
-  id: "event-1234567890-abc123",
-  type: "motion",
-  source: "communications-van",
-  timestamp: "2025-06-20T15:30:00.000Z",
-  data: {
-    cameraId: "camera-1",
-    confidence: 0.95,
-    location: "front-door"
+  "id": "motion-alert-flow",
+  "name": "Motion Alert Flow",
+  "description": "Send motion alerts to Telegram",
+  "enabled": true,
+  "triggers": ["motion"],
+  "conditions": {
+    "confidence": { "operator": ">=", "value": 0.5 }
   },
-  metadata: {
-    normalized: true,
-    processed: false
-  }
-}
-```
-
-#### API Usage
-```javascript
-// Publish an event
-await eventBus.publishEvent({
-  type: 'motion',
-  source: 'communications-van',
-  data: { cameraId: 'camera-1' }
-});
-
-// Subscribe to events
-const subscriberId = eventBus.subscribe('motion', (event) => {
-  console.log('Motion detected:', event);
-});
-
-// Get events with filters
-const events = eventBus.getEvents({
-  type: 'motion',
-  since: '2025-06-20T00:00:00.000Z',
-  limit: 10
-});
-```
-
-### 2. Rule Engine
-
-The Rule Engine processes events and executes actions based on configurable rules.
-
-#### Rule Structure
-```javascript
-{
-  id: "motion-alert-rule",
-  name: "Motion Detection Alert",
-  description: "Send alert when motion is detected",
-  conditions: {
-    eventType: "motion",
-    source: "communications-van",
-    timeRange: {
-      start: "22:00",
-      end: "06:00"
-    },
-    data: {
-      confidence: { $gte: 0.8 }
-    }
-  },
-  actions: [
+  "actions": [
     {
-      type: "send_notification",
-      parameters: {
-        message: "Motion detected during night hours",
-        priority: "high",
-        channels: ["gui", "slack"]
-      }
-    },
-    {
-      type: "log_event",
-      parameters: {
-        level: "warn",
-        message: "Night motion alert"
+      "type": "telegram:send",
+      "parameters": {
+        "chatId": "{{config.telegram.chatId}}",
+        "message": "🚨 Motion detected on camera {{device}}",
+        "parseMode": "HTML"
       }
     }
   ],
-  metadata: {
-    enabled: true,
-    category: "security",
-    priority: 1
+  "metadata": {
+    "created": "2022-01-01T12:00:00.000Z",
+    "updated": "2022-01-01T12:00:00.000Z",
+    "version": "1.0.0"
   }
 }
 ```
 
-#### Condition Types
-
-##### Simple Conditions
-```javascript
-conditions: {
-  eventType: "motion",
-  source: "communications-van"
-}
-```
-
-##### Time-based Conditions
-```javascript
-conditions: {
-  timeRange: {
-    start: "22:00",  // 10 PM
-    end: "06:00"     // 6 AM
-  }
-}
-```
-
-##### Data-based Conditions
-```javascript
-conditions: {
-  data: {
-    confidence: { $gte: 0.8 },
-    cameraId: "front-door"
-  }
-}
-```
-
-##### Custom Conditions
-```javascript
-conditions: {
-  custom: (event) => {
-    return event.data.confidence > 0.9 && 
-           event.data.location === 'front-door';
-  }
-}
-```
-
-#### API Usage
-```javascript
-// Register a rule
-const ruleId = ruleEngine.registerRule(ruleDefinition);
-
-// Update a rule
-const updatedRule = ruleEngine.updateRule(ruleId, updates);
-
-// Enable/disable a rule
-ruleEngine.setRuleEnabled(ruleId, true);
-
-// Get all rules
-const rules = ruleEngine.getRules();
-
-// Get rule statistics
-const stats = ruleEngine.getStats();
-```
-
-### 3. Action Framework
-
-The Action Framework provides a comprehensive set of actions that can be executed by rules and flows.
-
-#### Available Actions
-
-##### Notification Actions
-```javascript
+### Advanced Flow with Multiple Actions
+```json
 {
-  type: "send_notification",
-  parameters: {
-    message: "Alert message",
-    priority: "high", // low, normal, high, critical
-    channels: ["gui", "slack", "email"]
-  }
-}
-
-{
-  type: "send_email",
-  parameters: {
-    to: "admin@example.com",
-    subject: "Security Alert",
-    body: "Motion detected at front door"
-  }
-}
-
-{
-  type: "send_sms",
-  parameters: {
-    to: "+1234567890",
-    message: "Security alert: Motion detected"
-  }
-}
-
-{
-  type: "slack_notify",
-  parameters: {
-    channel: "#security",
-    message: "🚨 Security alert!",
-    attachments: [...]
-  }
-}
-```
-
-##### MQTT Actions
-```javascript
-{
-  type: "mqtt_publish",
-  parameters: {
-    topic: "unifi/events/motion",
-    message: {
-      type: "motion",
-      source: "{{source}}",
-      timestamp: "{{timestamp}}"
-    },
-    qos: 1
-  }
-}
-
-{
-  type: "mqtt_subscribe",
-  parameters: {
-    topic: "unifi/control/+",
-    qos: 0
-  }
-}
-```
-
-##### Connector Actions
-```javascript
-{
-  type: "connector_execute",
-  parameters: {
-    connectorId: "van-unifi",
-    capabilityId: "camera:management",
-    operation: "snapshot",
-    parameters: {
-      cameraId: "camera-1"
-    }
-  }
-}
-
-{
-  type: "connector_connect",
-  parameters: {
-    connectorId: "van-unifi"
-  }
-}
-```
-
-##### System Actions
-```javascript
-{
-  type: "log_event",
-  parameters: {
-    level: "info", // debug, info, warn, error
-    message: "Event processed",
-    data: {
-      ruleId: "{{rule.id}}",
-      eventId: "{{event.id}}"
-    }
-  }
-}
-
-{
-  type: "store_data",
-  parameters: {
-    key: "motion_events",
-    value: {
-      timestamp: "{{timestamp}}",
-      source: "{{source}}"
-    },
-    ttl: 86400 // 24 hours
-  }
-}
-
-{
-  type: "http_request",
-  parameters: {
-    method: "POST",
-    url: "https://api.example.com/webhook",
-    headers: {
-      "Authorization": "Bearer token"
-    },
-    body: {
-      event: "{{type}}",
-      source: "{{source}}"
-    }
-  }
-}
-```
-
-##### Utility Actions
-```javascript
-{
-  type: "delay",
-  parameters: {
-    duration: 5000 // 5 seconds
-  }
-}
-
-{
-  type: "transform_data",
-  parameters: {
-    input: "{{data}}",
-    transform: {
-      type: "template",
-      template: "Motion detected at {{location}} with {{confidence}} confidence"
-    }
-  }
-}
-
-{
-  type: "conditional_action",
-  parameters: {
-    condition: "{{data.confidence > 0.9}}",
-    trueAction: {
-      type: "send_notification",
-      parameters: {
-        message: "High confidence motion detected"
-      }
-    },
-    falseAction: {
-      type: "log_event",
-      parameters: {
-        message: "Low confidence motion ignored"
-      }
-    }
-  }
-}
-```
-
-### 4. Flow Orchestrator
-
-The Flow Orchestrator manages complex multi-step workflows and coordinates between all components.
-
-#### Flow Structure
-```javascript
-{
-  id: "security-alert-flow",
-  name: "Security Alert Flow",
-  description: "Complete security alert workflow",
-  steps: [
+  "id": "emergency-aircraft-flow",
+  "name": "Emergency Aircraft Alert",
+  "description": "Comprehensive emergency aircraft alerting",
+  "enabled": true,
+  "triggers": ["aircraft:emergency"],
+  "conditions": {
+    "squawk": { "operator": "in", "value": ["7500", "7600", "7700"] }
+  },
+  "actions": [
     {
-      id: "motion-detection",
-      type: "rule",
-      ruleId: "motion-notification-rule"
-    },
-    {
-      id: "delay",
-      type: "action",
-      action: {
-        type: "delay",
-        parameters: { duration: 2000 }
+      "type": "telegram:send",
+      "parameters": {
+        "chatId": "{{config.telegram.chatId}}",
+        "message": "🚨 EMERGENCY AIRCRAFT DETECTED\n\n✈️ Callsign: {{callsign}}\n🆘 Squawk: {{squawk}}\n📍 Position: {{lat}}, {{lon}}\n🛩️ Altitude: {{altitude}}ft\n💨 Speed: {{speed}}kts",
+        "parseMode": "HTML"
       }
     },
     {
-      id: "snapshot",
-      type: "action",
-      action: {
-        type: "connector_execute",
-        parameters: {
-          connectorId: "van-unifi",
-          capabilityId: "camera:management",
-          operation: "snapshot"
+      "type": "mqtt:publish",
+      "parameters": {
+        "topic": "aircraft/emergency",
+        "message": {
+          "icao24": "{{icao24}}",
+          "callsign": "{{callsign}}",
+          "squawk": "{{squawk}}",
+          "timestamp": "{{timestamp}}"
         }
       }
     },
     {
-      id: "notification",
-      type: "action",
-      action: {
-        type: "send_notification",
-        parameters: {
-          message: "Security alert with snapshot captured"
+      "type": "log",
+      "parameters": {
+        "level": "warn",
+        "message": "Emergency aircraft detected: {{callsign}} ({{squawk}})"
+      }
+    }
+  ],
+  "errorHandling": {
+    "retryCount": 3,
+    "retryDelay": 5000,
+    "onError": "continue"
+  }
+}
+```
+
+### Conditional Flow with Branches
+```json
+{
+  "id": "smart-motion-flow",
+  "name": "Smart Motion Processing",
+  "description": "Process motion events based on confidence and type",
+  "enabled": true,
+  "triggers": ["motion", "smartdetect"],
+  "actions": [
+    {
+      "type": "condition",
+      "parameters": {
+        "condition": "{{confidence}} >= 0.8",
+        "onTrue": [
+          {
+            "type": "telegram:send",
+            "parameters": {
+              "chatId": "{{config.telegram.chatId}}",
+              "message": "🔍 High confidence motion: {{device}}"
+            }
+          }
+        ],
+        "onFalse": [
+          {
+            "type": "log",
+            "parameters": {
+              "level": "info",
+              "message": "Low confidence motion: {{device}} ({{confidence}})"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "condition",
+      "parameters": {
+        "condition": "{{eventType}} == 'smartdetect'",
+        "onTrue": [
+          {
+            "type": "telegram:send",
+            "parameters": {
+              "chatId": "{{config.telegram.chatId}}",
+              "message": "👤 Smart detection: {{detectionType}} on {{device}}"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
+```
+
+## Rule Definition
+
+### Basic Rule Structure
+```json
+{
+  "id": "high-confidence-motion",
+  "name": "High Confidence Motion Rule",
+  "description": "Rule for high confidence motion events",
+  "enabled": true,
+  "conditions": {
+    "eventType": "motion",
+    "confidence": { "operator": ">=", "value": 0.8 }
+  },
+  "actions": [
+    {
+      "type": "telegram:send",
+      "parameters": {
+        "chatId": "{{config.telegram.chatId}}",
+        "message": "🔍 High confidence motion detected on {{device}}"
+      }
+    }
+  ],
+  "priority": 1,
+  "metadata": {
+    "created": "2022-01-01T12:00:00.000Z",
+    "updated": "2022-01-01T12:00:00.000Z"
+  }
+}
+```
+
+### Complex Rule with Multiple Conditions
+```json
+{
+  "id": "critical-security-event",
+  "name": "Critical Security Event Rule",
+  "description": "Rule for critical security events",
+  "enabled": true,
+  "conditions": {
+    "and": [
+      {
+        "eventType": { "operator": "in", "value": ["motion", "smartdetect", "intrusion"] }
+      },
+      {
+        "confidence": { "operator": ">=", "value": 0.9 }
+      },
+      {
+        "or": [
+          { "priority": "high" },
+          { "priority": "critical" }
+        ]
+      }
+    ]
+  },
+  "actions": [
+    {
+      "type": "telegram:send",
+      "parameters": {
+        "chatId": "{{config.telegram.chatId}}",
+        "message": "🚨 CRITICAL SECURITY EVENT\n\n📹 Device: {{device}}\n🎯 Type: {{eventType}}\n📊 Confidence: {{confidence}}\n⏰ Time: {{timestamp}}",
+        "parseMode": "HTML"
+      }
+    },
+    {
+      "type": "mqtt:publish",
+      "parameters": {
+        "topic": "security/critical",
+        "message": {
+          "event": "{{eventType}}",
+          "device": "{{device}}",
+          "confidence": "{{confidence}}",
+          "timestamp": "{{timestamp}}"
         }
       }
     }
   ],
-  metadata: {
-    enabled: true,
-    category: "security"
+  "priority": 10
+}
+```
+
+## Action Types
+
+### Built-in Actions
+
+#### Telegram Send Action
+```json
+{
+  "type": "telegram:send",
+  "parameters": {
+    "chatId": "{{config.telegram.chatId}}",
+    "message": "Your message here",
+    "parseMode": "HTML",
+    "disableWebPagePreview": true,
+    "disableNotification": false
   }
 }
 ```
 
-#### Step Types
-
-##### Rule Steps
-```javascript
+#### MQTT Publish Action
+```json
 {
-  id: "rule-step",
-  type: "rule",
-  ruleId: "motion-notification-rule"
-}
-```
-
-##### Action Steps
-```javascript
-{
-  id: "action-step",
-  type: "action",
-  action: {
-    type: "send_notification",
-    parameters: { message: "Alert" }
+  "type": "mqtt:publish",
+  "parameters": {
+    "topic": "your/topic",
+    "message": {
+      "key": "value",
+      "timestamp": "{{timestamp}}"
+    },
+    "qos": 1,
+    "retain": false
   }
 }
 ```
 
-##### Condition Steps
-```javascript
+#### Log Action
+```json
 {
-  id: "condition-step",
-  type: "condition",
-  condition: "{{data.confidence > 0.8}}"
-}
-```
-
-##### Transform Steps
-```javascript
-{
-  id: "transform-step",
-  type: "transform",
-  input: "{{data}}",
-  transform: {
-    type: "template",
-    template: "Alert: {{message}}"
+  "type": "log",
+  "parameters": {
+    "level": "info",
+    "message": "Log message with {{variables}}",
+    "context": {
+      "flowId": "{{flowId}}",
+      "eventId": "{{eventId}}"
+    }
   }
 }
 ```
 
-## Configuration
+#### HTTP Request Action
+```json
+{
+  "type": "http:request",
+  "parameters": {
+    "method": "POST",
+    "url": "https://api.example.com/webhook",
+    "headers": {
+      "Content-Type": "application/json",
+      "Authorization": "Bearer {{config.apiKey}}"
+    },
+    "body": {
+      "event": "{{eventType}}",
+      "data": "{{data}}"
+    },
+    "timeout": 10000
+  }
+}
+```
 
-### Flow System Configuration
+#### Database Action
+```json
+{
+  "type": "database:insert",
+  "parameters": {
+    "table": "events",
+    "data": {
+      "event_type": "{{eventType}}",
+      "device": "{{device}}",
+      "timestamp": "{{timestamp}}",
+      "confidence": "{{confidence}}"
+    }
+  }
+}
+```
+
+#### Delay Action
+```json
+{
+  "type": "delay",
+  "parameters": {
+    "duration": 5000
+  }
+}
+```
+
+#### Condition Action
+```json
+{
+  "type": "condition",
+  "parameters": {
+    "condition": "{{confidence}} >= 0.8",
+    "onTrue": [
+      {
+        "type": "telegram:send",
+        "parameters": {
+          "chatId": "{{config.telegram.chatId}}",
+          "message": "High confidence event"
+        }
+      }
+    ],
+    "onFalse": [
+      {
+        "type": "log",
+        "parameters": {
+          "level": "info",
+          "message": "Low confidence event"
+        }
+      }
+    ]
+  }
+}
+```
+
+### Custom Actions
+You can create custom actions by extending the Action Framework:
+
 ```javascript
-// config/config.js
-flow: {
-  enabled: true,
-  eventBus: {
-    maxEvents: 1000,           // Maximum events to store
-    processingInterval: 100    // Processing interval in ms
+class CustomAction extends BaseAction {
+  static getMetadata() {
+    return {
+      name: 'Custom Action',
+      description: 'Description of custom action',
+      version: '1.0.0'
+    };
+  }
+  
+  static validateParameters(parameters) {
+    const errors = [];
+    
+    if (!parameters.message) {
+      errors.push('Message is required');
+    }
+    
+    return {
+      valid: errors.length === 0,
+      errors
+    };
+  }
+  
+  async execute(context) {
+    const { message } = this.parameters;
+    
+    // Custom action logic here
+    console.log('Custom action executed:', message);
+    
+    return {
+      success: true,
+      result: 'Custom action completed'
+    };
+  }
+}
+```
+
+## Condition Operators
+
+### Comparison Operators
+- `==` - Equal to
+- `!=` - Not equal to
+- `>` - Greater than
+- `>=` - Greater than or equal to
+- `<` - Less than
+- `<=` - Less than or equal to
+- `in` - Value is in array
+- `not_in` - Value is not in array
+- `contains` - String contains substring
+- `starts_with` - String starts with prefix
+- `ends_with` - String ends with suffix
+- `regex` - Regular expression match
+
+### Logical Operators
+- `and` - All conditions must be true
+- `or` - At least one condition must be true
+- `not` - Negate a condition
+
+### Example Conditions
+```json
+{
+  "conditions": {
+    "and": [
+      {
+        "eventType": { "operator": "in", "value": ["motion", "smartdetect"] }
+      },
+      {
+        "confidence": { "operator": ">=", "value": 0.5 }
+      },
+      {
+        "or": [
+          { "priority": "high" },
+          { "priority": "critical" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+## Variable Substitution
+
+### Event Variables
+- `{{eventType}}` - Type of the event
+- `{{device}}` - Device identifier
+- `{{confidence}}` - Confidence score
+- `{{timestamp}}` - Event timestamp
+- `{{data}}` - Full event data object
+- `{{source}}` - Event source connector
+
+### Flow Variables
+- `{{flowId}}` - Current flow ID
+- `{{flowName}}` - Current flow name
+- `{{executionId}}` - Flow execution ID
+
+### Configuration Variables
+- `{{config.telegram.chatId}}` - Telegram chat ID from config
+- `{{config.mqtt.broker}}` - MQTT broker from config
+- `{{config.apiKey}}` - API key from config
+
+### Custom Variables
+You can define custom variables in flows:
+
+```json
+{
+  "variables": {
+    "alertThreshold": 0.8,
+    "notificationChannel": "telegram",
+    "retryCount": 3
   },
-  ruleEngine: {
-    maxRules: 100,             // Maximum number of rules
-    executionTimeout: 30000    // Rule execution timeout
-  },
-  actionFramework: {
-    maxActions: 50,            // Maximum actions per rule
-    executionTimeout: 10000    // Action execution timeout
-  },
-  orchestrator: {
-    maxFlows: 50,              // Maximum number of flows
-    flowExecutionTimeout: 60000 // Flow execution timeout
+  "actions": [
+    {
+      "type": "condition",
+      "parameters": {
+        "condition": "{{confidence}} >= {{alertThreshold}}",
+        "onTrue": [
+          {
+            "type": "{{notificationChannel}}:send",
+            "parameters": {
+              "message": "High confidence alert"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
+```
+
+## Error Handling
+
+### Flow-Level Error Handling
+```json
+{
+  "errorHandling": {
+    "retryCount": 3,
+    "retryDelay": 5000,
+    "onError": "continue",
+    "fallbackActions": [
+      {
+        "type": "log",
+        "parameters": {
+          "level": "error",
+          "message": "Flow execution failed: {{error}}"
+        }
+      }
+    ]
   }
 }
 ```
 
-### Environment Variables
-```bash
-# Enable/disable flow system
-FLOW_ENABLED=true
+### Action-Level Error Handling
+```json
+{
+  "type": "telegram:send",
+  "parameters": {
+    "chatId": "{{config.telegram.chatId}}",
+    "message": "Alert message"
+  },
+  "errorHandling": {
+    "retryCount": 2,
+    "retryDelay": 1000,
+    "onError": "skip",
+    "fallback": {
+      "type": "log",
+      "parameters": {
+        "level": "warn",
+        "message": "Telegram send failed, logged instead"
+      }
+    }
+  }
+}
+```
 
-# Event bus configuration
-EVENT_BUS_MAX_EVENTS=1000
-EVENT_BUS_PROCESSING_INTERVAL=100
+## Flow Templates
 
-# Rule engine configuration
-RULE_ENGINE_MAX_RULES=100
-RULE_EXECUTION_TIMEOUT=30000
+### Motion Alert Template
+```json
+{
+  "name": "Motion Alert",
+  "description": "Send motion alerts to Telegram",
+  "triggers": ["motion"],
+  "actions": [
+    {
+      "type": "telegram:send",
+      "parameters": {
+        "chatId": "{{config.telegram.chatId}}",
+        "message": "🚨 Motion detected on {{device}}\n\n📅 Time: {{timestamp}}\n🎯 Confidence: {{confidence}}%",
+        "parseMode": "HTML"
+      }
+    }
+  ],
+  "conditions": {
+    "confidence": { "operator": ">=", "value": 0.5 }
+  }
+}
+```
 
-# Action framework configuration
-ACTION_FRAMEWORK_MAX_ACTIONS=50
-ACTION_EXECUTION_TIMEOUT=10000
+### Emergency Aircraft Template
+```json
+{
+  "name": "Emergency Aircraft Alert",
+  "description": "Alert on emergency aircraft",
+  "triggers": ["aircraft:emergency"],
+  "actions": [
+    {
+      "type": "telegram:send",
+      "parameters": {
+        "chatId": "{{config.telegram.chatId}}",
+        "message": "🚨 EMERGENCY AIRCRAFT\n\n✈️ {{callsign}}\n🆘 Squawk: {{squawk}}\n📍 {{lat}}, {{lon}}\n🛩️ {{altitude}}ft",
+        "parseMode": "HTML"
+      }
+    },
+    {
+      "type": "mqtt:publish",
+      "parameters": {
+        "topic": "aircraft/emergency",
+        "message": {
+          "icao24": "{{icao24}}",
+          "callsign": "{{callsign}}",
+          "squawk": "{{squawk}}"
+        }
+      }
+    }
+  ],
+  "conditions": {
+    "squawk": { "operator": "in", "value": ["7500", "7600", "7700"] }
+  }
+}
+```
 
-# Orchestrator configuration
-ORCHESTRATOR_MAX_FLOWS=50
-FLOW_EXECUTION_TIMEOUT=60000
+### Speed Violation Template
+```json
+{
+  "name": "Speed Violation Alert",
+  "description": "Alert on speed violations",
+  "triggers": ["speed:violation"],
+  "actions": [
+    {
+      "type": "telegram:send",
+      "parameters": {
+        "chatId": "{{config.telegram.chatId}}",
+        "message": "🚗 SPEED VIOLATION\n\n🚙 {{plateNumber}}\n⚡ {{speed}} km/h\n📏 Limit: {{speedLimit}} km/h\n📍 {{location}}",
+        "parseMode": "HTML"
+      }
+    }
+  ],
+  "conditions": {
+    "speed": { "operator": ">", "value": 100 }
+  }
+}
 ```
 
 ## API Reference
 
 ### Flow Management
 
-#### Get Flow System Status
-```bash
-GET /api/flows/status
-```
-
-Response:
-```json
-{
-  "success": true,
-  "status": {
-    "eventBus": {
-      "totalEvents": 150,
-      "eventsByType": {
-        "motion": 100,
-        "smartDetectZone": 30,
-        "ring": 20
-      },
-      "queueLength": 0,
-      "subscriberCount": 5
-    },
-    "ruleEngine": {
-      "totalRules": 7,
-      "rulesExecuted": 45,
-      "actionsExecuted": 120,
-      "errors": 2
-    },
-    "actionFramework": {
-      "totalExecutions": 120,
-      "successfulExecutions": 118,
-      "failedExecutions": 2,
-      "availableActions": 15
-    },
-    "orchestrator": {
-      "totalFlows": 2,
-      "activeFlows": 0,
-      "completedFlows": 45,
-      "failedFlows": 0
-    }
-  }
-}
-```
-
 #### List Flows
 ```bash
 GET /api/flows
 ```
+Returns all configured flows.
+
+#### Get Flow
+```bash
+GET /api/flows/{flowId}
+```
+Returns a specific flow by ID.
 
 #### Create Flow
 ```bash
 POST /api/flows
-Content-Type: application/json
-
 {
   "name": "My Flow",
-  "description": "A custom flow",
-  "steps": [...],
-  "metadata": {
-    "enabled": true,
-    "category": "custom"
-  }
+  "description": "Description of my flow",
+  "triggers": ["motion"],
+  "actions": [...]
 }
 ```
 
 #### Update Flow
 ```bash
-PUT /api/flows/:id
-Content-Type: application/json
-
+PUT /api/flows/{flowId}
 {
-  "name": "Updated Flow Name",
-  "steps": [...]
+  "enabled": true,
+  "actions": [...]
 }
 ```
 
 #### Delete Flow
 ```bash
-DELETE /api/flows/:id
+DELETE /api/flows/{flowId}
+```
+
+#### Enable/Disable Flow
+```bash
+POST /api/flows/{flowId}/enable
+POST /api/flows/{flowId}/disable
 ```
 
 #### Execute Flow
 ```bash
-POST /api/flows/:id/execute
-Content-Type: application/json
-
+POST /api/flows/{flowId}/execute
 {
-  "input": {
-    "customData": "value"
+  "event": {
+    "type": "motion",
+    "device": "camera-1",
+    "confidence": 0.8
   }
 }
 ```
@@ -606,217 +695,172 @@ GET /api/rules
 #### Create Rule
 ```bash
 POST /api/rules
-Content-Type: application/json
-
 {
   "name": "My Rule",
   "conditions": {...},
-  "actions": [...],
-  "metadata": {
-    "enabled": true,
-    "category": "custom"
-  }
+  "actions": [...]
 }
 ```
 
 #### Update Rule
 ```bash
-PUT /api/rules/:id
-Content-Type: application/json
-
-{
-  "name": "Updated Rule Name",
-  "conditions": {...}
-}
+PUT /api/rules/{ruleId}
 ```
 
 #### Delete Rule
 ```bash
-DELETE /api/rules/:id
+DELETE /api/rules/{ruleId}
 ```
 
-#### Enable/Disable Rule
+### Flow Statistics
+
+#### Get Flow Statistics
 ```bash
-POST /api/rules/:id/enable
-Content-Type: application/json
-
-{
-  "enabled": true
-}
+GET /api/flows/statistics
 ```
 
-### Action Management
-
-#### List Available Actions
+#### Get Flow Execution History
 ```bash
-GET /api/actions
+GET /api/flows/{flowId}/executions
 ```
 
-#### Get Action Statistics
+#### Get Flow Performance Metrics
 ```bash
-GET /api/actions/stats
+GET /api/flows/{flowId}/metrics
 ```
 
-## Best Practices
+## Performance Optimization
 
-### Rule Design
+### Flow Execution Optimization
+- **Caching**: Cache frequently used flow configurations
+- **Lazy Loading**: Load flow definitions on demand
+- **Parallel Execution**: Execute independent actions in parallel
+- **Connection Pooling**: Reuse connections for external services
 
-1. **Keep Rules Focused**: Each rule should handle one specific scenario
-2. **Use Descriptive Names**: Clear, descriptive rule names help with maintenance
-3. **Test Conditions**: Ensure conditions are specific and accurate
-4. **Limit Actions**: Don't overload rules with too many actions
-5. **Use Categories**: Organize rules with categories for better management
+### Rule Engine Optimization
+- **Rule Indexing**: Index rules for faster matching
+- **Condition Optimization**: Optimize condition evaluation
+- **Action Batching**: Batch similar actions together
+- **Error Recovery**: Implement robust error recovery mechanisms
 
-### Flow Design
+### Event Processing Optimization
+- **Event Batching**: Process events in batches
+- **Event Deduplication**: Prevent duplicate event processing
+- **Event Filtering**: Filter events early in the pipeline
+- **Event Routing**: Route events efficiently to appropriate flows
 
-1. **Plan Workflows**: Design flows before implementation
-2. **Use Steps Logically**: Organize steps in logical order
-3. **Handle Errors**: Include error handling in complex flows
-4. **Test Flows**: Test flows with various inputs
-5. **Monitor Performance**: Watch flow execution times and success rates
+## Monitoring and Debugging
 
-### Performance Optimization
-
-1. **Efficient Conditions**: Use specific conditions to avoid unnecessary rule execution
-2. **Action Batching**: Group related actions in single rules when possible
-3. **Event Filtering**: Filter events at the source when possible
-4. **Resource Management**: Monitor system resources and adjust limits
-5. **Caching**: Use the cache action for frequently accessed data
-
-## Troubleshooting
-
-### Common Issues
-
-#### Rules Not Executing
-- Check if rules are enabled
-- Verify event types match conditions
-- Check rule conditions for accuracy
-- Review server logs for errors
-
-#### Actions Failing
-- Verify action parameters
-- Check connector availability
-- Review action execution logs
-- Test actions individually
-
-#### Performance Issues
-- Monitor event queue length
-- Check rule execution times
-- Review action success rates
-- Adjust system limits if needed
-
-#### Flow Execution Problems
-- Verify flow steps are valid
-- Check step dependencies
-- Review flow execution logs
-- Test individual steps
-
-### Debugging
-
-#### Enable Debug Logging
-```bash
-LOG_LEVEL=debug npm start
-```
-
-#### Monitor Real-time Events
-```bash
-tail -f logs/babelfish.log | grep -E "(event|rule|action|flow)"
-```
-
-#### Check System Status
-```bash
-curl http://localhost:3000/api/flows/status | jq .
-```
-
-## Examples
-
-### Security Alert System
+### Flow Execution Monitoring
 ```javascript
-// Rule: High-confidence motion during night hours
 {
-  "name": "Night Security Alert",
-  "conditions": {
-    "eventType": "motion",
-    "timeRange": { "start": "22:00", "end": "06:00" },
-    "data": { "confidence": { "$gte": 0.9 } }
-  },
+  "flowId": "motion-alert-flow",
+  "executionId": "exec-123",
+  "status": "running",
+  "startTime": "2022-01-01T12:00:00.000Z",
+  "currentAction": 2,
+  "totalActions": 3,
   "actions": [
     {
-      "type": "send_notification",
-      "parameters": {
-        "message": "🚨 High-confidence motion during night hours",
-        "priority": "critical",
-        "channels": ["gui", "slack", "email"]
-      }
+      "index": 0,
+      "type": "condition",
+      "status": "completed",
+      "result": true,
+      "duration": 5
     },
     {
-      "type": "connector_execute",
-      "parameters": {
-        "connectorId": "van-unifi",
-        "capabilityId": "camera:management",
-        "operation": "snapshot"
-      }
+      "index": 1,
+      "type": "telegram:send",
+      "status": "completed",
+      "result": { "messageId": 123 },
+      "duration": 150
     },
     {
-      "type": "mqtt_publish",
-      "parameters": {
-        "topic": "security/alerts/night-motion",
-        "message": {
-          "type": "night_motion",
-          "priority": "critical",
-          "timestamp": "{{timestamp}}"
-        }
-      }
+      "index": 2,
+      "type": "log",
+      "status": "running",
+      "startTime": "2022-01-01T12:00:01.000Z"
     }
   ]
 }
 ```
 
-### Data Collection Flow
-```javascript
-// Flow: Collect and store event data
+### Debug Mode
+Enable debug logging for detailed troubleshooting:
+
+```json
 {
-  "name": "Event Data Collection",
-  "steps": [
-    {
-      "id": "collect-event",
-      "type": "action",
-      "action": {
-        "type": "store_data",
-        "parameters": {
-          "key": "events_{{timestamp}}",
-          "value": "{{data}}",
-          "ttl": 86400
-        }
-      }
-    },
-    {
-      "id": "transform-data",
-      "type": "action",
-      "action": {
-        "type": "transform_data",
-        "parameters": {
-          "input": "{{data}}",
-          "transform": {
-            "type": "template",
-            "template": "Event: {{type}} from {{source}} at {{timestamp}}"
-          }
-        }
-      }
-    },
-    {
-      "id": "log-summary",
-      "type": "action",
-      "action": {
-        "type": "log_event",
-        "parameters": {
-          "level": "info",
-          "message": "{{transform_data.output}}"
-        }
-      }
-    }
-  ]
+  "config": {
+    "debug": true,
+    "logLevel": "debug",
+    "enableFlowLogging": true,
+    "enableRuleLogging": true,
+    "enableActionLogging": true
+  }
 }
 ```
 
-This documentation provides a comprehensive guide to the Flow System. For more specific examples and advanced usage, refer to the API documentation and example configurations. 
+### Health Monitoring
+Monitor flow system health:
+
+```bash
+# Get flow system status
+GET /api/flows/status
+
+# Get flow system health
+GET /api/flows/health
+
+# Get flow system metrics
+GET /api/flows/metrics
+```
+
+## Integration Examples
+
+### UniFi Protect Integration
+```javascript
+// Subscribe to motion events
+eventBus.subscribe('motion', (event) => {
+  if (event.source === 'unifi-protect') {
+    // Execute motion alert flow
+    flowOrchestrator.executeFlow('motion-alert-flow', event);
+  }
+});
+```
+
+### ADSB Integration
+```javascript
+// Subscribe to aircraft events
+eventBus.subscribe('aircraft:emergency', (event) => {
+  if (event.source === 'adsb') {
+    // Execute emergency aircraft flow
+    flowOrchestrator.executeFlow('emergency-aircraft-flow', event);
+  }
+});
+```
+
+### Custom Integration
+```javascript
+// Create custom flow
+const customFlow = {
+  id: 'custom-flow',
+  name: 'Custom Flow',
+  triggers: ['custom:event'],
+  actions: [
+    {
+      type: 'http:request',
+      parameters: {
+        method: 'POST',
+        url: 'https://api.example.com/webhook',
+        body: { event: '{{eventType}}', data: '{{data}}' }
+      }
+    }
+  ]
+};
+
+// Register and execute flow
+flowOrchestrator.createFlow(customFlow);
+```
+
+---
+
+The Flow System provides a powerful and flexible foundation for creating sophisticated automation workflows in the Looking Glass platform. 

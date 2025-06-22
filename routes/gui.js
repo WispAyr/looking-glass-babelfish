@@ -2502,6 +2502,428 @@ router.get('/flows', (req, res) => {
   `);
 });
 
+// Remotion Connector UI Routes
+router.get('/remotion', async (req, res) => {
+  try {
+    if (!connectorRegistry) {
+      return res.status(500).json({ success: false, error: 'Connector Registry not initialized' });
+    }
+
+    const remotionConnector = connectorRegistry.getConnectorsByType('remotion')[0];
+    if (!remotionConnector) {
+      return res.status(404).send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Remotion Video Renderer</title>
+          <style>
+            body { font-family: Arial, sans-serif; margin: 40px; }
+            .container { max-width: 1200px; margin: 0 auto; }
+            .header { background: #2c3e50; color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+            .error { background: #e74c3c; color: white; padding: 20px; border-radius: 8px; }
+            .setup { background: #3498db; color: white; padding: 20px; border-radius: 8px; margin-top: 20px; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <h1>🎬 Remotion Video Renderer</h1>
+              <p>Templated video rendering using data from other connectors</p>
+            </div>
+            <div class="error">
+              <h2>⚠️ Remotion Connector Not Found</h2>
+              <p>The Remotion connector is not currently configured or running.</p>
+            </div>
+            <div class="setup">
+              <h3>🔧 Setup Instructions</h3>
+              <p>To use the Remotion video renderer:</p>
+              <ol>
+                <li>Install Remotion dependencies: <code>npm install remotion @remotion/cli @remotion/renderer</code></li>
+                <li>Create a Remotion connector configuration</li>
+                <li>Set up video templates and compositions</li>
+                <li>Configure data sources from other connectors</li>
+              </ol>
+            </div>
+          </div>
+        </body>
+        </html>
+      `);
+    }
+
+    const stats = remotionConnector.getRenderStats();
+    const templates = await remotionConnector.listTemplates();
+    const activeRenders = Array.from(remotionConnector.activeRenders.values());
+
+    res.send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Remotion Video Renderer</title>
+        <style>
+          body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }
+          .container { max-width: 1400px; margin: 0 auto; }
+          .header { background: #2c3e50; color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+          .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }
+          .stat-card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+          .stat-number { font-size: 2em; font-weight: bold; color: #3498db; }
+          .section { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }
+          .btn { background: #3498db; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; margin: 5px; }
+          .btn:hover { background: #2980b9; }
+          .btn-danger { background: #e74c3c; }
+          .btn-danger:hover { background: #c0392b; }
+          .btn-success { background: #27ae60; }
+          .btn-success:hover { background: #229954; }
+          .render-item { border: 1px solid #ddd; padding: 15px; margin: 10px 0; border-radius: 4px; }
+          .render-status { padding: 5px 10px; border-radius: 4px; color: white; font-size: 0.9em; }
+          .status-queued { background: #f39c12; }
+          .status-rendering { background: #3498db; }
+          .status-completed { background: #27ae60; }
+          .status-failed { background: #e74c3c; }
+          .status-cancelled { background: #95a5a6; }
+          .template-item { border: 1px solid #ddd; padding: 15px; margin: 10px 0; border-radius: 4px; }
+          .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); }
+          .modal-content { background: white; margin: 5% auto; padding: 20px; border-radius: 8px; width: 80%; max-width: 600px; }
+          .form-group { margin-bottom: 15px; }
+          .form-group label { display: block; margin-bottom: 5px; font-weight: bold; }
+          .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+          .progress-bar { width: 100%; height: 20px; background: #f0f0f0; border-radius: 10px; overflow: hidden; }
+          .progress-fill { height: 100%; background: #3498db; transition: width 0.3s; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>🎬 Remotion Video Renderer</h1>
+            <p>Templated video rendering using data from other connectors</p>
+          </div>
+
+          <!-- Statistics -->
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-number">${stats.totalRenders}</div>
+              <div>Total Renders</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-number">${stats.successfulRenders}</div>
+              <div>Successful</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-number">${stats.failedRenders}</div>
+              <div>Failed</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-number">${stats.activeRenders}</div>
+              <div>Active Renders</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-number">${stats.templates}</div>
+              <div>Templates</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-number">${Math.round(stats.averageRenderTime / 1000)}s</div>
+              <div>Avg Render Time</div>
+            </div>
+          </div>
+
+          <!-- Active Renders -->
+          <div class="section">
+            <h2>🔄 Active Renders</h2>
+            <button class="btn" onclick="refreshRenders()">Refresh</button>
+            <div id="activeRenders">
+              ${activeRenders.map(render => `
+                <div class="render-item">
+                  <h4>${render.templateId} - ${render.id}</h4>
+                  <div class="render-status status-${render.status}">${render.status.toUpperCase()}</div>
+                  <div class="progress-bar">
+                    <div class="progress-fill" style="width: ${render.progress}%"></div>
+                  </div>
+                  <p>Progress: ${render.progress}%</p>
+                  ${render.startTime ? `<p>Started: ${new Date(render.startTime).toLocaleString()}</p>` : ''}
+                  ${render.error ? `<p style="color: red;">Error: ${render.error}</p>` : ''}
+                  ${render.status === 'rendering' ? `<button class="btn btn-danger" onclick="cancelRender('${render.id}')">Cancel</button>` : ''}
+                </div>
+              `).join('')}
+            </div>
+          </div>
+
+          <!-- Templates -->
+          <div class="section">
+            <h2>📋 Templates</h2>
+            <button class="btn" onclick="showCreateTemplate()">Create Template</button>
+            <button class="btn" onclick="refreshTemplates()">Refresh</button>
+            <div id="templates">
+              ${templates.map(template => `
+                <div class="template-item">
+                  <h4>${template.name}</h4>
+                  <p>${template.description || 'No description'}</p>
+                  <p><strong>Component:</strong> ${template.componentName}</p>
+                  <p><strong>Resolution:</strong> ${template.width}x${template.height}</p>
+                  <button class="btn" onclick="showRenderVideo('${template.id}')">Render Video</button>
+                  <button class="btn btn-danger" onclick="deleteTemplate('${template.id}')">Delete</button>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+
+          <!-- Quick Actions -->
+          <div class="section">
+            <h2>⚡ Quick Actions</h2>
+            <button class="btn btn-success" onclick="showFlightVideo()">Create Flight Video</button>
+            <button class="btn btn-success" onclick="showEventTimeline()">Create Event Timeline</button>
+            <button class="btn" onclick="showCustomRender()">Custom Render</button>
+          </div>
+        </div>
+
+        <!-- Create Template Modal -->
+        <div id="createTemplateModal" class="modal">
+          <div class="modal-content">
+            <h3>Create Template</h3>
+            <form id="createTemplateForm">
+              <div class="form-group">
+                <label>Template ID:</label>
+                <input type="text" id="templateId" required>
+              </div>
+              <div class="form-group">
+                <label>Name:</label>
+                <input type="text" id="templateName" required>
+              </div>
+              <div class="form-group">
+                <label>Description:</label>
+                <textarea id="templateDescription"></textarea>
+              </div>
+              <div class="form-group">
+                <label>Component Name:</label>
+                <input type="text" id="componentName" required>
+              </div>
+              <div class="form-group">
+                <label>Component Path:</label>
+                <input type="text" id="componentPath" required>
+              </div>
+              <div class="form-group">
+                <label>Width:</label>
+                <input type="number" id="templateWidth" value="1920">
+              </div>
+              <div class="form-group">
+                <label>Height:</label>
+                <input type="number" id="templateHeight" value="1080">
+              </div>
+              <button type="submit" class="btn">Create Template</button>
+              <button type="button" class="btn btn-danger" onclick="closeModal('createTemplateModal')">Cancel</button>
+            </form>
+          </div>
+        </div>
+
+        <!-- Render Video Modal -->
+        <div id="renderVideoModal" class="modal">
+          <div class="modal-content">
+            <h3>Render Video</h3>
+            <form id="renderVideoForm">
+              <div class="form-group">
+                <label>Template:</label>
+                <select id="renderTemplateId" required></select>
+              </div>
+              <div class="form-group">
+                <label>Duration (seconds):</label>
+                <input type="number" id="renderDuration" value="10" min="1" max="3600">
+              </div>
+              <div class="form-group">
+                <label>FPS:</label>
+                <input type="number" id="renderFps" value="30" min="1" max="120">
+              </div>
+              <div class="form-group">
+                <label>Quality:</label>
+                <select id="renderQuality">
+                  <option value="low">Low</option>
+                  <option value="medium" selected>Medium</option>
+                  <option value="high">High</option>
+                  <option value="ultra">Ultra</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Data (JSON):</label>
+                <textarea id="renderData" rows="10" placeholder='{"example": "data"}'></textarea>
+              </div>
+              <button type="submit" class="btn">Start Render</button>
+              <button type="button" class="btn btn-danger" onclick="closeModal('renderVideoModal')">Cancel</button>
+            </form>
+          </div>
+        </div>
+
+        <script>
+          // Template management
+          function showCreateTemplate() {
+            document.getElementById('createTemplateModal').style.display = 'block';
+          }
+
+          function closeModal(modalId) {
+            document.getElementById(modalId).style.display = 'none';
+          }
+
+          document.getElementById('createTemplateForm').onsubmit = async (e) => {
+            e.preventDefault();
+            const formData = {
+              id: document.getElementById('templateId').value,
+              name: document.getElementById('templateName').value,
+              description: document.getElementById('templateDescription').value,
+              componentName: document.getElementById('componentName').value,
+              componentPath: document.getElementById('componentPath').value,
+              width: parseInt(document.getElementById('templateWidth').value),
+              height: parseInt(document.getElementById('templateHeight').value)
+            };
+
+            try {
+              const response = await fetch('/api/connectors/remotion/execute', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  capabilityId: 'template-management',
+                  operation: 'create',
+                  parameters: formData
+                })
+              });
+
+              const result = await response.json();
+              if (result.success) {
+                alert('Template created successfully!');
+                closeModal('createTemplateModal');
+                refreshTemplates();
+              } else {
+                alert('Error creating template: ' + result.error);
+              }
+            } catch (error) {
+              alert('Error creating template: ' + error.message);
+            }
+          };
+
+          // Video rendering
+          function showRenderVideo(templateId) {
+            document.getElementById('renderTemplateId').value = templateId;
+            document.getElementById('renderVideoModal').style.display = 'block';
+          }
+
+          document.getElementById('renderVideoForm').onsubmit = async (e) => {
+            e.preventDefault();
+            const formData = {
+              templateId: document.getElementById('renderTemplateId').value,
+              duration: parseInt(document.getElementById('renderDuration').value),
+              fps: parseInt(document.getElementById('renderFps').value),
+              quality: document.getElementById('renderQuality').value,
+              data: JSON.parse(document.getElementById('renderData').value || '{}')
+            };
+
+            try {
+              const response = await fetch('/api/connectors/remotion/execute', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  capabilityId: 'video-rendering',
+                  operation: 'render',
+                  parameters: formData
+                })
+              });
+
+              const result = await response.json();
+              if (result.success) {
+                alert('Render started! ID: ' + result.data.renderId);
+                closeModal('renderVideoModal');
+                refreshRenders();
+              } else {
+                alert('Error starting render: ' + result.error);
+              }
+            } catch (error) {
+              alert('Error starting render: ' + error.message);
+            }
+          };
+
+          // Utility functions
+          async function refreshRenders() {
+            location.reload();
+          }
+
+          async function refreshTemplates() {
+            location.reload();
+          }
+
+          async function cancelRender(renderId) {
+            if (confirm('Are you sure you want to cancel this render?')) {
+              try {
+                const response = await fetch('/api/connectors/remotion/execute', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    capabilityId: 'video-rendering',
+                    operation: 'cancel',
+                    parameters: { renderId }
+                  })
+                });
+
+                const result = await response.json();
+                if (result.success) {
+                  alert('Render cancelled successfully!');
+                  refreshRenders();
+                } else {
+                  alert('Error cancelling render: ' + result.error);
+                }
+              } catch (error) {
+                alert('Error cancelling render: ' + error.message);
+              }
+            }
+          }
+
+          async function deleteTemplate(templateId) {
+            if (confirm('Are you sure you want to delete this template?')) {
+              try {
+                const response = await fetch('/api/connectors/remotion/execute', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    capabilityId: 'template-management',
+                    operation: 'delete',
+                    parameters: { id: templateId }
+                  })
+                });
+
+                const result = await response.json();
+                if (result.success) {
+                  alert('Template deleted successfully!');
+                  refreshTemplates();
+                } else {
+                  alert('Error deleting template: ' + result.error);
+                }
+              } catch (error) {
+                alert('Error deleting template: ' + error.message);
+              }
+            }
+          }
+
+          function showFlightVideo() {
+            alert('Flight video creation - coming soon!');
+          }
+
+          function showEventTimeline() {
+            alert('Event timeline creation - coming soon!');
+          }
+
+          function showCustomRender() {
+            document.getElementById('renderVideoModal').style.display = 'block';
+          }
+
+          // Close modals when clicking outside
+          window.onclick = function(event) {
+            if (event.target.classList.contains('modal')) {
+              event.target.style.display = 'none';
+            }
+          }
+        </script>
+      </body>
+      </html>
+    `);
+  } catch (error) {
+    logger.error('Failed to render Remotion UI', { error: error.message });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 module.exports = {
   router,
   injectServices

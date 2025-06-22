@@ -1,0 +1,21 @@
+{
+  "name": "babelfish-remotion-project",
+  "version": "1.0.0",
+  "description": "Remotion project for Babelfish video rendering",
+  "main": "index.js",
+  "scripts": {
+    "start": "remotion preview",
+    "build": "remotion render",
+    "upgrade": "remotion upgrade"
+  },
+  "dependencies": {
+    "react": "^18.0.0",
+    "remotion": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.0.0"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+} 

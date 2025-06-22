@@ -1,397 +1,666 @@
-# Connector Architecture - Looking Glass
+# Connector Architecture
 
 ## Overview
 
-The Looking Glass platform uses a connector-based architecture where different systems and protocols are abstracted into pluggable connectors. This allows for:
+The Looking Glass platform uses a modular connector-based architecture that enables integration with diverse systems and protocols through a unified interface. This architecture provides:
 
 - **Modularity**: Each connector is self-contained and can be developed independently
 - **Scalability**: Multiple instances of the same connector type can be used
 - **Flexibility**: New connectors can be added without modifying core application logic
 - **Interoperability**: Connectors can communicate capabilities and pair automatically
-- **Future Integration**: Visual programming interface for wiring connectors together
-
-## Core Concepts
-
-### Connector
-A connector is a self-contained module that:
-- Implements a specific protocol or API (e.g., Unifi Protect, MQTT, HTTP, etc.)
-- Exposes capabilities and operations it can perform
-- Handles authentication and connection management
-- Provides standardized interfaces for data exchange
-- Can be instantiated multiple times with different configurations
-
-### Capability
-A capability defines what a connector can do:
-- **Operations**: Actions the connector can perform (read, write, subscribe, etc.)
-- **Data Types**: Types of data the connector can handle
-- **Events**: Events the connector can emit or listen for
-- **Resources**: Resources the connector can access (cameras, sensors, etc.)
-
-### Connector Instance
-A specific instance of a connector with:
-- Unique identifier
-- Configuration (endpoints, credentials, etc.)
-- Connection state
-- Runtime data
+- **Extensibility**: Visual programming interface for wiring connectors together
 
 ## Architecture Components
 
-### 1. Connector Registry
-Manages all available connector types and instances:
+### Core Components
+
+#### BaseConnector
+The foundation class that all connectors extend, providing:
+- Common lifecycle management (connect, disconnect, health checks)
+- Event bus integration
+- Configuration validation
+- Capability management
+- Error handling and logging
+
+#### ConnectorRegistry
+Manages the discovery, registration, and lifecycle of all connectors:
+- Dynamic connector loading
+- Capability discovery and pairing
+- Health monitoring
+- Configuration management
+
+#### EventBus
+Central event processing system that:
+- Normalizes events from all sources
+- Routes events to appropriate subscribers
+- Provides real-time event streaming
+- Manages event history and deduplication
+
+### Connector Types
+
+#### Video & Security Connectors
+
+**UniFi Protect Connector**
+- Real-time video streaming and management
+- Motion detection and smart detection events
+- ANPR (Automatic Number Plate Recognition)
+- Doorbell integration
+- Recording management
+
+**Hikvision Connector**
+- IP camera integration via ISAPI REST API
+- PTZ control and preset management
+- Motion detection and event handling
+- Recording and snapshot capabilities
+
+**Ankke DVR Connector**
+- DVR system integration
+- Multi-channel video management
+- Recording and playback control
+- Motion detection configuration
+
+#### Communication & Messaging Connectors
+
+**MQTT Connector**
+- IoT device communication
+- Sensor data integration
+- Automation triggers
+- Message history and management
+
+**Telegram Connector**
+- Real-time notifications and alerts
+- Two-way communication
+- Media sharing capabilities
+- Keyboard and webhook support
+
+**LLM Connector**
+- AI-powered automation and decision making
+- Natural language processing
+- Function calling for autonomous operations
+- Multi-provider support (OpenAI, Anthropic, local models)
+
+#### Aviation & Tracking Connectors
+
+**ADSB Connector**
+- Automatic Dependent Surveillance-Broadcast data processing
+- Real-time aircraft tracking
+- Emergency squawk code monitoring
+- Radar visualization and zone management
+
+**APRS Connector**
+- Amateur radio station tracking
+- Weather data integration
+- Message monitoring
+- Automatic map integration
+
+#### Spatial & Visualization Connectors
+
+**Map Connector**
+- Spatial visualization and management
+- Real-time map integration
+- Zone definition and monitoring
+- Event visualization on maps
+
+**Web GUI Connector**
+- Modern web interface with component system
+- Real-time updates via WebSockets
+- Responsive design and mobile support
+- Theme management and customization
+
+#### Analytics & Processing Connectors
+
+**Speed Calculation Connector**
+- ANPR-based vehicle speed monitoring
+- Multi-point detection and tracking
+- Speed violation alerts
+- Historical analytics and reporting
+
+**Overwatch Connector**
+- Central event processing and orchestration
+- Flow management and automation
+- Rule engine and decision making
+- System health monitoring
+
+## Connector Lifecycle
+
+### 1. Discovery
+Connectors are discovered and loaded from configuration files:
 ```javascript
-{
-  "unifi-protect": {
-    type: "unifi-protect",
-    version: "1.0.0",
-    capabilities: [...],
-    instances: {
-      "communications-van": { ... },
-      "backup-system": { ... }
+// config/connectors.json
+[
+  {
+    "id": "unifi-protect-main",
+    "type": "unifi-protect",
+    "name": "Main Security System",
+    "config": {
+      "host": "192.168.1.100",
+      "apiKey": "your-api-key"
     }
+  }
+]
+```
+
+### 2. Validation
+Configuration is validated against connector requirements:
+```javascript
+static validateConfig(config) {
+  const errors = [];
+  
+  if (!config.host) {
+    errors.push('Host is required');
+  }
+  
+  if (!config.apiKey) {
+    errors.push('API key is required');
+  }
+  
+  return {
+    valid: errors.length === 0,
+    errors
+  };
+}
+```
+
+### 3. Initialization
+Connectors are initialized with their configuration:
+```javascript
+constructor(config) {
+  super(config);
+  this.host = config.host;
+  this.apiKey = config.apiKey;
+  this.connected = false;
+}
+```
+
+### 4. Connection
+Connectors establish connections to their respective systems:
+```javascript
+async performConnect() {
+  try {
+    // Establish connection
+    this.connection = await this.createConnection();
+    this.connected = true;
+    
+    // Subscribe to events
+    this.setupEventListeners();
+    
+    this.logger.info(`Connected to ${this.config.host}`);
+  } catch (error) {
+    this.logger.error(`Failed to connect: ${error.message}`);
+    throw error;
   }
 }
 ```
 
-### 2. Capability Matching Engine
-Matches connector capabilities for automatic pairing:
+### 5. Operation
+Connectors begin normal operation and event processing:
 ```javascript
-// Example: Match camera connectors with storage connectors
-const matches = capabilityEngine.findMatches(
-  "camera:video:stream", 
-  "storage:video:record"
-);
+setupEventListeners() {
+  this.connection.on('event', (event) => {
+    this.eventBus.publishEvent('motion', {
+      source: this.id,
+      data: event,
+      timestamp: Date.now()
+    });
+  });
+}
 ```
 
-### 3. Event Bus
-Centralized event system for connector communication:
+### 6. Monitoring
+Health monitoring tracks connector status and performance:
 ```javascript
-eventBus.emit("connector:unifi-protect:event", {
-  connectorId: "communications-van",
-  event: "motion-detected",
-  data: { cameraId: "cam-1", timestamp: "..." }
-});
-```
-
-### 4. Data Pipeline
-Standardized data flow between connectors:
-```javascript
-pipeline.process({
-  source: "unifi-protect:communications-van",
-  destination: "mqtt:broker-1",
-  transform: "event-to-mqtt-message",
-  data: eventData
-});
-```
-
-## Connector Interface
-
-### Base Connector Class
-```javascript
-class BaseConnector {
-  constructor(config) {
-    this.id = config.id;
-    this.type = config.type;
-    this.config = config;
-    this.capabilities = this.getCapabilities();
-    this.status = 'disconnected';
+async performHealthCheck() {
+  try {
+    const status = await this.getSystemStatus();
+    return {
+      healthy: status.online,
+      details: status,
+      timestamp: Date.now()
+    };
+  } catch (error) {
+    return {
+      healthy: false,
+      error: error.message,
+      timestamp: Date.now()
+    };
   }
+}
+```
 
-  // Must be implemented by each connector
-  async connect() { throw new Error('Not implemented'); }
-  async disconnect() { throw new Error('Not implemented'); }
-  async getCapabilities() { throw new Error('Not implemented'); }
+### 7. Disconnection
+Connectors gracefully disconnect when stopped:
+```javascript
+async performDisconnect() {
+  try {
+    if (this.connection) {
+      await this.connection.close();
+    }
+    this.connected = false;
+    this.logger.info('Disconnected successfully');
+  } catch (error) {
+    this.logger.error(`Error during disconnect: ${error.message}`);
+  }
+}
+```
+
+## Capability System
+
+### Capability Definition
+Each connector defines its capabilities through the `getCapabilityDefinitions()` method:
+
+```javascript
+static getCapabilityDefinitions() {
+  return [
+    {
+      id: 'camera:management',
+      name: 'Camera Management',
+      description: 'Manage camera devices and settings',
+      category: 'video',
+      operations: ['list', 'get', 'update', 'delete'],
+      dataTypes: ['camera'],
+      events: ['camera:added', 'camera:updated', 'camera:deleted'],
+      parameters: {
+        siteId: { type: 'string', required: false },
+        cameraId: { type: 'string', required: false }
+      }
+    }
+  ];
+}
+```
+
+### Capability Categories
+
+#### Video & Security
+- `camera:management` - Camera device management
+- `camera:video:stream` - Video streaming capabilities
+- `camera:event:motion` - Motion detection events
+- `camera:event:smartdetect` - Smart detection events
+- `camera:recording:management` - Recording management
+- `camera:snapshot` - Snapshot capabilities
+
+#### Communication
+- `mqtt:publish` - MQTT message publishing
+- `mqtt:subscribe` - MQTT topic subscription
+- `telegram:send` - Telegram message sending
+- `telegram:receive` - Telegram message receiving
+- `llm:chat` - LLM conversation capabilities
+
+#### Aviation & Tracking
+- `adsb:aircraft` - Aircraft tracking
+- `adsb:radar` - Radar visualization
+- `aprs:stations` - APRS station tracking
+- `aprs:weather` - Weather data
+
+#### Spatial & Visualization
+- `map:spatial` - Spatial element management
+- `map:visualization` - Map visualization
+- `gui:pages` - Web GUI page management
+- `gui:components` - Component management
+
+#### Analytics & Processing
+- `speed:calculation` - Speed calculation
+- `overwatch:events` - Event processing
+- `overwatch:flows` - Flow management
+
+### Capability Execution
+Capabilities are executed through the `executeCapability()` method:
+
+```javascript
+async executeCapability(capabilityId, operation, parameters) {
+  switch (capabilityId) {
+    case 'camera:management':
+      return await this.executeCameraManagement(operation, parameters);
+    case 'camera:video:stream':
+      return await this.executeVideoStream(operation, parameters);
+    default:
+      throw new Error(`Unknown capability: ${capabilityId}`);
+  }
+}
+```
+
+## Event System
+
+### Event Publishing
+Connectors publish events to the event bus:
+
+```javascript
+// Publish a motion event
+this.eventBus.publishEvent('motion', {
+  source: this.id,
+  data: {
+    device: cameraId,
+    start: event.start,
+    end: event.end,
+    confidence: event.confidence
+  },
+  timestamp: Date.now()
+});
+```
+
+### Event Subscription
+Connectors can subscribe to events from other connectors:
+
+```javascript
+// Subscribe to motion events
+this.eventBus.subscribe('motion', (event) => {
+  if (event.source !== this.id) {
+    this.processMotionEvent(event);
+  }
+});
+```
+
+### Event Types
+
+#### Security Events
+- `motion` - Motion detection events
+- `smartdetect` - Smart detection events
+- `doorbell` - Doorbell ring events
+- `intrusion` - Intrusion detection events
+
+#### Aviation Events
+- `aircraft:detected` - Aircraft detection events
+- `aircraft:emergency` - Emergency aircraft events
+- `squawk:analysis` - Squawk code analysis events
+
+#### System Events
+- `connector:status` - Connector status changes
+- `system:health` - System health events
+- `error` - Error events
+
+## Configuration Management
+
+### Configuration Structure
+```javascript
+{
+  "id": "unique-connector-id",
+  "type": "connector-type",
+  "name": "Human Readable Name",
+  "description": "Optional description",
+  "config": {
+    // Connector-specific configuration
+    "host": "192.168.1.100",
+    "port": 443,
+    "protocol": "https",
+    "apiKey": "your-api-key"
+  },
+  "capabilities": {
+    "enabled": ["capability1", "capability2"],
+    "disabled": ["capability3"]
+  },
+  "metadata": {
+    "version": "1.0.0",
+    "author": "Your Name",
+    "tags": ["security", "video"]
+  }
+}
+```
+
+### Environment Variables
+Configuration can also be provided via environment variables:
+
+```bash
+# UniFi Protect
+UNIFI_HOST=192.168.1.100
+UNIFI_PORT=443
+UNIFI_API_KEY=your-api-key
+
+# MQTT
+MQTT_HOST=localhost
+MQTT_PORT=1883
+MQTT_USERNAME=user
+MQTT_PASSWORD=password
+```
+
+## Error Handling
+
+### Error Types
+- **Connection Errors**: Network connectivity issues
+- **Authentication Errors**: Invalid credentials or permissions
+- **Configuration Errors**: Invalid or missing configuration
+- **Operation Errors**: Failed operations or timeouts
+- **System Errors**: Internal system errors
+
+### Error Handling Strategy
+```javascript
+async executeCapability(capabilityId, operation, parameters) {
+  try {
+    // Validate capability
+    if (!this.capabilities.includes(capabilityId)) {
+      throw new Error(`Capability not supported: ${capabilityId}`);
+    }
+    
+    // Execute operation
+    const result = await this.performOperation(operation, parameters);
+    
+    // Log success
+    this.logger.debug(`Operation completed: ${capabilityId}.${operation}`);
+    
+    return result;
+  } catch (error) {
+    // Log error
+    this.logger.error(`Operation failed: ${capabilityId}.${operation}`, error);
+    
+    // Update health status
+    this.updateHealthStatus('error', error.message);
+    
+    // Re-throw for handling by caller
+    throw error;
+  }
+}
+```
+
+## Health Monitoring
+
+### Health Check Implementation
+```javascript
+async performHealthCheck() {
+  const checks = {
+    connection: await this.checkConnection(),
+    authentication: await this.checkAuthentication(),
+    capabilities: await this.checkCapabilities(),
+    performance: await this.checkPerformance()
+  };
   
-  // Optional hooks
-  async onConnect() {}
-  async onDisconnect() {}
-  async onError(error) {}
+  const healthy = Object.values(checks).every(check => check.healthy);
   
-  // Standard methods
-  async emit(event, data) {
-    eventBus.emit(`connector:${this.type}:${event}`, {
-      connectorId: this.id,
-      data
+  return {
+    healthy,
+    checks,
+    timestamp: Date.now(),
+    uptime: Date.now() - this.startTime
+  };
+}
+```
+
+### Health Metrics
+- **Connection Status**: Is the connector connected?
+- **Response Time**: How quickly does the connector respond?
+- **Error Rate**: What percentage of operations fail?
+- **Resource Usage**: Memory, CPU, and network usage
+- **Event Throughput**: Number of events processed per second
+
+## Performance Optimization
+
+### Connection Pooling
+```javascript
+class ConnectionPool {
+  constructor(maxConnections = 10) {
+    this.pool = [];
+    this.maxConnections = maxConnections;
+  }
+  
+  async getConnection() {
+    if (this.pool.length > 0) {
+      return this.pool.pop();
+    }
+    
+    if (this.pool.length < this.maxConnections) {
+      return await this.createConnection();
+    }
+    
+    // Wait for available connection
+    return new Promise(resolve => {
+      this.waiting.push(resolve);
     });
   }
 }
 ```
 
-### Capability Definition
+### Event Batching
 ```javascript
-{
-  id: "camera:video:stream",
-  name: "Video Stream",
-  description: "Stream video from camera",
-  category: "camera",
-  operations: ["read"],
-  dataTypes: ["video/rtsp", "video/mp4"],
-  events: ["stream-started", "stream-stopped", "stream-error"],
-  parameters: {
-    cameraId: { type: "string", required: true },
-    quality: { type: "string", enum: ["low", "medium", "high"] }
+class EventBatcher {
+  constructor(batchSize = 10, batchTimeout = 1000) {
+    this.batchSize = batchSize;
+    this.batchTimeout = batchTimeout;
+    this.batch = [];
+    this.timer = null;
+  }
+  
+  addEvent(event) {
+    this.batch.push(event);
+    
+    if (this.batch.length >= this.batchSize) {
+      this.flush();
+    } else if (!this.timer) {
+      this.timer = setTimeout(() => this.flush(), this.batchTimeout);
+    }
+  }
+  
+  flush() {
+    if (this.batch.length > 0) {
+      this.eventBus.publishBatch(this.batch);
+      this.batch = [];
+    }
+    
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
   }
 }
 ```
 
-## Connector Types
+## Security Considerations
 
-### 1. Data Source Connectors
-- **Unifi Protect**: Camera feeds, events, recordings
-- **HTTP APIs**: REST APIs, webhooks
-- **Databases**: SQL, NoSQL databases
-- **File Systems**: Local/remote file access
-- **IoT Devices**: Sensors, actuators
+### Authentication
+- API key management
+- Token refresh mechanisms
+- Secure credential storage
+- Multi-factor authentication support
 
-### 2. Data Destination Connectors
-- **MQTT Brokers**: Message publishing
-- **Databases**: Data storage
-- **File Systems**: File storage
-- **HTTP Endpoints**: Web services
-- **Email/SMS**: Notifications
+### Data Protection
+- Encryption in transit (TLS/SSL)
+- Encryption at rest
+- Data anonymization
+- Access control and permissions
 
-### 3. Processing Connectors
-- **Image Processing**: Video analysis, object detection
-- **Data Transformers**: Format conversion, filtering
-- **Aggregators**: Data combination, statistics
-- **Schedulers**: Time-based operations
+### Network Security
+- Firewall configuration
+- VPN support
+- Network segmentation
+- Intrusion detection
 
-### 4. Control Connectors
-- **Automation**: Rule engines, workflows
-- **User Interfaces**: Web UIs, mobile apps
-- **External Systems**: Third-party integrations
+## Testing Strategy
 
-## Configuration Management
-
-### Connector Configuration
+### Unit Testing
 ```javascript
-{
-  id: "communications-van",
-  type: "unifi-protect",
-  name: "Communications Van System",
-  description: "Primary Unifi Protect system in communications van",
-  config: {
-    host: "10.0.0.1",
-    port: 443,
-    protocol: "https",
-    apiKey: "6pXhUX2-hnWonI8abmazH4kGRdVLp4r8",
-    verifySSL: true,
-    timeout: 10000
-  },
-  capabilities: {
-    enabled: ["camera:video:stream", "camera:event:motion"],
-    disabled: ["camera:recording:download"]
-  },
-  connections: {
-    inputs: ["mqtt:broker-1"],
-    outputs: ["database:events", "file:recordings"]
-  }
-}
-```
-
-### Dynamic Configuration
-Connectors can be configured at runtime:
-```javascript
-// Add new connector instance
-await connectorRegistry.addConnector({
-  type: "unifi-protect",
-  config: { host: "192.168.1.100", apiKey: "..." }
-});
-
-// Update existing connector
-await connectorRegistry.updateConnector("communications-van", {
-  config: { timeout: 15000 }
-});
-
-// Enable/disable capabilities
-await connectorRegistry.updateCapabilities("communications-van", {
-  enabled: ["camera:video:stream"],
-  disabled: ["camera:event:motion"]
+describe('UniFi Protect Connector', () => {
+  let connector;
+  
+  beforeEach(() => {
+    connector = new UniFiProtectConnector({
+      host: 'test-host',
+      apiKey: 'test-key'
+    });
+  });
+  
+  test('should validate configuration', () => {
+    const result = UniFiProtectConnector.validateConfig({
+      host: 'test-host',
+      apiKey: 'test-key'
+    });
+    
+    expect(result.valid).toBe(true);
+  });
+  
+  test('should connect successfully', async () => {
+    await connector.performConnect();
+    expect(connector.connected).toBe(true);
+  });
 });
 ```
 
-## Event System
-
-### Event Types
+### Integration Testing
 ```javascript
-// Connector lifecycle events
-"connector:connected"
-"connector:disconnected"
-"connector:error"
-
-// Data events
-"connector:data:received"
-"connector:data:processed"
-"connector:data:transmitted"
-
-// Capability events
-"connector:capability:enabled"
-"connector:capability:disabled"
-"connector:capability:matched"
-```
-
-### Event Handling
-```javascript
-// Subscribe to events
-eventBus.on("connector:unifi-protect:event", (data) => {
-  console.log(`Event from ${data.connectorId}:`, data.event);
-});
-
-// Emit events
-connector.emit("motion-detected", {
-  cameraId: "cam-1",
-  timestamp: new Date().toISOString(),
-  confidence: 0.85
+describe('Connector Integration', () => {
+  test('should process events from UniFi to MQTT', async () => {
+    // Setup connectors
+    const unifiConnector = new UniFiProtectConnector(config);
+    const mqttConnector = new MQTTConnector(config);
+    
+    // Connect both
+    await unifiConnector.performConnect();
+    await mqttConnector.performConnect();
+    
+    // Simulate motion event
+    const event = { type: 'motion', device: 'camera-1' };
+    unifiConnector.eventBus.publishEvent('motion', event);
+    
+    // Verify MQTT message
+    await expect(mqttConnector).toReceiveMessage('motion', event);
+  });
 });
 ```
 
-## Data Flow
-
-### Pipeline Definition
+### Performance Testing
 ```javascript
-const pipeline = {
-  id: "motion-to-mqtt",
-  name: "Motion Events to MQTT",
-  description: "Send motion events to MQTT broker",
-  source: {
-    connector: "unifi-protect:communications-van",
-    capability: "camera:event:motion"
-  },
-  destination: {
-    connector: "mqtt:broker-1",
-    capability: "mqtt:publish"
-  },
-  transform: {
-    type: "mapping",
-    rules: [
-      { from: "cameraId", to: "device" },
-      { from: "timestamp", to: "time" },
-      { from: "confidence", to: "score" }
-    ]
-  },
-  filters: [
-    { field: "confidence", operator: ">=", value: 0.5 }
-  ]
-};
+describe('Performance Tests', () => {
+  test('should handle high event throughput', async () => {
+    const connector = new TestConnector();
+    await connector.performConnect();
+    
+    const startTime = Date.now();
+    const eventCount = 1000;
+    
+    // Publish events rapidly
+    for (let i = 0; i < eventCount; i++) {
+      connector.eventBus.publishEvent('test', { id: i });
+    }
+    
+    const endTime = Date.now();
+    const throughput = eventCount / ((endTime - startTime) / 1000);
+    
+    expect(throughput).toBeGreaterThan(100); // 100 events/second
+  });
+});
 ```
 
-### Pipeline Execution
-```javascript
-// Register pipeline
-await pipelineEngine.register(pipeline);
+## Future Enhancements
 
-// Pipeline automatically processes data
-// Source connector emits event
-// Pipeline transforms and routes to destination
-// Destination connector receives processed data
-```
+### Visual Programming Interface
+- Drag-and-drop connector wiring
+- Visual flow builder
+- Real-time data flow visualization
+- Component marketplace
 
-## Future Vision: Visual Programming Interface
-
-### Node-RED Style Interface
-The future interface will allow users to:
-
-1. **Drag and Drop Connectors**
-   - Visual representation of connector instances
-   - Connection status indicators
-   - Configuration panels
-
-2. **Wire Connections**
-   - Visual lines between connectors
-   - Data flow visualization
-   - Real-time data preview
-
-3. **Configure Pipelines**
-   - Transform rules
-   - Filter conditions
-   - Error handling
-
-4. **Monitor and Debug**
-   - Real-time data flow
-   - Performance metrics
-   - Error logs
-
-### Example Workflow
-```
-[Unifi Camera] → [Motion Detection] → [MQTT Broker] → [Database]
-     ↓              ↓                    ↓              ↓
-  Video Stream   Object Detection    Message Pub    Event Storage
-```
-
-## Implementation Guidelines
-
-### Creating a New Connector
-
-1. **Extend BaseConnector**
-```javascript
-class UnifiProtectConnector extends BaseConnector {
-  constructor(config) {
-    super(config);
-    this.api = null;
-  }
-
-  async connect() {
-    // Implementation specific to Unifi Protect
-  }
-
-  getCapabilities() {
-    return [
-      {
-        id: "camera:video:stream",
-        name: "Video Stream",
-        // ... capability definition
-      }
-    ];
-  }
-}
-```
-
-2. **Register Connector Type**
-```javascript
-connectorRegistry.registerType("unifi-protect", UnifiProtectConnector);
-```
-
-3. **Define Capabilities**
-```javascript
-// In connector implementation
-static getCapabilityDefinitions() {
-  return [
-    // ... capability definitions
-  ];
-}
-```
-
-### Best Practices
-
-1. **Error Handling**: Always implement proper error handling and recovery
-2. **Logging**: Use structured logging for debugging and monitoring
-3. **Configuration**: Support both static and dynamic configuration
-4. **Testing**: Write comprehensive tests for each connector
-5. **Documentation**: Document capabilities, configuration, and usage
-6. **Security**: Implement proper authentication and authorization
-7. **Performance**: Optimize for the specific use case
-
-## Migration Path
-
-### Phase 1: Refactor Existing Code
-- Extract Unifi Protect logic into connector
-- Create base connector infrastructure
-- Implement capability system
-
-### Phase 2: Add New Connectors
-- MQTT connector
-- HTTP API connector
-- Database connector
-- File system connector
-
-### Phase 3: Visual Interface
-- Basic drag-and-drop interface
-- Simple wiring capabilities
-- Configuration panels
-
-### Phase 4: Advanced Features
-- Complex transformations
-- Conditional logic
-- Error handling workflows
+### Advanced Analytics
+- Machine learning integration
+- Predictive analytics
+- Anomaly detection
 - Performance optimization
 
-This architecture provides a solid foundation for building a scalable, extensible system that can grow with your needs while maintaining simplicity and usability. 
+### Cloud Integration
+- Multi-site synchronization
+- Cloud backup and restore
+- Remote management
+- Scalable deployment
+
+### Edge Computing
+- Distributed processing
+- Local analytics
+- Offline operation
+- Edge-to-cloud synchronization
+
+---
+
+This architecture provides a solid foundation for building scalable, modular, and extensible systems that can integrate with virtually any external system or protocol. 

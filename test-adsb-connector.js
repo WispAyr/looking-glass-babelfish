@@ -1,4 +1,5 @@
 const ADSBConnector = require('./connectors/types/ADSBConnector');
+const path = require('path');
 
 /**
  * Test script for ADSB Connector
@@ -13,17 +14,26 @@ async function testADSBConnector() {
   // Create connector instance
   const connector = new ADSBConnector({
     id: 'test-adsb-connector',
+    type: 'adsb',
     name: 'Test ADSB Connector',
-    description: 'Test connector for dump1090',
+    description: 'Test connector for ADS-B data',
     config: {
-      url: 'http://10.0.1.180/skyaware/data/aircraft.json',
-      pollInterval: 10000, // 10 seconds for testing
+      url: 'http://localhost:8080/skyaware/data/aircraft.json',
+      pollInterval: 10000,
       emergencyCodes: ['7500', '7600', '7700'],
+      maxAircraftAge: 300000,
       radarRange: 50,
-      radarCenter: {
-        lat: 51.5074, // London coordinates
-        lon: -0.1278
-      }
+      radarCenter: { lat: 55.5074, lon: -4.5933 },
+      enableSquawkCodeAnalysis: true,
+      enableBaseStationIntegration: true,
+      enableAirspaceAwareness: true,
+      enableFlightTracking: true,
+      enableAircraftDataService: true,
+      baseStationDbPath: path.join(__dirname, 'aviationdata', 'BaseStation.sqb')
+    },
+    capabilities: {
+      enabled: ['aircraft:tracking', 'zones:management', 'radar:display'],
+      disabled: []
     }
   });
 

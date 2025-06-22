@@ -26,7 +26,7 @@ class ConnectorRegistry extends EventEmitter {
     this.configPath = path.join(process.cwd(), 'config', 'connectors.json');
     
     // Auto-save configuration
-    this.autoSave = true;
+    this.autoSave = false; // Temporarily disabled to prevent overwriting config
     
     // Load existing configuration
     // this.loadConfiguration(); // Moved to initialize()
@@ -499,8 +499,40 @@ class ConnectorRegistry extends EventEmitter {
             
             // Get type from filename and convert to standard format
             const className = path.basename(file, '.js');
-            // Convert CamelCase to kebab-case (e.g., TelegramConnector -> telegram)
-            const type = className.replace(/Connector$/, '').toLowerCase();
+            
+            // Convert CamelCase to kebab-case with proper handling
+            let type = className.replace(/Connector$/, '');
+            
+            // Handle special cases for proper naming
+            const typeMappings = {
+              'ADSB': 'adsb',
+              'APRS': 'aprs',
+              'Telegram': 'telegram',
+              'LLM': 'llm',
+              'Map': 'map',
+              'WebGui': 'web-gui',
+              'Mqtt': 'mqtt',
+              'Radar': 'radar',
+              'SpeedCalculation': 'speed-calculation',
+              'UnifiProtect': 'unifi-protect',
+              'AnkkeDvr': 'ankke-dvr',
+              'GuiDesigner': 'gui-designer',
+              'Hikvision': 'hikvision',
+              'SpeedDetectionGui': 'speed-detection-gui'
+            };
+            
+            if (typeMappings[type]) {
+              type = typeMappings[type];
+            } else {
+              // Fallback: convert to lowercase with hyphens
+              type = type.replace(/([A-Z])/g, '-$1').toLowerCase().replace(/^-/, '');
+            }
+            
+            // Check if type is already registered
+            if (this.connectorTypes.has(type)) {
+              console.log(`Skipping duplicate connector type: ${type} (already registered)`);
+              continue;
+            }
             
             this.registerType(type, connectorClass);
           } catch (error) {

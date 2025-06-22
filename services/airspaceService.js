@@ -34,14 +34,12 @@ class AirspaceService {
     this.enableAirspaceAwareness = config.enableAirspaceAwareness !== false; // Default to true
     this.airspaceTypes = config.airspaceTypes || ['FA', 'ATZ', 'CTA', 'CTR', 'DA', 'FIR', 'LARS', 'MIL'];
     
-    // Airspace data storage
-    this.airspaces = new Map(); // All airspace definitions
-    this.airspaceIndex = new Map(); // Spatial index for quick lookup
-    this.airspaceTypeCollections = new Map(); // Type-specific collections
-    
-    // Aircraft airspace tracking
-    this.aircraftAirspace = new Map(); // Current airspace for each aircraft
-    this.airspaceHistory = new Map(); // Historical airspace entries/exits
+    // Initialize Map properties with defensive getters
+    this._airspaces = new Map();
+    this._airspaceIndex = new Map();
+    this._airspaceTypeCollections = new Map();
+    this._aircraftAirspace = new Map();
+    this._airspaceHistory = new Map();
     
     // Event generation
     this.events = [];
@@ -56,17 +54,76 @@ class AirspaceService {
       airspaceCount: 0
     };
 
-    this.logger.info('Airspace Service initialized', {
+    this.logger.info('Airspace Service constructor completed', {
       airspaceDataPath: this.airspaceDataPath,
       enableAirspaceAwareness: this.enableAirspaceAwareness,
-      airspaceTypes: this.airspaceTypes
+      airspaceTypes: this.airspaceTypes,
+      aircraftAirspaceInitialized: !!this._aircraftAirspace,
+      airspacesInitialized: !!this._airspaces
     });
+  }
+
+  // Defensive getters to ensure Maps are always available
+  get airspaces() {
+    if (!this._airspaces) {
+      this.logger.warn('airspaces was undefined, reinitializing');
+      this._airspaces = new Map();
+    }
+    return this._airspaces;
+  }
+
+  get airspaceIndex() {
+    if (!this._airspaceIndex) {
+      this.logger.warn('airspaceIndex was undefined, reinitializing');
+      this._airspaceIndex = new Map();
+    }
+    return this._airspaceIndex;
+  }
+
+  get airspaceTypeCollections() {
+    if (!this._airspaceTypeCollections) {
+      this.logger.warn('airspaceTypeCollections was undefined, reinitializing');
+      this._airspaceTypeCollections = new Map();
+    }
+    return this._airspaceTypeCollections;
+  }
+
+  get aircraftAirspace() {
+    if (!this._aircraftAirspace) {
+      this.logger.warn('aircraftAirspace was undefined, reinitializing');
+      this._aircraftAirspace = new Map();
+    }
+    return this._aircraftAirspace;
+  }
+
+  get airspaceHistory() {
+    if (!this._airspaceHistory) {
+      this.logger.warn('airspaceHistory was undefined, reinitializing');
+      this._airspaceHistory = new Map();
+    }
+    return this._airspaceHistory;
+  }
+
+  // Defensive helper (kept for backward compatibility)
+  _ensureMaps() {
+    // The getters will handle reinitialization automatically
+    this.airspaces;
+    this.airspaceIndex;
+    this.airspaceTypeCollections;
+    this.aircraftAirspace;
+    this.airspaceHistory;
   }
 
   /**
    * Initialize the airspace service
    */
   async initialize() {
+    this._ensureMaps();
+    this.logger.info('Airspace Service initialize() called', {
+      enableAirspaceAwareness: this.enableAirspaceAwareness,
+      aircraftAirspaceExists: !!this.aircraftAirspace
+    });
+
     if (!this.enableAirspaceAwareness) {
       this.logger.info('Airspace awareness disabled');
       return;
@@ -84,10 +141,16 @@ class AirspaceService {
       this.logger.info('Airspace service initialized successfully', {
         airspaceCount: this.airspaces.size,
         loadTime: this.performance.loadTime,
-        types: Array.from(this.airspaceTypeCollections.keys())
+        types: Array.from(this.airspaceTypeCollections.keys()),
+        aircraftAirspaceExists: !!this.aircraftAirspace,
+        aircraftAirspaceSize: this.aircraftAirspace ? this.aircraftAirspace.size : 'undefined'
       });
     } catch (error) {
-      this.logger.error('Failed to initialize airspace service', { error: error.message });
+      this.logger.error('Failed to initialize airspace service', { 
+        error: error.message,
+        stack: error.stack,
+        aircraftAirspaceExists: !!this.aircraftAirspace
+      });
       throw error;
     }
   }
@@ -96,6 +159,7 @@ class AirspaceService {
    * Load all airspace data files
    */
   async loadAirspaceData() {
+    this._ensureMaps();
     try {
       const files = await fs.readdir(this.airspaceDataPath);
       const outFiles = files.filter(file => file.endsWith('.out'));
@@ -129,6 +193,7 @@ class AirspaceService {
    * Parse a single airspace file
    */
   async parseAirspaceFile(filename, subdirectory = '') {
+    this._ensureMaps();
     try {
       const filePath = path.join(this.airspaceDataPath, subdirectory, filename);
       const content = await fs.readFile(filePath, 'utf8');
@@ -333,8 +398,25 @@ class AirspaceService {
    * Check if aircraft is in any airspace
    */
   checkAircraftAirspace(aircraft) {
+    this._ensureMaps();
+    // Ensure airspaceIndex is initialized
+    if (!this.airspaceIndex) {
+      this.logger.warn('airspaceIndex not initialized in checkAircraftAirspace', {
+        aircraftIcao24: aircraft?.icao24
+      });
+      this.airspaceIndex = new Map();
+    }
+
+    // Ensure airspaces is initialized
+    if (!this.airspaces) {
+      this.logger.warn('airspaces not initialized in checkAircraftAirspace', {
+        aircraftIcao24: aircraft?.icao24
+      });
+      this.airspaces = new Map();
+    }
+
     if (!aircraft.lat || !aircraft.lon) {
-      return null;
+      return [];
     }
     
     const gridKey = this.getGridKey(aircraft.lat, aircraft.lon);
@@ -394,6 +476,46 @@ class AirspaceService {
    * Update aircraft airspace status and generate events
    */
   updateAircraftAirspace(aircraft) {
+    this._ensureMaps();
+    // Ensure aircraftAirspace is initialized
+    if (!this.aircraftAirspace) {
+      this.logger.warn('aircraftAirspace not initialized, creating new Map', {
+        aircraftIcao24: aircraft?.icao24,
+        enableAirspaceAwareness: this.enableAirspaceAwareness
+      });
+      this.aircraftAirspace = new Map();
+    }
+
+    // Ensure airspaces is initialized
+    if (!this.airspaces) {
+      this.logger.warn('airspaces not initialized, creating new Map', {
+        aircraftIcao24: aircraft?.icao24
+      });
+      this.airspaces = new Map();
+    }
+
+    // Ensure airspaceIndex is initialized
+    if (!this.airspaceIndex) {
+      this.logger.warn('airspaceIndex not initialized, creating new Map', {
+        aircraftIcao24: aircraft?.icao24
+      });
+      this.airspaceIndex = new Map();
+    }
+
+    // Validate aircraft data
+    if (!aircraft || !aircraft.icao24 || typeof aircraft.lat !== 'number' || typeof aircraft.lon !== 'number') {
+      this.logger.debug('Invalid aircraft data for airspace processing', {
+        aircraftIcao24: aircraft?.icao24,
+        hasLat: typeof aircraft?.lat === 'number',
+        hasLon: typeof aircraft?.lon === 'number'
+      });
+      return {
+        current: [],
+        new: [],
+        exited: []
+      };
+    }
+
     const currentAirspaces = this.checkAircraftAirspace(aircraft);
     const previousAirspaces = this.aircraftAirspace.get(aircraft.icao24) || [];
     
@@ -473,6 +595,7 @@ class AirspaceService {
    * Get airspace information for visualization
    */
   getAirspaceForVisualization(center, range) {
+    this._ensureMaps();
     this.logger.debug('getAirspaceForVisualization called', { center, range, airspaceCount: this.airspaces.size });
     
     const airspaces = [];
@@ -651,6 +774,7 @@ class AirspaceService {
    * Get all airspaces at a specific position
    */
   getAirspacesAtPosition(lat, lon, altitude = null) {
+    this._ensureMaps();
     this.logger.debug('getAirspacesAtPosition called', { lat, lon, altitude, airspaceCount: this.airspaces.size });
     
     if (lat === null || lon === null || lat === undefined || lon === undefined) {

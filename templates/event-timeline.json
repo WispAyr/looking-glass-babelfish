@@ -1,0 +1,11 @@
+{
+  "id": "event-timeline",
+  "name": "Event Timeline Template",
+  "description": "Event timeline visualization template",
+  "componentName": "EventTimelineComponent",
+  "componentPath": "EventTimelineComponent.jsx",
+  "width": 1920,
+  "height": 1080,
+  "createdAt": "2025-06-22T02:22:51.267Z",
+  "updatedAt": "2025-06-22T02:22:51.267Z"
+}

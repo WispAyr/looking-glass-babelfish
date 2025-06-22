@@ -433,7 +433,7 @@ class SpeedDetectionGuiConnector extends BaseConnector {
       if (connectorType && connector.type !== connectorType) continue;
       
       try {
-        const connectorCameras = await connector.execute('cameras', 'list');
+        const connectorCameras = await connector.execute('camera:management', 'list');
         if (connectorCameras.success && connectorCameras.cameras) {
           cameras.push(...connectorCameras.cameras.map(camera => ({
             ...camera,
@@ -519,7 +519,7 @@ class SpeedDetectionGuiConnector extends BaseConnector {
     }
 
     try {
-      const result = await connector.execute('camera', 'test', { cameraId });
+      const result = await connector.execute('camera:management', 'test', { cameraId });
       return { success: true, result };
     } catch (error) {
       return { success: false, error: error.message };

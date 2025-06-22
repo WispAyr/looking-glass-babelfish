@@ -17,161 +17,138 @@ const AircraftDataService = require('../../services/aircraftDataService');
  */
 class ADSBConnector extends BaseConnector {
   constructor(config) {
-    // Ensure type is set for BaseConnector
-    const connectorConfig = {
-      ...config,
-      type: 'adsb'
+    // Handle both old format (id, config) and new format (config object)
+    let id, connectorConfig;
+    if (typeof config === 'string') {
+      // Old format: constructor(id, config)
+      id = config;
+      connectorConfig = arguments[1] || {};
+    } else {
+      // New format: constructor(config)
+      id = config.id;
+      connectorConfig = config.config || config;
+    }
+    
+    // Create the config object that BaseConnector expects
+    const baseConfig = {
+      id: id,
+      type: 'adsb',
+      name: config.name || 'ADSB Receiver',
+      description: config.description || 'ADSB aircraft data receiver',
+      config: connectorConfig,
+      capabilities: config.capabilities || {
+        enabled: [
+          'aircraft:tracking',
+          'zones:management',
+          'radar:display',
+          'events:smart',
+          'emergency:monitoring',
+          'basestation:database',
+          'squawk:analysis'
+        ],
+        disabled: []
+      },
+      logger: config.logger
     };
     
-    super(connectorConfig);
+    super(baseConfig);
     
-    // ADSB-specific properties
-    this.dump1090Url = config.config?.url || 'http://10.0.1.180/skyaware/data/aircraft.json';
-    this.pollInterval = config.config?.pollInterval || 5000; // 5 seconds
-    this.emergencyCodes = config.config?.emergencyCodes || ['7500', '7600', '7700'];
-    this.maxAircraftAge = config.config?.maxAircraftAge || 300000; // 5 minutes
+    // ADSB-specific configuration
+    this.url = connectorConfig.url || 'http://localhost:8080/data/aircraft.json';
+    this.pollInterval = connectorConfig.pollInterval || 5000;
+    this.emergencyCodes = connectorConfig.emergencyCodes || ['7500', '7600', '7700'];
+    this.radarRange = connectorConfig.radarRange || 50;
+    this.radarCenter = connectorConfig.radarCenter || { lat: 55.5074, lon: -4.5933 };
+    this.enableSquawkCodeAnalysis = connectorConfig.enableSquawkCodeAnalysis !== false;
+    this.enableBaseStationIntegration = connectorConfig.enableBaseStationIntegration !== false;
+    this.enableAircraftDataService = connectorConfig.enableAircraftDataService !== false;
+    this.baseStationDbPath = connectorConfig.baseStationDbPath || './aviationdata/BaseStation.sqb';
+    this.enableAirspaceAwareness = connectorConfig.enableAirspaceAwareness !== false;
     
-    // BaseStation database integration
-    this.baseStationDbPath = config.config?.baseStationDbPath || path.join(__dirname, '../../aviationdata/BaseStation.sqb');
-    this.baseStationDb = null;
-    this.aircraftRegistry = new Map(); // Cached aircraft registration data
-    this.enableBaseStationIntegration = config.config?.enableBaseStationIntegration !== false; // Default to true
-    
-    // Aircraft data service integration
-    this.aircraftDataService = null;
-    this.enableAircraftDataService = config.config?.enableAircraftDataService !== false; // Default to true
-    this.enableFlightTracking = config.config?.enableFlightTracking !== false; // Default to true
-    
-    // Flight tracking state
-    this.activeFlights = new Map(); // Track active flights by icao24
-    this.flightSessionId = 1; // Simple session ID counter
-    this.flightDetectionConfig = {
-      minFlightDuration: config.config?.minFlightDuration || 30000, // 30 seconds
-      maxGroundSpeed: config.config?.maxGroundSpeed || 50, // 50 knots
-      minAltitude: config.config?.minAltitude || 100, // 100 feet
-      flightEndTimeout: config.config?.flightEndTimeout || 300000 // 5 minutes
-    };
-    
-    // Airspace service integration
-    this.airspaceService = config.config?.airspaceService || null;
-    this.enableAirspaceAwareness = config.config?.enableAirspaceAwareness !== false; // Default to true
-    this.airspaceEvents = []; // Airspace-related events
-    this.aircraftAirspaceContext = new Map(); // Current airspace context for each aircraft
-    
-    // Squawk code service integration
-    this.squawkCodeService = config.config?.squawkCodeService || null;
-    this.enableSquawkCodeAnalysis = config.config?.enableSquawkCodeAnalysis !== false; // Default to true
-    this.squawkCodeEvents = []; // Squawk code analysis events
-    this.aircraftSquawkContext = new Map(); // Current squawk context for each aircraft
-    
-    // Aircraft data management
-    this.aircraft = new Map(); // Current aircraft
-    this.aircraftHistory = new Map(); // Historical data
-    this.recentChanges = []; // Recent changes for events
-    this.appearances = []; // New aircraft appearances
-    this.disappearances = []; // Aircraft disappearances
-    
-    // Zone management
-    this.zones = new Map();
-    this.zoneTypes = {
-      'parking': { name: 'Parking Stands', color: '#FFD700', priority: 'low' },
-      'taxiway': { name: 'Taxiways', color: '#FFA500', priority: 'medium' },
-      'runway': { name: 'Runways', color: '#FF0000', priority: 'high' },
-      'approach': { name: 'Approach Paths', color: '#00FF00', priority: 'high' },
-      'departure': { name: 'Departure Paths', color: '#0000FF', priority: 'high' },
-      'emergency': { name: 'Emergency Areas', color: '#FF00FF', priority: 'critical' },
-      'custom': { name: 'Custom Zones', color: '#808080', priority: 'medium' }
-    };
-    
-    // Radar display settings
+    // Radar configuration
     this.radarConfig = {
-      range: config.config?.radarRange || 0.5, // nautical miles
-      center: config.config?.radarCenter || { lat: 55.5074, lon: -4.5933 },
-      displayMode: config.config?.displayMode || 'all', // all, filtered, emergency
-      showTrails: config.config?.showTrails || true,
-      trailLength: config.config?.trailLength || 10,
-      showAirspace: config.config?.showAirspace !== false, // Default to true
-      showSquawkInfo: config.config?.showSquawkInfo !== false // Default to true
+      range: connectorConfig.radarRange || 50,
+      center: connectorConfig.radarCenter || { lat: 55.5074, lon: -4.5933 },
+      zoom: connectorConfig.radarZoom || 10,
+      rotation: connectorConfig.radarRotation || 0,
+      sweepSpeed: connectorConfig.radarSweepSpeed || 4,
+      showTrails: connectorConfig.showTrails !== false,
+      trailLength: connectorConfig.trailLength || 20,
+      showLabels: connectorConfig.showLabels !== false,
+      showAltitude: connectorConfig.showAltitude !== false,
+      showSpeed: connectorConfig.showSpeed !== false,
+      showHeading: connectorConfig.showHeading !== false,
+      showSquawk: connectorConfig.showSquawk !== false,
+      showEmergency: connectorConfig.showEmergency !== false,
+      colorByAltitude: connectorConfig.colorByAltitude !== false,
+      colorBySpeed: connectorConfig.colorBySpeed !== false,
+      colorByType: connectorConfig.colorByType !== false,
+      showCoastline: connectorConfig.showCoastline !== false,
+      coastlineColor: connectorConfig.coastlineColor || '#0066cc',
+      coastlineWidth: connectorConfig.coastlineWidth || 2,
+      coastlineOpacity: connectorConfig.coastlineOpacity || 0.8
     };
+    
+    // Airport configuration
+    this.airport = connectorConfig.airport || null;
+    
+    // Initialize ADSB-specific properties
+    this.aircraft = new Map();
+    this.events = [];
+    this.pollingInterval = null;
+    this.aircraftDataService = null;
+    this.airspaceService = null;
+    this.squawkCodeService = null;
+    this.runwayUsage = new Map();
+    this.activeRunway = null;
+    this.aircraftRegistry = new Map(); // Initialize aircraft registry
+    this.baseStationDb = null; // Initialize BaseStation database reference
     
     // Event tracking
-    this.events = [];
-    this.emergencyEvents = [];
+    this.lastEventTime = new Map();
+    this.eventCooldown = 30000; // 30 seconds between same event types
+    
+    // Flight tracking
+    this.enableFlightTracking = connectorConfig.enableFlightTracking !== false;
+    this.activeFlights = new Map();
+    this.flightSessionId = 1;
+    
+    // Flight detection configuration
+    this.flightDetectionConfig = {
+      maxGroundSpeed: connectorConfig.maxGroundSpeed || 30, // knots
+      minAltitude: connectorConfig.minAltitude || 500, // feet
+      minFlightDuration: connectorConfig.minFlightDuration || 30000, // 30 seconds
+      flightEndTimeout: connectorConfig.flightEndTimeout || 300000 // 5 minutes
+    };
+    
+    // Aircraft tracking arrays
+    this.appearances = [];
+    this.disappearances = [];
+    this.recentChanges = [];
     
     // Performance tracking
     this.performance = {
-      lastPoll: null,
-      pollCount: 0,
       errorCount: 0,
-      averageResponseTime: 0,
-      aircraftCount: 0,
-      zoneViolations: 0,
-      baseStationQueries: 0,
-      baseStationCacheHits: 0,
-      airspaceQueries: 0,
-      airspaceEvents: 0,
-      squawkCodeQueries: 0,
       squawkCodeEvents: 0,
-      flightStarts: 0,
-      flightEnds: 0
+      airspaceEvents: 0,
+      aircraftUpdates: 0,
+      eventsGenerated: 0,
+      pollCount: 0,
+      averageResponseTime: 0,
+      lastPoll: null,
+      aircraftCount: 0,
+      airspaceQueries: 0,
+      squawkCodeQueries: 0,
+      baseStationCacheHits: 0,
+      baseStationQueries: 0,
+      flightStarts: 0
     };
     
-    // Polling control
-    this.pollTimer = null;
-    this.isPolling = false;
-    
-    // Spatial calculations
-    this.spatialUtils = {
-      // Convert degrees to radians
-      toRadians: (degrees) => degrees * (Math.PI / 180),
-      
-      // Calculate distance between two points (nautical miles)
-      calculateDistance: (lat1, lon1, lat2, lon2) => {
-        const R = 3440.065; // Earth's radius in nautical miles
-        const dLat = this.spatialUtils.toRadians(lat2 - lat1);
-        const dLon = this.spatialUtils.toRadians(lon2 - lon1);
-        const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-                  Math.cos(this.spatialUtils.toRadians(lat1)) * Math.cos(this.spatialUtils.toRadians(lat2)) *
-                  Math.sin(dLon/2) * Math.sin(dLon/2);
-        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-        return R * c;
-      },
-      
-      // Check if point is in polygon (zone)
-      pointInPolygon: (point, polygon) => {
-        let inside = false;
-        for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-          if (((polygon[i].lat > point.lat) !== (polygon[j].lat > point.lat)) &&
-              (point.lon < (polygon[j].lon - polygon[i].lon) * (point.lat - polygon[i].lat) / (polygon[j].lat - polygon[i].lat) + polygon[i].lon)) {
-            inside = !inside;
-          }
-        }
-        return inside;
-      },
-      
-      // Calculate bearing between two points
-      calculateBearing: (lat1, lon1, lat2, lon2) => {
-        const dLon = this.spatialUtils.toRadians(lon2 - lon1);
-        const lat1Rad = this.spatialUtils.toRadians(lat1);
-        const lat2Rad = this.spatialUtils.toRadians(lat2);
-        const y = Math.sin(dLon) * Math.cos(lat2Rad);
-        const x = Math.cos(lat1Rad) * Math.sin(lat2Rad) - Math.sin(lat1Rad) * Math.cos(lat2Rad) * Math.cos(dLon);
-        return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
-      }
-    };
-    
-    this.logger.info('ADSB Connector initialized', {
-      id: this.id,
-      dump1090Url: this.dump1090Url,
-      pollInterval: this.pollInterval,
-      radarRange: this.radarConfig.range,
-      baseStationIntegration: this.enableBaseStationIntegration,
-      baseStationDbPath: this.baseStationDbPath,
-      airspaceAwareness: this.enableAirspaceAwareness,
-      squawkCodeAnalysis: this.enableSquawkCodeAnalysis,
-      aircraftDataService: this.enableAircraftDataService,
-      flightTracking: this.enableFlightTracking
-    });
+    // Event storage
+    this.squawkCodeEvents = [];
+    this.airspaceEvents = [];
+    this.emergencyEvents = [];
+    this.aircraftSquawkContext = new Map();
   }
 
   /**
@@ -322,6 +299,22 @@ class ADSBConnector extends BaseConnector {
     // Emit airspace event
     this.emit('airspace:event', event);
     
+    // Publish to event bus for rule processing
+    if (this.eventBus) {
+      this.eventBus.publishEvent({
+        type: event.type,
+        source: this.id,
+        timestamp: event.timestamp || new Date().toISOString(),
+        data: {
+          aircraft: event.aircraft,
+          airspace: event.airspace,
+          metadata: event.metadata
+        }
+      }).catch(error => {
+        this.logger.debug('Failed to publish airspace event to event bus', { error: error.message });
+      });
+    }
+    
     // Generate enhanced smart events based on airspace context
     this.generateAirspaceBasedEvents(event);
     
@@ -334,7 +327,7 @@ class ADSBConnector extends BaseConnector {
   }
 
   /**
-   * Generate enhanced events based on airspace context
+   * Generate airspace-based events
    */
   generateAirspaceBasedEvents(airspaceEvent) {
     const { aircraft, airspace } = airspaceEvent;
@@ -349,29 +342,29 @@ class ADSBConnector extends BaseConnector {
       this.generateDepartureEvent(aircraft, airspace);
     }
     
-    // Controlled airspace entry
-    if (['CTR', 'CTA', 'TMA'].includes(airspace.type) && airspaceEvent.type === 'airspace:entry') {
-      this.generateControlledAirspaceEvent(aircraft, airspace, 'entry');
+    // Landing detection - check for aircraft that have been on approach and are now at low altitude
+    if (this.isAircraftLikelyLanding(aircraft)) {
+      this.generateLandingEvent(aircraft, airspace);
     }
     
-    // Controlled airspace exit
-    if (['CTR', 'CTA', 'TMA'].includes(airspace.type) && airspaceEvent.type === 'airspace:exit') {
-      this.generateControlledAirspaceEvent(aircraft, airspace, 'exit');
+    // Ground movement detection
+    if (this.isAircraftOnGround(aircraft)) {
+      this.generateGroundMovementEvent(aircraft, airspace);
     }
     
-    // Danger area entry
-    if (airspace.type === 'Danger_Area' && airspaceEvent.type === 'airspace:entry') {
-      this.generateDangerAreaEvent(aircraft, airspace, 'entry');
+    // Helicopter specific events
+    if (this.isHelicopter(aircraft)) {
+      this.generateHelicopterEvent(aircraft, airspace);
     }
     
-    // Military airspace entry
-    if (airspace.type === 'Military' && airspaceEvent.type === 'airspace:entry') {
-      this.generateMilitaryAirspaceEvent(aircraft, airspace, 'entry');
+    // Taxi detection
+    if (this.isAircraftTaxiing(aircraft)) {
+      this.generateTaxiEvent(aircraft, airspace);
     }
     
-    // Holding pattern entry
-    if (airspace.type === 'Holding_Pattern' && airspaceEvent.type === 'airspace:entry') {
-      this.generateHoldingPatternEvent(aircraft, airspace, 'entry');
+    // Parking/gate detection
+    if (this.isAircraftParked(aircraft)) {
+      this.generateParkingEvent(aircraft, airspace);
     }
   }
 
@@ -395,6 +388,22 @@ class ADSBConnector extends BaseConnector {
     
     this.events.push(event);
     this.emit('approach:detected', event);
+    
+    // Publish to event bus for rule processing
+    if (this.eventBus) {
+      this.eventBus.publishEvent({
+        type: 'approach:detected',
+        source: this.id,
+        timestamp: new Date().toISOString(),
+        data: {
+          aircraft: aircraft,
+          airspace: airspace,
+          metadata: event.metadata
+        }
+      }).catch(error => {
+        this.logger.debug('Failed to publish approach event to event bus', { error: error.message });
+      });
+    }
     
     this.logger.info('Approach detected', {
       aircraft: aircraft.icao24,
@@ -424,10 +433,263 @@ class ADSBConnector extends BaseConnector {
     this.events.push(event);
     this.emit('departure:detected', event);
     
+    // Publish to event bus for rule processing
+    if (this.eventBus) {
+      this.eventBus.publishEvent({
+        type: 'departure:detected',
+        source: this.id,
+        timestamp: new Date().toISOString(),
+        data: {
+          aircraft: aircraft,
+          airspace: airspace,
+          metadata: event.metadata
+        }
+      }).catch(error => {
+        this.logger.debug('Failed to publish departure event to event bus', { error: error.message });
+      });
+    }
+    
     this.logger.info('Departure detected', {
       aircraft: aircraft.icao24,
       runway: airspace.name,
       airport: event.metadata.airport
+    });
+  }
+
+  /**
+   * Check if aircraft is likely landing based on behavior patterns
+   */
+  isAircraftLikelyLanding(aircraft) {
+    // Must have position data
+    if (!aircraft.lat || !aircraft.lon || !aircraft.altitude) {
+      return false;
+    }
+
+    // Check altitude - must be very low (landing threshold)
+    if (aircraft.altitude > 100) {
+      return false;
+    }
+
+    // Check vertical rate - should be descending or level
+    if (aircraft.vertical_rate && aircraft.vertical_rate > 100) {
+      return false;
+    }
+
+    // Check speed - should be slow for landing
+    if (aircraft.speed && aircraft.speed > 150) {
+      return false;
+    }
+
+    // Check if aircraft was recently on approach (within last 5 minutes)
+    const recentApproach = this.events.find(event => 
+      event.type === 'approach:detected' && 
+      event.aircraft.icao24 === aircraft.icao24 &&
+      (Date.now() - event.timestamp.getTime()) < 300000 // 5 minutes
+    );
+
+    return !!recentApproach;
+  }
+
+  /**
+   * Generate landing event
+   */
+  generateLandingEvent(aircraft, airspace) {
+    const airport = this.determineAirport(aircraft);
+    const runway = this.determineRunway(aircraft, airport);
+    const runwayUsage = this.trackRunwayUsage(aircraft, airport);
+    
+    const event = {
+      id: `landing_${aircraft.icao24}_${Date.now()}`,
+      timestamp: new Date(),
+      type: 'landing:detected',
+      aircraft: aircraft,
+      airspace: airspace,
+      metadata: {
+        eventType: 'landing',
+        airport: airport,
+        runway: runway,
+        runwayUsage: runwayUsage,
+        confidence: this.calculateLandingConfidence(aircraft, airport, runway),
+        touchdownPoint: {
+          lat: aircraft.lat,
+          lon: aircraft.lon,
+          altitude: aircraft.altitude
+        }
+      }
+    };
+    
+    this.events.push(event);
+    this.emit('landing:detected', event);
+    
+    // Publish to event bus for rule processing
+    if (this.eventBus) {
+      this.eventBus.publishEvent({
+        type: 'landing:detected',
+        source: this.id,
+        timestamp: new Date().toISOString(),
+        data: {
+          aircraft: aircraft,
+          airspace: airspace,
+          metadata: event.metadata
+        }
+      }).catch(error => {
+        this.logger.debug('Failed to publish landing event to event bus', { error: error.message });
+      });
+    }
+    
+    this.logger.info('Landing detected', {
+      aircraft: aircraft.icao24,
+      airport: airport?.icao,
+      runway: runway?.id,
+      confidence: event.metadata.confidence
+    });
+  }
+
+  /**
+   * Generate ground movement event
+   */
+  generateGroundMovementEvent(aircraft, airspace) {
+    const airport = this.determineAirport(aircraft);
+    const movementType = this.determineGroundMovementType(aircraft);
+    
+    const event = {
+      id: `ground_movement_${aircraft.icao24}_${Date.now()}`,
+      timestamp: new Date(),
+      type: 'ground:movement',
+      aircraft: aircraft,
+      airspace: airspace,
+      metadata: {
+        eventType: 'ground_movement',
+        airport: airport,
+        movementType: movementType,
+        confidence: this.calculateGroundMovementConfidence(aircraft),
+        location: {
+          lat: aircraft.lat,
+          lon: aircraft.lon,
+          altitude: aircraft.altitude
+        }
+      }
+    };
+    
+    this.events.push(event);
+    this.emit('ground:movement', event);
+    
+    this.logger.info('Ground movement detected', {
+      aircraft: aircraft.icao24,
+      airport: airport?.icao,
+      movementType: movementType,
+      confidence: event.metadata.confidence
+    });
+  }
+
+  /**
+   * Generate helicopter specific event
+   */
+  generateHelicopterEvent(aircraft, airspace) {
+    const airport = this.determineAirport(aircraft);
+    const helicopterAction = this.determineHelicopterAction(aircraft);
+    
+    const event = {
+      id: `helicopter_${aircraft.icao24}_${Date.now()}`,
+      timestamp: new Date(),
+      type: 'helicopter:action',
+      aircraft: aircraft,
+      airspace: airspace,
+      metadata: {
+        eventType: 'helicopter_action',
+        airport: airport,
+        action: helicopterAction,
+        confidence: this.calculateHelicopterConfidence(aircraft),
+        location: {
+          lat: aircraft.lat,
+          lon: aircraft.lon,
+          altitude: aircraft.altitude
+        }
+      }
+    };
+    
+    this.events.push(event);
+    this.emit('helicopter:action', event);
+    
+    this.logger.info('Helicopter action detected', {
+      aircraft: aircraft.icao24,
+      airport: airport?.icao,
+      action: helicopterAction,
+      confidence: event.metadata.confidence
+    });
+  }
+
+  /**
+   * Generate taxi event
+   */
+  generateTaxiEvent(aircraft, airspace) {
+    const airport = this.determineAirport(aircraft);
+    const taxiPhase = this.determineTaxiPhase(aircraft);
+    
+    const event = {
+      id: `taxi_${aircraft.icao24}_${Date.now()}`,
+      timestamp: new Date(),
+      type: 'taxi:movement',
+      aircraft: aircraft,
+      airspace: airspace,
+      metadata: {
+        eventType: 'taxi_movement',
+        airport: airport,
+        taxiPhase: taxiPhase,
+        confidence: this.calculateTaxiConfidence(aircraft),
+        location: {
+          lat: aircraft.lat,
+          lon: aircraft.lon,
+          altitude: aircraft.altitude
+        }
+      }
+    };
+    
+    this.events.push(event);
+    this.emit('taxi:movement', event);
+    
+    this.logger.info('Taxi movement detected', {
+      aircraft: aircraft.icao24,
+      airport: airport?.icao,
+      taxiPhase: taxiPhase,
+      confidence: event.metadata.confidence
+    });
+  }
+
+  /**
+   * Generate parking event
+   */
+  generateParkingEvent(aircraft, airspace) {
+    const airport = this.determineAirport(aircraft);
+    const parkingArea = this.determineParkingArea(aircraft, airport);
+    
+    const event = {
+      id: `parking_${aircraft.icao24}_${Date.now()}`,
+      timestamp: new Date(),
+      type: 'parking:status',
+      aircraft: aircraft,
+      airspace: airspace,
+      metadata: {
+        eventType: 'parking_status',
+        airport: airport,
+        parkingArea: parkingArea,
+        confidence: this.calculateParkingConfidence(aircraft),
+        location: {
+          lat: aircraft.lat,
+          lon: aircraft.lon,
+          altitude: aircraft.altitude
+        }
+      }
+    };
+    
+    this.events.push(event);
+    this.emit('parking:status', event);
+    
+    this.logger.info('Parking status detected', {
+      aircraft: aircraft.icao24,
+      airport: airport?.icao,
+      parkingArea: parkingArea,
+      confidence: event.metadata.confidence
     });
   }
 
@@ -543,12 +805,17 @@ class ADSBConnector extends BaseConnector {
   }
 
   /**
-   * Extract airport code from airspace name
+   * Extract airport information from airspace data
    */
   extractAirportFromAirspace(airspace) {
-    // Try to extract ICAO code from airspace name
-    const match = airspace.name.match(/[A-Z]{4}/);
-    return match ? match[0] : null;
+    // Try to extract airport code from airspace name
+    const airportMatch = airspace.name.match(/([A-Z]{4})/);
+    if (airportMatch) {
+      return airportMatch[1];
+    }
+    
+    // Fallback to airspace name
+    return airspace.name;
   }
 
   /**
@@ -587,6 +854,241 @@ class ADSBConnector extends BaseConnector {
     }
     
     return Math.min(confidence, 1.0);
+  }
+
+  /**
+   * Calculate landing confidence based on aircraft behavior and airport proximity
+   */
+  calculateLandingConfidence(aircraft, airport, runway) {
+    let confidence = 0.6; // Base confidence for landing
+    
+    // Check altitude - lower is better
+    if (aircraft.altitude && aircraft.altitude < 100) {
+      confidence += 0.2;
+    }
+    
+    // Check speed - slower is better for landing
+    if (aircraft.speed && aircraft.speed < 150) {
+      confidence += 0.1;
+    }
+    
+    // Check vertical rate - descending
+    if (aircraft.vertical_rate && aircraft.vertical_rate < -200) {
+      confidence += 0.1;
+    }
+    
+    return Math.min(confidence, 1.0);
+  }
+
+  /**
+   * Determine which airport the aircraft is operating at
+   */
+  determineAirport(aircraft) {
+    // Use the connector's configured airport
+    if (this.airport) {
+      const distance = this.calculateDistance(
+        aircraft.lat, aircraft.lon,
+        this.airport.lat, this.airport.lon
+      );
+      
+      // If aircraft is within 10km of configured airport, use it
+      if (distance < 10) {
+        return this.airport;
+      }
+    }
+
+    // Fallback to known airport coordinates (can be expanded)
+    const airports = {
+      'EGPK': { // Prestwick
+        name: 'Glasgow Prestwick Airport',
+        icao: 'EGPK',
+        lat: 55.5074,
+        lon: -4.5933,
+        runways: [
+          { id: '12/30', heading: 120, length: 2987, lat: 55.5074, lon: -4.5933 },
+          { id: '03/21', heading: 30, length: 2987, lat: 55.5074, lon: -4.5933 }
+        ]
+      },
+      'EGPF': { // Glasgow
+        name: 'Glasgow Airport',
+        icao: 'EGPF',
+        lat: 55.8719,
+        lon: -4.4331,
+        runways: [
+          { id: '05/23', heading: 50, length: 2658, lat: 55.8719, lon: -4.4331 }
+        ]
+      },
+      'EGAA': { // Belfast
+        name: 'Belfast International Airport',
+        icao: 'EGAA',
+        lat: 54.6575,
+        lon: -6.2158,
+        runways: [
+          { id: '07/25', heading: 70, length: 2780, lat: 54.6575, lon: -6.2158 }
+        ]
+      }
+    };
+
+    // Find closest airport
+    let closestAirport = null;
+    let closestDistance = Infinity;
+
+    for (const [icao, airport] of Object.entries(airports)) {
+      const distance = this.calculateDistance(
+        aircraft.lat, aircraft.lon,
+        airport.lat, airport.lon
+      );
+      
+      if (distance < closestDistance && distance < 10) { // Within 10km
+        closestDistance = distance;
+        closestAirport = airport;
+      }
+    }
+
+    return closestAirport;
+  }
+
+  /**
+   * Determine which runway is likely in use based on aircraft position and heading
+   */
+  determineRunway(aircraft, airport) {
+    if (!airport || !aircraft.heading) {
+      return null;
+    }
+
+    let bestRunway = null;
+    let bestScore = 0;
+
+    for (const runway of airport.runways) {
+      // Calculate heading difference
+      const headingDiff = Math.abs(aircraft.heading - runway.heading);
+      const normalizedDiff = Math.min(headingDiff, 360 - headingDiff);
+      
+      // Score based on heading alignment (lower difference = higher score)
+      const headingScore = Math.max(0, 1 - (normalizedDiff / 45)); // 45 degrees tolerance
+      
+      // Distance from runway centerline
+      const distance = this.calculateDistance(
+        aircraft.lat, aircraft.lon,
+        runway.lat, runway.lon
+      );
+      const distanceScore = Math.max(0, 1 - (distance / 2)); // 2km tolerance
+      
+      const totalScore = (headingScore * 0.7) + (distanceScore * 0.3);
+      
+      if (totalScore > bestScore) {
+        bestScore = totalScore;
+        bestRunway = runway;
+      }
+    }
+
+    return bestScore > 0.5 ? bestRunway : null;
+  }
+
+  /**
+   * Calculate distance between two coordinates in kilometers
+   */
+  calculateDistance(lat1, lon1, lat2, lon2) {
+    const R = 6371; // Earth's radius in km
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+  }
+
+  /**
+   * Track runway usage and determine active runway
+   */
+  trackRunwayUsage(aircraft, airport) {
+    if (!airport || !aircraft.heading) {
+      return null;
+    }
+
+    const runway = this.determineRunway(aircraft, airport);
+    if (!runway) {
+      return null;
+    }
+
+    // Track runway usage for this aircraft
+    const aircraftKey = aircraft.icao24;
+    if (!this.runwayUsage) {
+      this.runwayUsage = new Map();
+    }
+
+    if (!this.runwayUsage.has(aircraftKey)) {
+      this.runwayUsage.set(aircraftKey, {
+        runway: runway,
+        firstSeen: Date.now(),
+        lastSeen: Date.now(),
+        usageCount: 1
+      });
+    } else {
+      const usage = this.runwayUsage.get(aircraftKey);
+      usage.lastSeen = Date.now();
+      usage.usageCount++;
+    }
+
+    // Determine most active runway in the last 30 minutes
+    const thirtyMinutesAgo = Date.now() - (30 * 60 * 1000);
+    const recentUsage = new Map();
+
+    for (const [icao, usage] of this.runwayUsage.entries()) {
+      if (usage.lastSeen > thirtyMinutesAgo) {
+        const runwayId = usage.runway.id;
+        if (!recentUsage.has(runwayId)) {
+          recentUsage.set(runwayId, 0);
+        }
+        recentUsage.set(runwayId, recentUsage.get(runwayId) + usage.usageCount);
+      }
+    }
+
+    // Find most used runway
+    let mostUsedRunway = null;
+    let maxUsage = 0;
+
+    for (const [runwayId, usage] of recentUsage.entries()) {
+      if (usage > maxUsage) {
+        maxUsage = usage;
+        mostUsedRunway = runwayId;
+      }
+    }
+
+    // Update airport runway status
+    if (airport.runways) {
+      for (const rwy of airport.runways) {
+        rwy.active = (rwy.id === mostUsedRunway);
+      }
+    }
+
+    return {
+      currentRunway: runway,
+      mostActiveRunway: mostUsedRunway,
+      usageStats: Object.fromEntries(recentUsage)
+    };
+  }
+
+  /**
+   * Get current runway status
+   */
+  getRunwayStatus() {
+    if (!this.airport || !this.airport.runways) {
+      return null;
+    }
+
+    return {
+      airport: this.airport.icao,
+      runways: this.airport.runways.map(rwy => ({
+        id: rwy.id,
+        heading: rwy.heading,
+        length: rwy.length,
+        active: rwy.active,
+        lastUpdate: Date.now()
+      })),
+      usageStats: this.runwayUsage ? Object.fromEntries(this.runwayUsage) : {}
+    };
   }
 
   /**
@@ -925,10 +1427,10 @@ class ADSBConnector extends BaseConnector {
    */
   async performConnect() {
     try {
-      this.logger.info('Connecting to dump1090...', { url: this.dump1090Url });
+      this.logger.info('Connecting to dump1090...', { url: this.url });
       
       // Test connection
-      const response = await axios.get(this.dump1090Url, { timeout: 5000 });
+      const response = await axios.get(this.url, { timeout: 5000 });
       
       if (response.status === 200) {
         this.logger.info('Successfully connected to dump1090');
@@ -1245,7 +1747,7 @@ class ADSBConnector extends BaseConnector {
     const startTime = Date.now();
     
     try {
-      const response = await axios.get(this.dump1090Url, { timeout: 10000 });
+      const response = await axios.get(this.url, { timeout: 10000 });
       
       if (response.status === 200 && response.data) {
         await this.processAircraftData(response.data);
@@ -1269,6 +1771,27 @@ class ADSBConnector extends BaseConnector {
           activeFlights: this.activeFlights.size,
           responseTime: `${responseTime}ms`
         });
+        
+        // Publish periodic status event to event bus
+        if (this.eventBus) {
+          this.eventBus.publishEvent({
+            type: 'adsb:status',
+            source: this.id,
+            timestamp: new Date().toISOString(),
+            data: {
+              aircraftCount: this.aircraft.size,
+              activeFlights: this.activeFlights.size,
+              responseTime: responseTime,
+              performance: this.performance,
+              metadata: {
+                eventType: 'adsb_status',
+                pollCount: this.performance.pollCount
+              }
+            }
+          }).catch(error => {
+            this.logger.debug('Failed to publish ADSB status event to event bus', { error: error.message });
+          });
+        }
       }
     } catch (error) {
       this.performance.errorCount++;
@@ -1352,7 +1875,7 @@ class ADSBConnector extends BaseConnector {
           aircraft.displayName = aircraft.callsign || aircraft.icao24;
         }
         
-        // Enhance with airspace awareness if available
+        // Process airspace data if available
         if (this.enableAirspaceAwareness && this.airspaceService && aircraft.lat && aircraft.lon) {
           try {
             this.performance.airspaceQueries++;
@@ -1395,7 +1918,9 @@ class ADSBConnector extends BaseConnector {
           } catch (error) {
             this.logger.debug('Failed to process airspace data for aircraft', { 
               icao24, 
-              error: error.message 
+              error: error.message,
+              airspaceServiceAvailable: !!this.airspaceService,
+              enableAirspaceAwareness: this.enableAirspaceAwareness
             });
           }
         }
@@ -1504,6 +2029,25 @@ class ADSBConnector extends BaseConnector {
     
     this.emit('aircraft:appeared', aircraft);
     
+    // Publish to event bus for rule processing
+    if (this.eventBus) {
+      this.eventBus.publishEvent({
+        type: 'aircraft:appeared',
+        source: this.id,
+        timestamp: new Date().toISOString(),
+        data: {
+          aircraft: aircraft,
+          metadata: {
+            eventType: 'aircraft_appearance',
+            icao24: aircraft.icao24,
+            callsign: aircraft.callsign
+          }
+        }
+      }).catch(error => {
+        this.logger.debug('Failed to publish aircraft appearance event to event bus', { error: error.message });
+      });
+    }
+    
     this.logger.info('Aircraft appeared', {
       icao24: aircraft.icao24,
       callsign: aircraft.callsign,
@@ -1574,6 +2118,26 @@ class ADSBConnector extends BaseConnector {
       });
       
       this.emit('aircraft:moved', { aircraft: newAircraft, changes: changes });
+      
+      // Publish significant changes to event bus for rule processing
+      if (this.eventBus && (changes.position || changes.altitude || changes.speed)) {
+        this.eventBus.publishEvent({
+          type: 'aircraft:updated',
+          source: this.id,
+          timestamp: new Date().toISOString(),
+          data: {
+            aircraft: newAircraft,
+            changes: changes,
+            metadata: {
+              eventType: 'aircraft_update',
+              icao24: newAircraft.icao24,
+              callsign: newAircraft.callsign
+            }
+          }
+        }).catch(error => {
+          this.logger.debug('Failed to publish aircraft update event to event bus', { error: error.message });
+        });
+      }
     }
   }
 
@@ -1604,6 +2168,25 @@ class ADSBConnector extends BaseConnector {
     
     this.emit('aircraft:disappeared', aircraft);
     
+    // Publish to event bus for rule processing
+    if (this.eventBus) {
+      this.eventBus.publishEvent({
+        type: 'aircraft:disappeared',
+        source: this.id,
+        timestamp: new Date().toISOString(),
+        data: {
+          aircraft: aircraft,
+          metadata: {
+            eventType: 'aircraft_disappearance',
+            icao24: aircraft.icao24,
+            callsign: aircraft.callsign
+          }
+        }
+      }).catch(error => {
+        this.logger.debug('Failed to publish aircraft disappearance event to event bus', { error: error.message });
+      });
+    }
+    
     this.logger.info('Aircraft disappeared', {
       icao24: aircraft.icao24,
       callsign: aircraft.callsign
@@ -1614,28 +2197,46 @@ class ADSBConnector extends BaseConnector {
    * Handle emergency situation
    */
   handleEmergency(aircraft) {
+    const emergencyType = this.getEmergencyType(aircraft.squawk);
+    
     const emergencyEvent = {
       id: `emergency_${aircraft.icao24}_${Date.now()}`,
+      timestamp: new Date(),
+      type: 'emergency:detected',
       aircraft: aircraft,
-      squawk: aircraft.squawk,
-      timestamp: new Date().toISOString(),
-      priority: 'critical',
-      status: 'active'
+      metadata: {
+        eventType: 'emergency',
+        emergencyType: emergencyType,
+        squawk: aircraft.squawk,
+        severity: 'high'
+      }
     };
     
-    this.emergencyEvents.push(emergencyEvent);
+    this.events.push(emergencyEvent);
+    this.emit('emergency:detected', emergencyEvent);
     
-    // Keep only recent emergency events
-    if (this.emergencyEvents.length > 50) {
-      this.emergencyEvents = this.emergencyEvents.slice(-50);
+    // Publish to event bus for rule processing
+    if (this.eventBus) {
+      this.eventBus.publishEvent({
+        type: 'emergency:detected',
+        source: this.id,
+        timestamp: new Date().toISOString(),
+        data: {
+          aircraft: aircraft,
+          emergencyType: emergencyType,
+          squawk: aircraft.squawk,
+          metadata: emergencyEvent.metadata
+        }
+      }).catch(error => {
+        this.logger.debug('Failed to publish emergency event to event bus', { error: error.message });
+      });
     }
-    
-    this.emit('aircraft:emergency', emergencyEvent);
     
     this.logger.warn('Emergency detected', {
       icao24: aircraft.icao24,
       callsign: aircraft.callsign,
-      squawk: aircraft.squawk
+      squawk: aircraft.squawk,
+      emergencyType: emergencyType
     });
   }
 
@@ -2053,6 +2654,33 @@ class ADSBConnector extends BaseConnector {
    * Configure radar display
    */
   configureRadar(parameters) {
+    // Safety check - ensure radarConfig is always defined
+    if (!this.radarConfig) {
+      this.radarConfig = {
+        range: 50,
+        center: { lat: 55.5074, lon: -4.5933 },
+        zoom: 10,
+        rotation: 0,
+        sweepSpeed: 4,
+        showTrails: true,
+        trailLength: 20,
+        showLabels: true,
+        showAltitude: true,
+        showSpeed: true,
+        showHeading: true,
+        showSquawk: true,
+        showEmergency: true,
+        colorByAltitude: true,
+        colorBySpeed: true,
+        colorByType: true,
+        showCoastline: true,
+        coastlineColor: '#0066cc',
+        coastlineWidth: 2,
+        coastlineOpacity: 0.8
+      };
+      this.logger.info('ADSB radar config initialized with defaults');
+    }
+    
     if (parameters.range !== undefined) {
       this.radarConfig.range = parameters.range;
     }
@@ -2840,19 +3468,14 @@ class ADSBConnector extends BaseConnector {
       
       // Get squawk code information if available
       if (this.squawkCodeService && flight.lastPosition.squawk) {
-        const squawkInfo = this.squawkCodeService.getSquawkCodeInfo(flight.lastPosition.squawk);
+        const squawkInfo = this.squawkCodeService.lookupSquawkCode(flight.lastPosition.squawk);
         if (squawkInfo) {
           augmentedFlight.squawkInfo = squawkInfo;
         }
       }
       
       // Get aircraft information if available
-      if (this.aircraftDataService) {
-        const aircraftInfo = this.aircraftDataService.getAircraftInfo(icao24);
-        if (aircraftInfo) {
-          augmentedFlight.aircraftInfo = aircraftInfo;
-        }
-      }
+      // Note: aircraftInfo is not set here because getAircraftRegistration is async and this method is not async.
       
       // Get flight path if available
       if (flight.flightPath && flight.flightPath.length > 0) {
@@ -2881,6 +3504,252 @@ class ADSBConnector extends BaseConnector {
     }
     
     return activeFlights;
+  }
+
+  /**
+   * Get enhanced aircraft data with airport and runway information
+   */
+  getEnhancedAircraftData(icao24) {
+    const aircraft = this.aircraft.get(icao24);
+    if (!aircraft) {
+      return null;
+    }
+
+    const airport = this.determineAirport(aircraft);
+    const runway = this.determineRunway(aircraft, airport);
+    const runwayUsage = this.trackRunwayUsage(aircraft, airport);
+
+    return {
+      ...aircraft,
+      airport: airport ? {
+        icao: airport.icao,
+        name: airport.name,
+        distance: this.calculateDistance(
+          aircraft.lat, aircraft.lon,
+          airport.lat, airport.lon
+        )
+      } : null,
+      runway: runway ? {
+        id: runway.id,
+        heading: runway.heading,
+        alignment: runway.heading ? 
+          Math.abs(aircraft.heading - runway.heading) : null
+      } : null,
+      runwayUsage: runwayUsage,
+      isNearAirport: airport && this.calculateDistance(
+        aircraft.lat, aircraft.lon,
+        airport.lat, airport.lon
+      ) < 5, // Within 5km
+      isOnApproach: this.isAircraftLikelyLanding(aircraft),
+      isOnDeparture: aircraft.vertical_rate && aircraft.vertical_rate > 500
+    };
+  }
+
+  /**
+   * Get all enhanced aircraft data
+   */
+  getAllEnhancedAircraftData() {
+    const enhancedAircraft = [];
+    
+    for (const [icao24, aircraft] of this.aircraft.entries()) {
+      const enhanced = this.getEnhancedAircraftData(icao24);
+      if (enhanced) {
+        enhancedAircraft.push(enhanced);
+      }
+    }
+    
+    return enhancedAircraft;
+  }
+
+  /**
+   * Check if aircraft is on ground
+   */
+  isAircraftOnGround(aircraft) {
+    return aircraft.altitude && aircraft.altitude < 50;
+  }
+
+  /**
+   * Check if aircraft is a helicopter
+   */
+  isHelicopter(aircraft) {
+    // Check aircraft type from BaseStation database
+    if (this.aircraftDataService && aircraft.icao24) {
+      const aircraftInfo = this.aircraftDataService.getAircraftRegistration(aircraft.icao24);
+      if (aircraftInfo && aircraftInfo.type) {
+        const type = aircraftInfo.type.toLowerCase();
+        return type.includes('helicopter') || type.includes('rotorcraft') || type.includes('rotor');
+      }
+    }
+    
+    // Fallback: check for helicopter-like behavior
+    return aircraft.vertical_rate && Math.abs(aircraft.vertical_rate) > 1000 && 
+           aircraft.speed && aircraft.speed < 100;
+  }
+
+  /**
+   * Check if aircraft is taxiing
+   */
+  isAircraftTaxiing(aircraft) {
+    return aircraft.altitude && aircraft.altitude < 20 && 
+           aircraft.speed && aircraft.speed > 5 && aircraft.speed < 50;
+  }
+
+  /**
+   * Check if aircraft is parked
+   */
+  isAircraftParked(aircraft) {
+    return aircraft.altitude && aircraft.altitude < 10 && 
+           aircraft.speed && aircraft.speed < 5;
+  }
+
+  /**
+   * Determine ground movement type
+   */
+  determineGroundMovementType(aircraft) {
+    if (this.isAircraftTaxiing(aircraft)) {
+      return 'taxi';
+    } else if (this.isAircraftParked(aircraft)) {
+      return 'parked';
+    } else if (aircraft.speed && aircraft.speed > 0) {
+      return 'moving';
+    } else {
+      return 'stationary';
+    }
+  }
+
+  /**
+   * Determine helicopter action
+   */
+  determineHelicopterAction(aircraft) {
+    if (aircraft.vertical_rate && aircraft.vertical_rate > 500) {
+      return 'takeoff';
+    } else if (aircraft.vertical_rate && aircraft.vertical_rate < -500) {
+      return 'landing';
+    } else if (aircraft.altitude && aircraft.altitude < 50) {
+      return 'hovering_low';
+    } else if (aircraft.altitude && aircraft.altitude < 200) {
+      return 'hovering_high';
+    } else {
+      return 'flying';
+    }
+  }
+
+  /**
+   * Determine taxi phase
+   */
+  determineTaxiPhase(aircraft) {
+    const airport = this.determineAirport(aircraft);
+    if (!airport) return 'unknown';
+    
+    // Simple logic based on position relative to runway
+    const runway = this.determineRunway(aircraft, airport);
+    if (runway) {
+      const distance = this.calculateDistance(
+        aircraft.lat, aircraft.lon,
+        runway.lat, runway.lon
+      );
+      
+      if (distance < 0.5) {
+        return 'runway_approach';
+      } else if (distance < 1.0) {
+        return 'taxiway';
+      } else {
+        return 'apron';
+      }
+    }
+    
+    return 'unknown';
+  }
+
+  /**
+   * Determine parking area
+   */
+  determineParkingArea(aircraft, airport) {
+    if (!airport) return 'unknown';
+    
+    // Simple logic based on distance from airport center
+    const distance = this.calculateDistance(
+      aircraft.lat, aircraft.lon,
+      airport.lat, airport.lon
+    );
+    
+    if (distance < 0.3) {
+      return 'terminal';
+    } else if (distance < 0.8) {
+      return 'apron';
+    } else if (distance < 1.5) {
+      return 'remote_parking';
+    } else {
+      return 'maintenance_area';
+    }
+  }
+
+  /**
+   * Calculate ground movement confidence
+   */
+  calculateGroundMovementConfidence(aircraft) {
+    let confidence = 0.7; // Base confidence
+    
+    if (aircraft.altitude && aircraft.altitude < 20) {
+      confidence += 0.2;
+    }
+    
+    if (aircraft.speed && aircraft.speed > 0) {
+      confidence += 0.1;
+    }
+    
+    return Math.min(confidence, 1.0);
+  }
+
+  /**
+   * Calculate helicopter confidence
+   */
+  calculateHelicopterConfidence(aircraft) {
+    let confidence = 0.6; // Base confidence
+    
+    if (this.isHelicopter(aircraft)) {
+      confidence += 0.3;
+    }
+    
+    if (aircraft.vertical_rate && Math.abs(aircraft.vertical_rate) > 500) {
+      confidence += 0.1;
+    }
+    
+    return Math.min(confidence, 1.0);
+  }
+
+  /**
+   * Calculate taxi confidence
+   */
+  calculateTaxiConfidence(aircraft) {
+    let confidence = 0.8; // Base confidence for taxi
+    
+    if (aircraft.altitude && aircraft.altitude < 20) {
+      confidence += 0.1;
+    }
+    
+    if (aircraft.speed && aircraft.speed > 5 && aircraft.speed < 50) {
+      confidence += 0.1;
+    }
+    
+    return Math.min(confidence, 1.0);
+  }
+
+  /**
+   * Calculate parking confidence
+   */
+  calculateParkingConfidence(aircraft) {
+    let confidence = 0.9; // Base confidence for parking
+    
+    if (aircraft.altitude && aircraft.altitude < 10) {
+      confidence += 0.1;
+    }
+    
+    if (aircraft.speed && aircraft.speed < 5) {
+      confidence += 0.1;
+    }
+    
+    return Math.min(confidence, 1.0);
   }
 }
 

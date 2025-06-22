@@ -2,269 +2,671 @@
 
 ## Overview
 
-The Health Monitoring System provides real-time monitoring of system health, performance metrics, and resource usage. It helps identify potential issues before they become critical and provides insights into system performance.
+The Health Monitoring System provides comprehensive monitoring and alerting capabilities for the Looking Glass platform. It tracks system health, performance metrics, connector status, and generates alerts for issues that require attention.
 
-## Features
+## Core Components
 
-### Health Checks
-- **Memory Usage**: Monitors RAM utilization and alerts when thresholds are exceeded
-- **CPU Usage**: Tracks CPU utilization across all cores
-- **Disk Usage**: Monitors available disk space
-- **Connection Count**: Tracks active database and network connections
-- **Error Rate**: Monitors system error frequency
+### Health Monitor
+The central component that coordinates all health monitoring activities:
+- **System Health Checks**: Memory, CPU, disk, and connection monitoring
+- **Performance Metrics**: Response times, throughput, and resource utilization
+- **Alert Management**: Threshold-based alerts with configurable severity levels
+- **Health Reporting**: Comprehensive health status reporting
+- **Trend Analysis**: Historical health data analysis
 
-### Performance Metrics
-- **Query Performance**: Database query execution times and success rates
-- **Response Times**: API endpoint response times
-- **Throughput**: Events processed per second
-- **Resource Utilization**: Memory, CPU, and network usage trends
+### Connector Health Monitor
+Monitors the health of all connected connectors:
+- **Connection Status**: Track connector connection states
+- **Response Times**: Monitor connector response times
+- **Error Rates**: Track connector error rates
+- **Performance Metrics**: Monitor connector performance
+- **Auto-recovery**: Automatic reconnection attempts
 
-### Alerting
-- **Threshold-based Alerts**: Automatic alerts when metrics exceed configured thresholds
-- **Trend Analysis**: Identifies performance degradation over time
-- **Alert Retention**: Configurable alert history retention
+### Database Health Monitor
+Monitors database health and performance:
+- **Connection Pool**: Monitor database connection pool status
+- **Query Performance**: Track query execution times
+- **Database Size**: Monitor database growth
+- **Index Performance**: Monitor index usage and performance
+- **Backup Status**: Monitor backup completion and health
 
-## Configuration
+### System Metrics Collector
+Collects and stores system performance metrics:
+- **Resource Usage**: CPU, memory, disk, and network usage
+- **Application Metrics**: Request rates, response times, error rates
+- **Custom Metrics**: User-defined metrics and KPIs
+- **Metric Aggregation**: Aggregate metrics over time periods
+- **Metric Storage**: Efficient storage and retrieval of metrics
 
-### Environment Variables
+## Health Check Types
 
-```bash
-# Health Monitoring Configuration
-HEALTH_MONITORING_ENABLED=true
-HEALTH_CHECK_INTERVAL=30000
-HEALTH_MEMORY_THRESHOLD=0.8
-HEALTH_CPU_THRESHOLD=0.7
-HEALTH_DISK_THRESHOLD=0.9
-HEALTH_CONNECTION_THRESHOLD=1000
-HEALTH_ERROR_THRESHOLD=100
-HEALTH_ALERT_RETENTION=10
-```
+### System Health Checks
 
-### Configuration Object
-
+#### Memory Health Check
 ```javascript
 {
-  health: {
-    enabled: true,
-    checkInterval: 30000, // 30 seconds
-    memoryThreshold: 0.8, // 80%
-    cpuThreshold: 0.7, // 70%
-    diskThreshold: 0.9, // 90%
-    connectionThreshold: 1000,
-    errorThreshold: 100,
-    alertRetention: 10
+  "type": "memory",
+  "name": "Memory Usage Check",
+  "description": "Monitor system memory usage",
+  "thresholds": {
+    "warning": 0.7,  // 70%
+    "critical": 0.9  // 90%
+  },
+  "metrics": {
+    "totalMemory": "Total system memory in bytes",
+    "usedMemory": "Used memory in bytes",
+    "freeMemory": "Free memory in bytes",
+    "memoryUsage": "Memory usage percentage"
   }
 }
 ```
 
-## API Endpoints
-
-### Basic Health Check
-```bash
-GET /health
-```
-
-Response:
-```json
+#### CPU Health Check
+```javascript
 {
-  "status": "ok",
-  "timestamp": "2024-01-15T10:30:00.000Z",
-  "uptime": 3600,
-  "version": "v18.17.0"
+  "type": "cpu",
+  "name": "CPU Usage Check",
+  "description": "Monitor system CPU usage",
+  "thresholds": {
+    "warning": 0.7,  // 70%
+    "critical": 0.9  // 90%
+  },
+  "metrics": {
+    "cpuUsage": "CPU usage percentage",
+    "loadAverage": "System load average",
+    "processCount": "Number of running processes"
+  }
 }
 ```
 
-### Detailed Health Status
-```bash
-GET /health/detailed
+#### Disk Health Check
+```javascript
+{
+  "type": "disk",
+  "name": "Disk Usage Check",
+  "description": "Monitor disk usage and performance",
+  "thresholds": {
+    "warning": 0.8,  // 80%
+    "critical": 0.95 // 95%
+  },
+  "metrics": {
+    "diskUsage": "Disk usage percentage",
+    "freeSpace": "Free disk space in bytes",
+    "diskIO": "Disk I/O operations per second",
+    "diskLatency": "Disk I/O latency in milliseconds"
+  }
+}
 ```
 
-Response:
-```json
+#### Network Health Check
+```javascript
 {
-  "status": "healthy",
-  "timestamp": "2024-01-15T10:30:00.000Z",
-  "checks": {
-    "memory": {
-      "status": "healthy",
-      "value": 0.65,
-      "threshold": 0.8
+  "type": "network",
+  "name": "Network Health Check",
+  "description": "Monitor network connectivity and performance",
+  "thresholds": {
+    "latency": {
+      "warning": 100,  // 100ms
+      "critical": 500  // 500ms
     },
-    "cpu": {
-      "status": "healthy",
-      "value": 0.45,
-      "threshold": 0.7
-    },
-    "disk": {
-      "status": "healthy",
-      "value": 0.3,
-      "threshold": 0.9
-    },
-    "connections": {
-      "status": "healthy",
-      "value": 25,
-      "threshold": 1000
-    },
-    "errors": {
-      "status": "healthy",
-      "value": 5,
-      "threshold": 100
+    "packetLoss": {
+      "warning": 0.01, // 1%
+      "critical": 0.05 // 5%
     }
   },
-  "alerts": [
+  "metrics": {
+    "latency": "Network latency in milliseconds",
+    "packetLoss": "Packet loss percentage",
+    "bandwidth": "Network bandwidth usage",
+    "connections": "Number of active connections"
+  }
+}
+```
+
+### Application Health Checks
+
+#### API Health Check
+```javascript
+{
+  "type": "api",
+  "name": "API Health Check",
+  "description": "Monitor API endpoints health",
+  "endpoints": [
     {
-      "type": "memory",
-      "message": "High memory usage: 85.2%",
-      "timestamp": "2024-01-15T10:25:00.000Z",
-      "severity": "warning"
+      "url": "/api/health",
+      "method": "GET",
+      "expectedStatus": 200,
+      "timeout": 5000
+    },
+    {
+      "url": "/api/connectors",
+      "method": "GET",
+      "expectedStatus": 200,
+      "timeout": 10000
     }
   ],
   "metrics": {
-    "uptime": 3600,
-    "totalRequests": 1500,
-    "averageResponseTime": 45,
-    "errorRate": 0.02,
-    "activeConnections": 25
+    "responseTime": "API response time in milliseconds",
+    "statusCode": "HTTP status code",
+    "availability": "API availability percentage"
   }
 }
 ```
 
-### Database Health
-```bash
-GET /health/database
-```
-
-Response:
-```json
+#### Database Health Check
+```javascript
 {
-  "status": "ok",
-  "timestamp": "2024-01-15T10:30:00.000Z",
-  "stats": {
-    "totalQueries": 1500,
-    "successfulQueries": 1485,
-    "failedQueries": 15,
-    "averageQueryTime": 12.5,
-    "slowQueries": 3,
-    "lastQueryTime": "2024-01-15T10:29:55.000Z",
-    "activeConnections": 5,
-    "poolSize": 5,
-    "databaseStats": {
-      "connector_count": 8,
-      "entity_count": 150,
-      "event_count": 2500,
-      "analytics_count": 500,
-      "rule_count": 25,
-      "map_count": 3
-    }
-  }
-}
-```
-
-### Connector Health
-```bash
-GET /health/connectors
-```
-
-Response:
-```json
-{
-  "status": "ok",
-  "timestamp": "2024-01-15T10:30:00.000Z",
-  "connectors": [
+  "type": "database",
+  "name": "Database Health Check",
+  "description": "Monitor database health and performance",
+  "queries": [
     {
-      "id": "unifi-protect-1",
-      "type": "unifi-protect",
-      "name": "UniFi Protect",
-      "status": "connected",
-      "lastActivity": "2024-01-15T10:29:45.000Z",
-      "errors": 0,
-      "messagesSent": 150,
-      "messagesReceived": 300
+      "name": "Connection Test",
+      "sql": "SELECT 1",
+      "timeout": 5000
+    },
+    {
+      "name": "Performance Test",
+      "sql": "SELECT COUNT(*) FROM events",
+      "timeout": 10000
     }
   ],
-  "total": 8,
-  "connected": 7,
-  "disconnected": 1
-}
-```
-
-### Performance Metrics
-```bash
-GET /health/metrics
-```
-
-Response:
-```json
-{
-  "timestamp": "2024-01-15T10:30:00.000Z",
-  "system": {
-    "uptime": 3600,
-    "totalRequests": 1500,
-    "averageResponseTime": 45,
-    "errorRate": 0.02,
-    "activeConnections": 25,
-    "memory": {
-      "total": 8589934592,
-      "free": 3006477107,
-      "used": 5583457485
-    },
-    "cpu": 8,
-    "loadAverage": [1.2, 1.1, 0.9]
-  },
-  "database": {
-    "totalQueries": 1500,
-    "successfulQueries": 1485,
-    "failedQueries": 15,
-    "averageQueryTime": 12.5,
-    "slowQueries": 3
-  },
-  "connectors": {
-    "total": 8,
-    "connected": 7
+  "metrics": {
+    "connectionCount": "Number of active connections",
+    "queryTime": "Query execution time in milliseconds",
+    "databaseSize": "Database size in bytes",
+    "indexUsage": "Index usage statistics"
   }
 }
 ```
 
-### System Information
+#### Connector Health Check
+```javascript
+{
+  "type": "connector",
+  "name": "Connector Health Check",
+  "description": "Monitor connector health and status",
+  "connectors": ["unifi-protect", "adsb", "aprs", "mqtt"],
+  "metrics": {
+    "connectionStatus": "Connector connection status",
+    "responseTime": "Connector response time",
+    "errorRate": "Connector error rate",
+    "lastSeen": "Last successful communication"
+  }
+}
+```
+
+## Configuration
+
+### Basic Health Monitoring Configuration
+```json
+{
+  "health": {
+    "enabled": true,
+    "checkInterval": 30000,
+    "alertRetention": 10,
+    "metricsRetention": 7,
+    "checks": {
+      "system": {
+        "enabled": true,
+        "interval": 30000
+      },
+      "connectors": {
+        "enabled": true,
+        "interval": 60000
+      },
+      "database": {
+        "enabled": true,
+        "interval": 120000
+      }
+    }
+  }
+}
+```
+
+### Advanced Health Monitoring Configuration
+```json
+{
+  "health": {
+    "enabled": true,
+    "checkInterval": 30000,
+    "alertRetention": 10,
+    "metricsRetention": 7,
+    "thresholds": {
+      "memory": {
+        "warning": 0.7,
+        "critical": 0.9
+      },
+      "cpu": {
+        "warning": 0.7,
+        "critical": 0.9
+      },
+      "disk": {
+        "warning": 0.8,
+        "critical": 0.95
+      },
+      "responseTime": {
+        "warning": 1000,
+        "critical": 5000
+      }
+    },
+    "checks": {
+      "system": {
+        "enabled": true,
+        "interval": 30000,
+        "metrics": ["memory", "cpu", "disk", "network"]
+      },
+      "connectors": {
+        "enabled": true,
+        "interval": 60000,
+        "autoReconnect": true,
+        "maxReconnectAttempts": 5
+      },
+      "database": {
+        "enabled": true,
+        "interval": 120000,
+        "connectionPool": {
+          "maxConnections": 10,
+          "minConnections": 2
+        }
+      },
+      "api": {
+        "enabled": true,
+        "interval": 30000,
+        "endpoints": [
+          "/api/health",
+          "/api/connectors",
+          "/api/events"
+        ]
+      }
+    },
+    "alerts": {
+      "enabled": true,
+      "channels": ["telegram", "mqtt", "log"],
+      "severity": {
+        "info": ["log"],
+        "warning": ["telegram", "log"],
+        "critical": ["telegram", "mqtt", "log"]
+      }
+    }
+  }
+}
+```
+
+## Health Check Implementation
+
+### System Health Check
+```javascript
+async performSystemHealthCheck() {
+  const checks = {
+    memory: await this.checkMemoryHealth(),
+    cpu: await this.checkCPUHealth(),
+    disk: await this.checkDiskHealth(),
+    network: await this.checkNetworkHealth()
+  };
+  
+  const overallHealth = this.calculateOverallHealth(checks);
+  
+  return {
+    healthy: overallHealth.healthy,
+    checks,
+    overallHealth,
+    timestamp: Date.now()
+  };
+}
+
+async checkMemoryHealth() {
+  const memUsage = process.memoryUsage();
+  const memoryUsage = memUsage.heapUsed / memUsage.heapTotal;
+  
+  return {
+    healthy: memoryUsage < this.config.thresholds.memory.critical,
+    warning: memoryUsage > this.config.thresholds.memory.warning,
+    critical: memoryUsage > this.config.thresholds.memory.critical,
+    metrics: {
+      totalMemory: memUsage.heapTotal,
+      usedMemory: memUsage.heapUsed,
+      freeMemory: memUsage.heapTotal - memUsage.heapUsed,
+      memoryUsage: memoryUsage
+    }
+  };
+}
+```
+
+### Connector Health Check
+```javascript
+async performConnectorHealthCheck() {
+  const connectorChecks = {};
+  
+  for (const connectorId of this.connectorRegistry.getConnectorIds()) {
+    const connector = this.connectorRegistry.getConnector(connectorId);
+    
+    try {
+      const health = await connector.performHealthCheck();
+      connectorChecks[connectorId] = {
+        healthy: health.healthy,
+        status: connector.getStatus(),
+        lastSeen: connector.getLastSeen(),
+        responseTime: health.responseTime,
+        errorRate: health.errorRate,
+        details: health.details
+      };
+    } catch (error) {
+      connectorChecks[connectorId] = {
+        healthy: false,
+        status: 'error',
+        error: error.message,
+        lastSeen: connector.getLastSeen()
+      };
+    }
+  }
+  
+  return {
+    healthy: Object.values(connectorChecks).every(check => check.healthy),
+    connectors: connectorChecks,
+    timestamp: Date.now()
+  };
+}
+```
+
+### Database Health Check
+```javascript
+async performDatabaseHealthCheck() {
+  try {
+    const startTime = Date.now();
+    
+    // Test basic connectivity
+    await this.database.query('SELECT 1');
+    const responseTime = Date.now() - startTime;
+    
+    // Get database statistics
+    const stats = await this.getDatabaseStats();
+    
+    return {
+      healthy: true,
+      responseTime,
+      metrics: {
+        connectionCount: stats.connectionCount,
+        databaseSize: stats.databaseSize,
+        tableCount: stats.tableCount,
+        indexCount: stats.indexCount
+      },
+      timestamp: Date.now()
+    };
+  } catch (error) {
+    return {
+      healthy: false,
+      error: error.message,
+      timestamp: Date.now()
+    };
+  }
+}
+```
+
+## Alert System
+
+### Alert Types
+
+#### System Alerts
+```javascript
+{
+  "type": "system",
+  "severity": "critical",
+  "title": "High Memory Usage",
+  "message": "System memory usage is at 95%",
+  "details": {
+    "memoryUsage": 0.95,
+    "threshold": 0.9,
+    "totalMemory": "8GB",
+    "usedMemory": "7.6GB"
+  },
+  "timestamp": "2022-01-01T12:00:00.000Z",
+  "acknowledged": false
+}
+```
+
+#### Connector Alerts
+```javascript
+{
+  "type": "connector",
+  "severity": "warning",
+  "title": "Connector Disconnected",
+  "message": "UniFi Protect connector is disconnected",
+  "details": {
+    "connectorId": "unifi-protect",
+    "status": "disconnected",
+    "lastSeen": "2022-01-01T11:45:00.000Z",
+    "error": "Connection timeout"
+  },
+  "timestamp": "2022-01-01T12:00:00.000Z",
+  "acknowledged": false
+}
+```
+
+#### Performance Alerts
+```javascript
+{
+  "type": "performance",
+  "severity": "warning",
+  "title": "High Response Time",
+  "message": "API response time is 3.2 seconds",
+  "details": {
+    "endpoint": "/api/events",
+    "responseTime": 3200,
+    "threshold": 1000,
+    "averageResponseTime": 2800
+  },
+  "timestamp": "2022-01-01T12:00:00.000Z",
+  "acknowledged": false
+}
+```
+
+### Alert Configuration
+```json
+{
+  "alerts": {
+    "enabled": true,
+    "channels": {
+      "telegram": {
+        "enabled": true,
+        "chatId": "{{config.telegram.chatId}}",
+        "severities": ["warning", "critical"]
+      },
+      "mqtt": {
+        "enabled": true,
+        "topic": "system/alerts",
+        "severities": ["critical"]
+      },
+      "log": {
+        "enabled": true,
+        "severities": ["info", "warning", "critical"]
+      }
+    },
+    "rules": {
+      "memory": {
+        "warning": {
+          "threshold": 0.7,
+          "message": "Memory usage is high: {{memoryUsage}}%"
+        },
+        "critical": {
+          "threshold": 0.9,
+          "message": "Critical memory usage: {{memoryUsage}}%"
+        }
+      },
+      "connector": {
+        "disconnected": {
+          "message": "Connector {{connectorId}} is disconnected"
+        },
+        "highErrorRate": {
+          "threshold": 0.1,
+          "message": "High error rate for {{connectorId}}: {{errorRate}}%"
+        }
+      }
+    }
+  }
+}
+```
+
+## Metrics Collection
+
+### System Metrics
+```javascript
+{
+  "timestamp": "2022-01-01T12:00:00.000Z",
+  "system": {
+    "memory": {
+      "total": 8589934592,
+      "used": 6442450944,
+      "free": 2147483648,
+      "usage": 0.75
+    },
+    "cpu": {
+      "usage": 0.45,
+      "loadAverage": [1.2, 1.1, 1.0],
+      "processCount": 45
+    },
+    "disk": {
+      "total": 107374182400,
+      "used": 64424509440,
+      "free": 42949672960,
+      "usage": 0.6
+    },
+    "network": {
+      "bytesIn": 1024000,
+      "bytesOut": 512000,
+      "connections": 25
+    }
+  }
+}
+```
+
+### Application Metrics
+```javascript
+{
+  "timestamp": "2022-01-01T12:00:00.000Z",
+  "application": {
+    "requests": {
+      "total": 1250,
+      "successful": 1200,
+      "failed": 50,
+      "rate": 25.5
+    },
+    "responseTime": {
+      "average": 125,
+      "p95": 250,
+      "p99": 500
+    },
+    "events": {
+      "processed": 5000,
+      "rate": 100.0,
+      "queueSize": 23
+    },
+    "connectors": {
+      "total": 8,
+      "connected": 7,
+      "disconnected": 1
+    }
+  }
+}
+```
+
+### Custom Metrics
+```javascript
+{
+  "timestamp": "2022-01-01T12:00:00.000Z",
+  "custom": {
+    "motionEvents": {
+      "count": 150,
+      "rate": 3.0,
+      "averageConfidence": 0.75
+    },
+    "aircraftDetected": {
+      "count": 25,
+      "rate": 0.5,
+      "emergencyCount": 1
+    },
+    "speedViolations": {
+      "count": 5,
+      "rate": 0.1,
+      "averageSpeed": 120
+    }
+  }
+}
+```
+
+## API Reference
+
+### Health Status
+
+#### Get Overall Health
+```bash
+GET /health
+```
+Returns overall system health status.
+
+#### Get Detailed Health
+```bash
+GET /health/detailed
+```
+Returns detailed health status for all components.
+
+#### Get System Health
 ```bash
 GET /health/system
 ```
+Returns system-specific health information.
 
-Response:
-```json
-{
-  "timestamp": "2024-01-15T10:30:00.000Z",
-  "system": {
-    "platform": "linux",
-    "arch": "x64",
-    "nodeVersion": "v18.17.0",
-    "uptime": 3600,
-    "memory": {
-      "total": 8589934592,
-      "free": 3006477107,
-      "used": 5583457485
-    },
-    "cpu": {
-      "cores": 8,
-      "loadAverage": [1.2, 1.1, 0.9]
-    },
-    "network": ["eth0", "lo"]
-  },
-  "process": {
-    "pid": 12345,
-    "memoryUsage": {
-      "rss": 52428800,
-      "heapTotal": 20971520,
-      "heapUsed": 15728640,
-      "external": 1048576
-    },
-    "cpuUsage": {
-      "user": 1500000,
-      "system": 500000
-    }
-  }
-}
+#### Get Connector Health
+```bash
+GET /health/connectors
 ```
+Returns health status of all connectors.
+
+#### Get Database Health
+```bash
+GET /health/database
+```
+Returns database health information.
+
+### Metrics
+
+#### Get System Metrics
+```bash
+GET /health/metrics
+```
+Returns current system metrics.
+
+#### Get Historical Metrics
+```bash
+GET /health/metrics/history?hours=24
+```
+Returns historical metrics for the specified time period.
+
+#### Get Custom Metrics
+```bash
+GET /health/metrics/custom
+```
+Returns custom application metrics.
+
+### Alerts
+
+#### Get Active Alerts
+```bash
+GET /health/alerts
+```
+Returns all active alerts.
+
+#### Acknowledge Alert
+```bash
+POST /health/alerts/{alertId}/acknowledge
+```
+Acknowledges an alert.
+
+#### Get Alert History
+```bash
+GET /health/alerts/history
+```
+Returns alert history.
 
 ### Kubernetes Health Checks
 
@@ -272,178 +674,153 @@ Response:
 ```bash
 GET /ready
 ```
-
-Response:
-```json
-{
-  "status": "ready",
-  "timestamp": "2024-01-15T10:30:00.000Z"
-}
-```
+Kubernetes readiness check endpoint.
 
 #### Liveness Check
 ```bash
 GET /live
 ```
+Kubernetes liveness check endpoint.
 
-Response:
-```json
-{
-  "status": "healthy",
-  "timestamp": "2024-01-15T10:30:00.000Z"
-}
-```
+## Monitoring Dashboard
 
-## Integration
+### Health Overview
+The health monitoring dashboard provides:
+- **System Status**: Overall system health indicator
+- **Component Status**: Health status of individual components
+- **Performance Metrics**: Real-time performance metrics
+- **Active Alerts**: Current active alerts
+- **Trend Charts**: Historical health data visualization
 
-### Event Bus Integration
-The health monitor emits events that can be processed by the flow system:
+### Connector Status
+- **Connection Status**: Visual indicators for connector states
+- **Response Times**: Connector response time charts
+- **Error Rates**: Connector error rate tracking
+- **Last Seen**: Last successful communication timestamps
 
-```javascript
-// Health update event
-{
-  type: 'health:update',
-  data: {
-    status: 'healthy',
-    checks: { /* health check results */ },
-    alerts: [ /* current alerts */ ]
-  }
-}
-
-// Health alert event
-{
-  type: 'health:alert',
-  data: {
-    type: 'memory',
-    message: 'High memory usage: 85.2%',
-    severity: 'warning'
-  }
-}
-```
-
-### MQTT Integration
-Health metrics are published to MQTT topics:
-
-```bash
-# Health status updates
-babelfish/health/status
-
-# Health alerts
-babelfish/health/alerts
-
-# Performance metrics
-babelfish/health/metrics
-```
-
-## Monitoring and Alerting
-
-### Threshold Configuration
-Configure thresholds based on your system requirements:
-
-```javascript
-// Conservative thresholds for production
-{
-  memoryThreshold: 0.7,    // Alert at 70% memory usage
-  cpuThreshold: 0.6,       // Alert at 60% CPU usage
-  diskThreshold: 0.8,      // Alert at 80% disk usage
-  connectionThreshold: 500, // Alert at 500 connections
-  errorThreshold: 50       // Alert at 50 errors
-}
-
-// Aggressive thresholds for development
-{
-  memoryThreshold: 0.9,    // Alert at 90% memory usage
-  cpuThreshold: 0.8,       // Alert at 80% CPU usage
-  diskThreshold: 0.95,     // Alert at 95% disk usage
-  connectionThreshold: 1000, // Alert at 1000 connections
-  errorThreshold: 100      // Alert at 100 errors
-}
-```
-
-### Alert Actions
-Configure automated actions for health alerts:
-
-```javascript
-// Example rule for memory alerts
-{
-  id: 'memory-alert-action',
-  name: 'Memory Alert Action',
-  conditions: [
-    {
-      type: 'health:alert',
-      field: 'type',
-      operator: 'equals',
-      value: 'memory'
-    }
-  ],
-  actions: [
-    {
-      type: 'send_notification',
-      parameters: {
-        channel: 'slack',
-        message: 'High memory usage detected: {{alert.message}}'
-      }
-    },
-    {
-      type: 'log_event',
-      parameters: {
-        level: 'warning',
-        message: 'Memory alert: {{alert.message}}'
-      }
-    }
-  ]
-}
-```
+### Performance Monitoring
+- **Resource Usage**: CPU, memory, disk usage charts
+- **Response Times**: API response time tracking
+- **Throughput**: Request and event processing rates
+- **Error Tracking**: Error rate and type analysis
 
 ## Troubleshooting
 
-### Common Issues
-
-#### Health Checks Failing
-- Check if the health monitor service is running
-- Verify configuration values are correct
-- Check system resources manually
+### Common Health Issues
 
 #### High Memory Usage
-- Review memory-intensive operations
-- Check for memory leaks in connectors
-- Consider increasing system memory
+**Symptoms**: Memory usage above 90%
+**Solutions**:
+- Check for memory leaks in application code
+- Increase system memory
+- Optimize data structures and algorithms
+- Implement memory pooling
 
 #### High CPU Usage
+**Symptoms**: CPU usage above 90%
+**Solutions**:
 - Identify CPU-intensive operations
-- Check for infinite loops or blocking operations
-- Consider optimizing database queries
+- Optimize algorithms and data processing
+- Use worker threads for heavy tasks
+- Implement caching strategies
 
-#### Database Connection Issues
-- Check database server status
-- Verify connection pool configuration
-- Review query performance
+#### Database Performance Issues
+**Symptoms**: Slow query execution, connection timeouts
+**Solutions**:
+- Optimize database queries
+- Add database indexes
+- Increase connection pool size
+- Monitor and optimize database configuration
+
+#### Connector Connection Issues
+**Symptoms**: Connectors frequently disconnecting
+**Solutions**:
+- Check network connectivity
+- Verify connector configuration
+- Implement exponential backoff reconnection
+- Monitor external service availability
 
 ### Debug Mode
-Enable debug logging for health monitoring:
+Enable debug logging for detailed troubleshooting:
 
-```bash
-LOG_LEVEL=debug npm start
+```json
+{
+  "health": {
+    "debug": true,
+    "logLevel": "debug",
+    "enableDetailedLogging": true,
+    "enableMetricLogging": true
+  }
+}
 ```
 
-### Manual Health Check
-Test health endpoints manually:
+### Health Check Testing
+Test individual health checks:
 
 ```bash
-# Basic health check
-curl http://localhost:3000/health
+# Test system health check
+curl http://localhost:3000/health/system
 
-# Detailed health status
-curl http://localhost:3000/health/detailed
+# Test connector health check
+curl http://localhost:3000/health/connectors
 
-# Performance metrics
-curl http://localhost:3000/health/metrics
+# Test database health check
+curl http://localhost:3000/health/database
 ```
 
-## Best Practices
+## Integration Examples
 
-1. **Set Appropriate Thresholds**: Configure thresholds based on your system's capacity and requirements
-2. **Monitor Trends**: Watch for gradual performance degradation over time
-3. **Set Up Alerting**: Configure notifications for critical health issues
-4. **Regular Reviews**: Periodically review and adjust health monitoring configuration
-5. **Documentation**: Keep track of health monitoring configuration and any changes made 
+### Telegram Alert Integration
+```javascript
+// Configure Telegram alerts
+const alertConfig = {
+  channel: 'telegram',
+  chatId: '{{config.telegram.chatId}}',
+  severities: ['warning', 'critical']
+};
+
+// Send health alert
+await healthMonitor.sendAlert({
+  type: 'system',
+  severity: 'critical',
+  title: 'System Health Alert',
+  message: 'Critical system issue detected',
+  details: { /* alert details */ }
+});
+```
+
+### MQTT Integration
+```javascript
+// Publish health metrics to MQTT
+const metrics = await healthMonitor.getMetrics();
+await mqttConnector.publish('system/health', {
+  timestamp: new Date().toISOString(),
+  metrics: metrics
+});
+```
+
+### Custom Health Check
+```javascript
+// Create custom health check
+class CustomHealthCheck extends BaseHealthCheck {
+  async performCheck() {
+    // Custom health check logic
+    const result = await this.customOperation();
+    
+    return {
+      healthy: result.success,
+      metrics: {
+        customMetric: result.value
+      },
+      timestamp: Date.now()
+    };
+  }
+}
+
+// Register custom health check
+healthMonitor.registerCheck('custom', new CustomHealthCheck());
+```
+
+---
+
+The Health Monitoring System provides comprehensive monitoring and alerting capabilities to ensure the Looking Glass platform operates reliably and efficiently. 

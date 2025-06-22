@@ -63,6 +63,10 @@ const MapConnector = require('./connectors/types/MapConnector');
 const SpeedCalculationConnector = require('./connectors/types/SpeedCalculationConnector');
 const RadarConnector = require('./connectors/types/RadarConnector');
 const ADSBConnector = require('./connectors/types/ADSBConnector');
+const APRSConnector = require('./connectors/types/APRSConnector');
+const RemotionConnector = require('./connectors/types/RemotionConnector');
+const OverwatchConnector = require('./connectors/types/OverwatchConnector');
+const PrestwickAirportConnector = require('./connectors/types/PrestwickAirportConnector');
 
 // Import analytics routes
 const analyticsRouter = require('./routes/analytics');
@@ -82,11 +86,17 @@ const mapRouter = require('./routes/map');
 // Import GUI routes
 const { router: guiRouter, injectServices: injectGuiServices } = require('./routes/gui');
 
+// Import Overwatch routes
+const { router: overwatchRouter, injectServices: injectOverwatchServices, setupWebSocketServer, setupEventStreamWebSocket } = require('./routes/overwatch');
+
 // Health routes
 const { router: healthRouter, HealthRoutes } = require('./routes/health');
 
 // History routes
 const { router: historyRouter, injectServices: injectHistoryServices } = require('./routes/history');
+
+// Prestwick Airport routes
+const { router: prestwickRouter, injectServices: injectPrestwickServices } = require('./routes/prestwick');
 
 // Import new health monitoring and security services
 const HealthMonitor = require('./services/healthMonitor');
@@ -125,7 +135,6 @@ const logger = winston.createLogger({
 let entityManager;
 let connectorRegistry;
 let cache;
-let unifiAPI;
 let eventProcessor;
 let mqttBroker;
 let eventBus;
@@ -289,26 +298,54 @@ function setupConnectorEvents() {
   });
   
   // Handle generic events
-  connectorRegistry.on('event:generic', (event) => {
-    logger.info(`Generic event received: ${event.eventType} for camera ${event.cameraId}`);
+  connectorRegistry.on('event', (data) => {
+    logger.debug(`Generic event received: ${data.type} from ${data.source}`);
     
-    // Publish to event bus
-    if (eventBus) {
-      eventBus.publishEvent({
-        type: 'event:generic',
-        source: 'connector-registry',
-        timestamp: event.timestamp,
-        data: event
+    // Route to rule engine for processing
+    if (ruleEngine) {
+      ruleEngine.processEvent({
+        type: data.type,
+        source: data.source || 'connector',
+        timestamp: data.timestamp,
+        deviceId: data.deviceId,
+        eventId: data.eventId,
+        data: data.data
       });
     }
+  });
+
+  // Handle connector-specific events (e.g., van-unifi:event)
+  connectorRegistry.on('connector:van-unifi:event', (data) => {
+    logger.debug(`UniFi Protect connector event: ${data.type}`);
     
-    // Publish to MQTT
-    if (mqttBroker) {
-      mqttBroker.publish('events/generic', event);
+    // Route to rule engine for processing
+    if (ruleEngine) {
+      ruleEngine.processEvent({
+        type: data.type,
+        source: data.source || 'unifi-protect-websocket',
+        timestamp: data.timestamp,
+        deviceId: data.deviceId,
+        eventId: data.eventId,
+        data: data.data
+      });
     }
+  });
+
+  // Handle specific event types from connectors
+  connectorRegistry.on('event:smartDetectZone', (data) => {
+    logger.debug(`Smart detect zone event: ${data.deviceId}`);
     
-    // Broadcast to WebSocket clients
-    broadcastToClients('genericEvent', event);
+    // Route to rule engine for processing
+    if (ruleEngine) {
+      ruleEngine.processEvent({
+        type: 'smartDetectZone',
+        source: data.source || 'unifi-protect-websocket',
+        timestamp: data.timestamp,
+        deviceId: data.deviceId,
+        eventId: data.eventId,
+        data: data.data
+      });
+    }
   });
 }
 
@@ -382,6 +419,34 @@ function setupCameraEvents() {
         source: 'unifi-protect-websocket',
         timestamp: new Date().toISOString(),
         data: data
+      });
+    }
+  });
+
+  // Handle smartDetectZone events specifically
+  connectorRegistry.on('smartDetectZone', (data) => {
+    logger.info(`Smart detect zone event on camera: ${data.deviceId}`);
+    broadcastToClients('smartDetectZone', data);
+    
+    // Process through analytics engine
+    if (analyticsEngine) {
+      analyticsEngine.processEvent({
+        cameraId: data.deviceId,
+        eventType: 'smartDetectZone',
+        data: data.data,
+        timestamp: data.timestamp
+      });
+    }
+    
+    // Route to rule engine for processing
+    if (ruleEngine) {
+      ruleEngine.processEvent({
+        type: 'smartDetectZone',
+        source: 'unifi-protect-websocket',
+        timestamp: data.timestamp,
+        deviceId: data.deviceId,
+        eventId: data.eventId,
+        data: data.data
       });
     }
   });
@@ -534,8 +599,13 @@ io.on('connection', (socket) => {
   // Camera-related WebSocket events
   socket.on('getCameras', async () => {
     try {
-      const cameras = await unifiAPI.getCameras();
-      socket.emit('cameras', cameras);
+      const unifiConnector = connectorRegistry.getConnector('unifi-protect-main');
+      if (unifiConnector) {
+        const cameras = await unifiConnector.getCameras();
+        socket.emit('cameras', cameras);
+      } else {
+        socket.emit('cameras', []);
+      }
     } catch (error) {
       logger.error('Error getting cameras:', error);
       socket.emit('error', { message: 'Failed to get cameras' });
@@ -562,7 +632,6 @@ io.on('connection', (socket) => {
 
 // Inject services into API router
 injectServices({
-  get unifiAPI() { return unifiAPI; },
   get eventProcessor() { return eventProcessor; },
   get mqttBroker() { return mqttBroker; },
   get cache() { return cache; },
@@ -605,6 +674,57 @@ function setupConnectorEventHandlers() {
 
   connectorRegistry.on('connector:operation-error', (data) => {
     broadcastToClients('connectorOperationError', data);
+  });
+
+  // Generic event handler for all connector events
+  connectorRegistry.on('event', (data) => {
+    logger.debug(`Generic event received: ${data.type} from ${data.source}`);
+    
+    // Route to rule engine for processing
+    if (ruleEngine) {
+      ruleEngine.processEvent({
+        type: data.type,
+        source: data.source || 'connector',
+        timestamp: data.timestamp,
+        deviceId: data.deviceId,
+        eventId: data.eventId,
+        data: data.data
+      });
+    }
+  });
+
+  // Handle connector-specific events (e.g., van-unifi:event)
+  connectorRegistry.on('connector:van-unifi:event', (data) => {
+    logger.debug(`UniFi Protect connector event: ${data.type}`);
+    
+    // Route to rule engine for processing
+    if (ruleEngine) {
+      ruleEngine.processEvent({
+        type: data.type,
+        source: data.source || 'unifi-protect-websocket',
+        timestamp: data.timestamp,
+        deviceId: data.deviceId,
+        eventId: data.eventId,
+        data: data.data
+      });
+    }
+  });
+
+  // Handle specific event types from connectors
+  connectorRegistry.on('event:smartDetectZone', (data) => {
+    logger.debug(`Smart detect zone event: ${data.deviceId}`);
+    
+    // Route to rule engine for processing
+    if (ruleEngine) {
+      ruleEngine.processEvent({
+        type: 'smartDetectZone',
+        source: data.source || 'unifi-protect-websocket',
+        timestamp: data.timestamp,
+        deviceId: data.deviceId,
+        eventId: data.eventId,
+        data: data.data
+      });
+    }
   });
 }
 
@@ -714,7 +834,6 @@ async function startServer() {
 
     // Initialize core services
     cache = new Cache(config.cache || {}, logger);
-    unifiAPI = new UnifiProtectAPI(config.unifi || {}, logger);
     eventProcessor = new EventProcessor(config.events || {}, logger);
     mqttBroker = new MQTTBroker(config.mqtt || {}, logger);
     eventBus = new EventBus(config.eventBus || {}, logger);
@@ -739,8 +858,20 @@ async function startServer() {
     // Initialize coastline vector service
     coastlineVectorService = new CoastlineVectorService(config.coastlineVector || {}, logger);
 
-    // Initialize airspace service
-    airspaceService = new AirspaceService(config.airspace || {}, logger);
+    // Initialize airspace service with error handling
+    try {
+      logger.info('Initializing airspace service...');
+      airspaceService = new AirspaceService(config.airspace || {});
+      await airspaceService.initialize();
+      logger.info('Airspace service initialized successfully');
+    } catch (error) {
+      logger.error('Failed to initialize airspace service', { 
+        error: error.message,
+        stack: error.stack 
+      });
+      // Continue without airspace service
+      airspaceService = null;
+    }
 
     // Initialize vector optimization service
     vectorOptimizationService = new VectorOptimizationService(config.vectorOptimization || {}, logger);
@@ -767,15 +898,17 @@ async function startServer() {
     connectorRegistry.registerType('speed-calculation', SpeedCalculationConnector);
     connectorRegistry.registerType('radar', RadarConnector);
     connectorRegistry.registerType('adsb', ADSBConnector);
+    connectorRegistry.registerType('aprs', APRSConnector);
+    connectorRegistry.registerType('remotion', RemotionConnector);
+    connectorRegistry.registerType('overwatch', OverwatchConnector);
+    connectorRegistry.registerType('prestwick-airport', PrestwickAirportConnector);
 
     // Auto-discover and register connector types
     await connectorRegistry.autoDiscoverTypes();
 
     // Initialize services BEFORE connectors
     await cache.initialize();
-    await unifiAPI.initialize();
     await eventProcessor.initialize();
-    await airspaceService.initialize();
     
     // Initialize aircraft data service
     aircraftDataService = new AircraftDataService(config.aircraftData || {}, logger);
@@ -861,6 +994,89 @@ async function startServer() {
     
     // Make the instance available to the rest of the app
     radarConnector = radarConnectorInstance;
+    
+    // Ensure radarConnector is properly initialized
+    if (!radarConnector) {
+      logger.error('Radar connector failed to initialize properly');
+      radarConnector = null;
+    } else {
+      logger.info('Radar connector successfully assigned to global variable');
+    }
+
+    // Auto-create Prestwick Airport connector
+    let prestwickConnectorInstance = connectorRegistry.getConnector('prestwick-airport-main');
+    if (!prestwickConnectorInstance) {
+      logger.info('Auto-creating Prestwick Airport connector...');
+      const prestwickConfig = {
+        id: 'prestwick-airport-main',
+        type: 'prestwick-airport',
+        name: 'Prestwick Airport',
+        description: 'Prestwick Airport (EGPK) aircraft operations tracking',
+        enabled: true,
+        config: {
+          prestwick: {
+            approachRadius: 50000, // 50km
+            runwayThreshold: 5000  // 5km
+          }
+        }
+      };
+      await connectorRegistry.createConnector(prestwickConfig);
+      prestwickConnectorInstance = connectorRegistry.getConnector('prestwick-airport-main');
+    }
+
+    // Initialize Prestwick Airport connector with its dependencies
+    if (prestwickConnectorInstance && adsbConnectorInstance) {
+      // Set dependencies through existing setter methods
+      if (prestwickConnectorInstance.setEventBus) {
+        prestwickConnectorInstance.setEventBus(eventBus);
+      }
+      if (prestwickConnectorInstance.setConnectorRegistry) {
+        prestwickConnectorInstance.setConnectorRegistry(connectorRegistry);
+      }
+      logger.info('Prestwick Airport connector initialized with its dependencies.');
+    } else {
+      logger.warn('Could not initialize Prestwick Airport connector due to missing dependencies.');
+    }
+
+    // Auto-create Remotion connector
+    let remotionConnectorInstance = connectorRegistry.getConnector('remotion-main');
+    if (!remotionConnectorInstance) {
+      logger.info('Auto-creating Remotion connector...');
+      const remotionConfig = {
+        id: 'remotion-main',
+        type: 'remotion',
+        name: 'Main Remotion',
+        description: 'Primary video rendering service for flight paths and timelines',
+        enabled: true,
+        config: {
+          outputDir: './renders',
+          templatesDir: './templates',
+          remotionProjectDir: './remotion-project',
+          defaultFps: 30,
+          defaultDuration: 15,
+          quality: 'high',
+          enableAudio: true,
+          enableSubtitles: true,
+          autoRenderEnabled: true
+        }
+      };
+      await connectorRegistry.createConnector(remotionConfig);
+      remotionConnectorInstance = connectorRegistry.getConnector('remotion-main');
+    }
+
+    // Initialize Remotion connector with its dependencies
+    if (remotionConnectorInstance) {
+      // Set dependencies through existing setter methods
+      if (remotionConnectorInstance.setEventBus) {
+        remotionConnectorInstance.setEventBus(eventBus);
+      }
+      if (remotionConnectorInstance.setConnectorRegistry) {
+        remotionConnectorInstance.setConnectorRegistry(connectorRegistry);
+      }
+      logger.info('Remotion connector initialized with its dependencies.');
+    } else {
+      logger.warn('Could not initialize Remotion connector due to missing dependencies.');
+    }
 
     // Auto-register Web GUI and Map connectors
     await autoRegisterGuiAndMapConnectors();
@@ -873,6 +1089,10 @@ async function startServer() {
       // Set EventBus reference for connectors that support it
       if (connector.setEventBus && eventBus) {
         connector.setEventBus(eventBus);
+      }
+      // Set ConnectorRegistry reference for connectors that support it
+      if (connector.setConnectorRegistry) {
+        connector.setConnectorRegistry(connectorRegistry);
       }
     });
     
@@ -915,6 +1135,14 @@ async function startServer() {
       logger.info('Flow system initialized and ready');
     }
     
+    // Load default rules
+    if (ruleEngine) {
+      // Handle new defaultRules structure (object) vs old structure (array)
+      const rulesArray = Array.isArray(defaultRules) ? defaultRules : [];
+      ruleEngine.loadRules(rulesArray);
+      logger.info(`Loaded ${rulesArray.length} default rules`);
+    }
+    
     // Connect all connectors
     const connectionResults = await connectorRegistry.connectAll();
     logger.info(`Connected ${connectionResults.filter(r => r.status === 'connected').length} connectors`);
@@ -924,7 +1152,6 @@ async function startServer() {
     
     // Set up API routes
     injectServices({
-      unifiAPI,
       eventProcessor,
       mqttBroker,
       cache,
@@ -970,14 +1197,33 @@ async function startServer() {
       connectorRegistry,
       aircraftDataService,
       airspaceService,
-      squawkCodeService
+      squawkCodeService,
+      remotionConnector: connectorRegistry.getConnector('remotion-main')
     });
+
+    // Set up Overwatch routes
+    injectOverwatchServices({
+      connectorRegistry
+    });
+
+    // Set up Prestwick Airport routes
+    injectPrestwickServices({
+      connectorRegistry,
+      eventBus
+    });
+
+    // Mount Overwatch API routes at the path the frontend expects
+    app.use('/api/overwatch', overwatchRouter);
+
+    // Mount Prestwick Airport routes
+    app.use('/api/prestwick', prestwickRouter);
 
     // Mount history routes
     app.use('/history', historyRouter);
     
-    // Mount map routes
-    app.use('/api/map', mapRouter);
+    // Mount map routes with lenient rate limiting
+    app.use('/api/map', securityMiddleware.getMapRateLimiter(), mapRouter);
+    app.use('/map', securityMiddleware.getMapRateLimiter(), mapRouter);
     
     // Mount GUI routes
     app.use('/gui', guiRouter);
@@ -1000,6 +1246,22 @@ async function startServer() {
     // Mount flow routes
     app.use('/api/flows', require('./routes/flows'));
     app.use('/flows', require('./routes/flows-gui'));
+
+    // Mount Overwatch routes
+    app.use('/overwatch', overwatchRouter);
+    
+    // Mount camera location management routes
+    app.use('/api/cameras', require('./routes/cameras'));
+
+    // Serve Overwatch dashboard at /overwatch and /overwatch/
+    app.get(['/overwatch', '/overwatch/'], (req, res) => {
+      res.sendFile(path.join(__dirname, 'public', 'overwatch.html'));
+    });
+
+    // Serve camera locations management page
+    app.get(['/camera-locations', '/camera-locations/'], (req, res) => {
+      res.sendFile(path.join(__dirname, 'public', 'camera-locations.html'));
+    });
 
     // Make services available to API routes via app.locals
     app.locals.connectorRegistry = connectorRegistry;
@@ -1073,10 +1335,14 @@ async function startServer() {
       logger.info(`🚗 Speed Calculation API: http://${config.server.host}:${config.server.port}/api/speed`);
       logger.info(`🛩️ Radar API: http://${config.server.host}:${config.server.port}/radar`);
       logger.info(`📊 Flight History: http://${config.server.host}:${config.server.port}/history`);
+      logger.info(`🔍 Overwatch API: http://${config.server.host}:${config.server.port}/overwatch`);
       
       if (mqttBroker) {
-        logger.info(`📨 MQTT broker connected to ${config.mqtt.broker.host}:${config.mqtt.broker.port}`);
+        logger.info(`📨 MQTT broker connected to localhost:1883`);
       }
+      
+      // Set up Overwatch WebSocket for event streaming
+      setupEventStreamWebSocket(server);
     });
     
   } catch (error) {

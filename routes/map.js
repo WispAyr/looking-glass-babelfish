@@ -350,6 +350,231 @@ router.post('/import', async (req, res) => {
   }
 });
 
+// Get APRS stations for map
+router.get('/aprs/stations', async (req, res) => {
+    try {
+        // Get APRS connector data
+        const aprsConnector = req.app.locals.connectorRegistry?.getConnector('aprs-main');
+        
+        if (!aprsConnector || !aprsConnector.isConnected) {
+            return res.json({
+                success: true,
+                stations: []
+            });
+        }
+
+        const stations = Array.from(aprsConnector.stations.values()).map(station => ({
+            id: station.id,
+            name: station.name,
+            type: 'aprs-station',
+            position: {
+                lat: station.lat,
+                lng: station.lng
+            },
+            properties: {
+                callsign: station.name,
+                lastSeen: station.lastSeen,
+                comment: station.comment,
+                symbol: station.symbol,
+                course: station.course,
+                speed: station.speed,
+                altitude: station.altitude
+            }
+        }));
+
+        res.json({
+            success: true,
+            stations: stations
+        });
+    } catch (error) {
+        console.error('Error fetching APRS stations:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to fetch APRS stations'
+        });
+    }
+});
+
+// Get ADSB aircraft for map
+router.get('/adsb/aircraft', async (req, res) => {
+    try {
+        // Get ADSB connector data
+        const adsbConnector = req.app.locals.connectorRegistry?.getConnector('adsb-main');
+        
+        if (!adsbConnector || adsbConnector.status !== 'connected') {
+            return res.json({
+                success: true,
+                aircraft: []
+            });
+        }
+
+        const aircraft = Array.from(adsbConnector.aircraft.values()).map(plane => ({
+            id: plane.icao24,
+            name: plane.callsign || plane.icao24,
+            type: 'adsb-aircraft',
+            position: {
+                lat: plane.lat,
+                lng: plane.lon
+            },
+            properties: {
+                icao: plane.icao24,
+                callsign: plane.callsign,
+                altitude: plane.altitude,
+                speed: plane.velocity,
+                heading: plane.track,
+                squawk: plane.squawk,
+                lastSeen: plane.lastSeen
+            }
+        }));
+
+        res.json({
+            success: true,
+            aircraft: aircraft
+        });
+    } catch (error) {
+        console.error('Error fetching ADSB aircraft:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to fetch ADSB aircraft'
+        });
+    }
+});
+
+// Get cameras for map
+router.get('/cameras', async (req, res) => {
+    try {
+        // Get cameras with location data from the camera management API
+        const cameraResponse = await fetch(`http://localhost:${process.env.PORT || 3000}/api/cameras/map`);
+        let cameras = [];
+        
+        if (cameraResponse.ok) {
+            const cameraData = await cameraResponse.json();
+            cameras = cameraData.data || [];
+        } else {
+            // Fallback to direct connector access if camera API is not available
+            const protectConnector = req.app.locals.connectorRegistry?.getConnector('unifi-protect-main');
+            if (protectConnector && protectConnector.isConnected) {
+                cameras = Array.from(protectConnector.cameras.values()).map(camera => ({
+                    id: camera.id,
+                    name: camera.name,
+                    lat: null,
+                    lng: null,
+                    hasLocation: false
+                }));
+            }
+        }
+
+        // Filter cameras that have location data
+        const camerasWithLocation = cameras.filter(camera => camera.hasLocation).map(camera => ({
+            id: camera.id,
+            name: camera.name || camera.locationName || `Camera ${camera.id}`,
+            type: 'camera',
+            position: {
+                lat: camera.lat,
+                lng: camera.lng
+            },
+            properties: {
+                status: camera.state || 'unknown',
+                type: camera.type || 'unknown',
+                model: camera.model || 'unknown',
+                locationName: camera.locationName,
+                locationDescription: camera.locationDescription,
+                locationAddress: camera.locationAddress,
+                lastSeen: camera.lastSeen
+            }
+        }));
+
+        res.json({
+            success: true,
+            cameras: camerasWithLocation
+        });
+    } catch (error) {
+        console.error('Error fetching cameras:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to fetch cameras'
+        });
+    }
+});
+
+// Get all spatial data
+router.get('/spatial', async (req, res) => {
+    try {
+        const connectorRegistry = req.app.locals.connectorRegistry;
+        
+        if (!connectorRegistry) {
+            return res.json({
+                success: true,
+                spatialData: {
+                    aprs: [],
+                    adsb: [],
+                    cameras: []
+                }
+            });
+        }
+
+        // Get APRS data
+        const aprsConnector = connectorRegistry.getConnector('aprs-main');
+        const aprsStations = aprsConnector && aprsConnector.isConnected ? 
+            Array.from(aprsConnector.stations.values()).map(station => ({
+                id: station.id,
+                name: station.name,
+                type: 'aprs-station',
+                position: { lat: station.lat, lng: station.lng },
+                properties: {
+                    callsign: station.name,
+                    lastSeen: station.lastSeen,
+                    comment: station.comment
+                }
+            })) : [];
+
+        // Get ADSB data
+        const adsbConnector = connectorRegistry.getConnector('adsb-main');
+        const adsbAircraft = adsbConnector && adsbConnector.status === 'connected' ?
+            Array.from(adsbConnector.aircraft.values()).map(plane => ({
+                id: plane.icao24,
+                name: plane.callsign || plane.icao24,
+                type: 'adsb-aircraft',
+                position: { lat: plane.lat, lng: plane.lon },
+                properties: {
+                    icao: plane.icao24,
+                    altitude: plane.altitude,
+                    speed: plane.velocity,
+                    heading: plane.track
+                }
+            })) : [];
+
+        // Get camera data
+        const protectConnector = connectorRegistry.getConnector('unifi-protect-main');
+        const cameras = protectConnector && protectConnector.isConnected ?
+            Array.from(protectConnector.cameras.values()).map(camera => ({
+                id: camera.id,
+                name: camera.name,
+                type: 'camera',
+                position: { lat: camera.lat || 0, lng: camera.lng || 0 },
+                properties: {
+                    status: camera.state,
+                    type: camera.type
+                }
+            })) : [];
+
+        res.json({
+            success: true,
+            spatialData: {
+                aprs: aprsStations,
+                adsb: adsbAircraft,
+                cameras: cameras
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching spatial data:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to fetch spatial data'
+        });
+    }
+});
+
 // Get real-time analytics
 router.get('/analytics/realtime', async (req, res) => {
   try {
@@ -517,7 +742,7 @@ router.get('/cameras', async (req, res) => {
         for (const [connectorId, connector] of connectorRegistry.connectors.entries()) {
             if (connector.type === 'unifi-protect' || connector.type === 'hikvision' || connector.type === 'ankke-dvr') {
                 try {
-                    const result = await connector.execute('cameras', 'list');
+                    const result = await connector.execute('camera:management', 'list');
                     if (result.success && result.cameras) {
                         cameras.push(...result.cameras.map(camera => ({
                             ...camera,
@@ -556,7 +781,7 @@ router.get('/cameras/:cameraId', async (req, res) => {
         for (const [connectorId, connector] of connectorRegistry.connectors.entries()) {
             if (connector.type === 'unifi-protect' || connector.type === 'hikvision' || connector.type === 'ankke-dvr') {
                 try {
-                    const result = await connector.execute('camera', 'get', { cameraId });
+                    const result = await connector.execute('camera:management', 'get', { cameraId });
                     if (result.success && result.camera) {
                         return res.json({
                             success: true,
@@ -596,7 +821,7 @@ router.get('/cameras/:cameraId/lines', async (req, res) => {
         for (const [connectorId, connector] of connectorRegistry.connectors.entries()) {
             if (connector.type === 'unifi-protect') {
                 try {
-                    const result = await connector.execute('camera', 'getLines', { cameraId });
+                    const result = await connector.execute('camera:management', 'getLines', { cameraId });
                     if (result.success && result.lines) {
                         lines.push(...result.lines.map(line => ({
                             ...line,
@@ -636,7 +861,7 @@ router.put('/cameras/:cameraId/location', async (req, res) => {
         for (const [connectorId, connector] of connectorRegistry.connectors.entries()) {
             if (connector.type === 'unifi-protect' || connector.type === 'hikvision' || connector.type === 'ankke-dvr') {
                 try {
-                    const result = await connector.execute('camera', 'updateLocation', {
+                    const result = await connector.execute('camera:management', 'updateLocation', {
                         cameraId,
                         location: { lat, lon, x, y }
                     });
@@ -839,6 +1064,296 @@ router.get('/connectors', async (req, res) => {
         console.error('Error getting connectors:', error);
         res.status(500).json({ error: 'Failed to get connectors' });
     }
+});
+
+// Map GUI route
+router.get('/', (req, res) => {
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Map Interface - Looking Glass</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { 
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #1a1a1a;
+      color: #ffffff;
+      overflow: hidden;
+      height: 100vh;
+    }
+    
+    .map-container {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      background: #2a2a2a;
+    }
+    
+    .map-canvas {
+      width: 100%;
+      height: 100%;
+      background: #1a1a1a;
+    }
+    
+    .controls {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      background: rgba(0,0,0,0.8);
+      border: 1px solid #00ff00;
+      border-radius: 8px;
+      padding: 15px;
+      color: #00ff00;
+      font-size: 12px;
+      z-index: 1000;
+    }
+    
+    .control-group {
+      margin-bottom: 10px;
+    }
+    
+    .control-group label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: bold;
+    }
+    
+    .control-group input, .control-group select {
+      width: 100%;
+      padding: 5px;
+      background: #333;
+      border: 1px solid #00ff00;
+      color: #00ff00;
+      border-radius: 4px;
+    }
+    
+    .status {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      background: rgba(0,0,0,0.8);
+      border: 1px solid #00ff00;
+      border-radius: 8px;
+      padding: 15px;
+      color: #00ff00;
+      font-size: 12px;
+      z-index: 1000;
+    }
+    
+    .aircraft {
+      position: absolute;
+      width: 8px;
+      height: 8px;
+      background: #00ff00;
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      transition: all 0.5s ease;
+    }
+    
+    .aircraft.emergency {
+      background: #ff0000;
+      animation: blink 1s infinite;
+    }
+    
+    @keyframes blink {
+      0%, 50% { opacity: 1; }
+      51%, 100% { opacity: 0.3; }
+    }
+    
+    .aircraft-label {
+      position: absolute;
+      font-size: 10px;
+      color: #00ff00;
+      white-space: nowrap;
+      transform: translate(10px, -5px);
+      text-shadow: 1px 1px 2px #000;
+    }
+  </style>
+</head>
+<body>
+  <div class="map-container">
+    <canvas id="mapCanvas" class="map-canvas"></canvas>
+    
+    <div class="controls">
+      <h3>Map Controls</h3>
+      <div class="control-group">
+        <label>Center Latitude:</label>
+        <input type="number" id="centerLat" value="55.5074" step="0.0001">
+      </div>
+      <div class="control-group">
+        <label>Center Longitude:</label>
+        <input type="number" id="centerLon" value="-4.5933" step="0.0001">
+      </div>
+      <div class="control-group">
+        <label>Zoom Level:</label>
+        <input type="range" id="zoomLevel" min="1" max="20" value="10">
+      </div>
+      <div class="control-group">
+        <label>Show Aircraft:</label>
+        <input type="checkbox" id="showAircraft" checked>
+      </div>
+      <div class="control-group">
+        <label>Show APRS:</label>
+        <input type="checkbox" id="showAPRS" checked>
+      </div>
+      <div class="control-group">
+        <label>Show Cameras:</label>
+        <input type="checkbox" id="showCameras" checked>
+      </div>
+      <button onclick="loadMapData()">Refresh Data</button>
+    </div>
+    
+    <div class="status">
+      <h3>Status</h3>
+      <div>Aircraft: <span id="aircraft-count">0</span></div>
+      <div>APRS Stations: <span id="aprs-count">0</span></div>
+      <div>Cameras: <span id="camera-count">0</span></div>
+      <div>Last Update: <span id="last-update">Never</span></div>
+    </div>
+  </div>
+
+  <script>
+    let mapData = {
+      aircraft: [],
+      aprs: [],
+      cameras: []
+    };
+    
+    const canvas = document.getElementById('mapCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // Set canvas size
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+    
+    // Load map data
+    async function loadMapData() {
+      try {
+        const response = await fetch('/api/map/spatial');
+        const result = await response.json();
+        
+        if (result.success) {
+          mapData = result.spatialData;
+          updateStatus();
+          renderMap();
+        }
+      } catch (error) {
+        console.error('Failed to load map data:', error);
+      }
+    }
+    
+    // Update status panel
+    function updateStatus() {
+      document.getElementById('aircraft-count').textContent = mapData.adsb ? mapData.adsb.length : 0;
+      document.getElementById('aprs-count').textContent = mapData.aprs ? mapData.aprs.length : 0;
+      document.getElementById('camera-count').textContent = mapData.cameras ? mapData.cameras.length : 0;
+      document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
+    }
+    
+    // Render map
+    function renderMap() {
+      // Clear canvas
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw background
+      ctx.fillStyle = '#1a1a1a';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Get center and zoom
+      const centerLat = parseFloat(document.getElementById('centerLat').value);
+      const centerLon = parseFloat(document.getElementById('centerLon').value);
+      const zoom = parseInt(document.getElementById('zoomLevel').value);
+      
+      // Draw aircraft
+      if (document.getElementById('showAircraft').checked && mapData.adsb) {
+        mapData.adsb.forEach(aircraft => {
+          if (aircraft.position && aircraft.position.lat && aircraft.position.lng) {
+            const x = (aircraft.position.lng - centerLon) * zoom * 1000 + canvas.width / 2;
+            const y = (centerLat - aircraft.position.lat) * zoom * 1000 + canvas.height / 2;
+            
+            if (x >= 0 && x <= canvas.width && y >= 0 && y <= canvas.height) {
+              ctx.fillStyle = aircraft.properties?.emergency ? '#ff0000' : '#00ff00';
+              ctx.beginPath();
+              ctx.arc(x, y, 4, 0, 2 * Math.PI);
+              ctx.fill();
+              
+              // Draw label
+              ctx.fillStyle = '#00ff00';
+              ctx.font = '10px Arial';
+              ctx.fillText(aircraft.name || aircraft.id, x + 8, y - 4);
+            }
+          }
+        });
+      }
+      
+      // Draw APRS stations
+      if (document.getElementById('showAPRS').checked && mapData.aprs) {
+        mapData.aprs.forEach(station => {
+          if (station.position && station.position.lat && station.position.lng) {
+            const x = (station.position.lng - centerLon) * zoom * 1000 + canvas.width / 2;
+            const y = (centerLat - station.position.lat) * zoom * 1000 + canvas.height / 2;
+            
+            if (x >= 0 && x <= canvas.width && y >= 0 && y <= canvas.height) {
+              ctx.fillStyle = '#0000ff';
+              ctx.beginPath();
+              ctx.arc(x, y, 3, 0, 2 * Math.PI);
+              ctx.fill();
+              
+              // Draw label
+              ctx.fillStyle = '#0000ff';
+              ctx.font = '10px Arial';
+              ctx.fillText(station.name || station.id, x + 8, y - 4);
+            }
+          }
+        });
+      }
+      
+      // Draw cameras
+      if (document.getElementById('showCameras').checked && mapData.cameras) {
+        mapData.cameras.forEach(camera => {
+          if (camera.position && camera.position.lat && camera.position.lng) {
+            const x = (camera.position.lng - centerLon) * zoom * 1000 + canvas.width / 2;
+            const y = (centerLat - camera.position.lat) * zoom * 1000 + canvas.height / 2;
+            
+            if (x >= 0 && x <= canvas.width && y >= 0 && y <= canvas.height) {
+              ctx.fillStyle = '#ffff00';
+              ctx.beginPath();
+              ctx.arc(x, y, 3, 0, 2 * Math.PI);
+              ctx.fill();
+              
+              // Draw label
+              ctx.fillStyle = '#ffff00';
+              ctx.font = '10px Arial';
+              ctx.fillText(camera.name || camera.id, x + 8, y - 4);
+            }
+          }
+        });
+      }
+    }
+    
+    // Event listeners
+    document.getElementById('centerLat').addEventListener('change', renderMap);
+    document.getElementById('centerLon').addEventListener('change', renderMap);
+    document.getElementById('zoomLevel').addEventListener('input', renderMap);
+    document.getElementById('showAircraft').addEventListener('change', renderMap);
+    document.getElementById('showAPRS').addEventListener('change', renderMap);
+    document.getElementById('showCameras').addEventListener('change', renderMap);
+    
+    // Initial load
+    loadMapData();
+    setInterval(loadMapData, 5000); // Refresh every 5 seconds
+  </script>
+</body>
+</html>`;
+  
+  res.send(html);
 });
 
 module.exports = router; 

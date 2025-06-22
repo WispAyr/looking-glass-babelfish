@@ -808,6 +808,26 @@ router.get('/', (req, res) => {
       // document.getElementById('aircraft-count').textContent = radarData.aircraft ? radarData.aircraft.length : 0;
       document.getElementById('zone-count').textContent = radarData.zones ? radarData.zones.length : 0;
       
+      // Update airspace count
+      if (airspaceData && airspaceData.airspaces) {
+        document.getElementById('airspace-count').textContent = airspaceData.airspaces.length;
+      } else {
+        document.getElementById('airspace-count').textContent = '0';
+      }
+      
+      // Update flight counts from augmented data
+      if (radarData.augmentedFlights) {
+        document.getElementById('active-flights-count').textContent = radarData.augmentedFlights.length;
+      } else {
+        document.getElementById('active-flights-count').textContent = '0';
+      }
+      
+      if (radarData.flightStats) {
+        document.getElementById('total-flights-count').textContent = radarData.flightStats.totalFlights || 0;
+      } else {
+        document.getElementById('total-flights-count').textContent = '0';
+      }
+      
       // Add safety checks for config object
       if (radarData.config && radarData.config.range !== undefined) {
         document.getElementById('current-range').textContent = radarData.config.range + ' nm';
@@ -1135,7 +1155,20 @@ router.get('/', (req, res) => {
     
     // Render airspace data
     function renderAirspace() {
-      if (!airspaceData || !airspaceData.airspaces) return;
+      // Check if airspace display is enabled
+      const showAirspace = document.getElementById('show-airspace').checked;
+      if (!showAirspace) {
+        // Remove existing airspace elements if display is disabled
+        const container = document.getElementById('airport-map-container');
+        container.querySelectorAll('.airspace-polygon').forEach(el => el.remove());
+        return;
+      }
+      
+      if (!airspaceData || !airspaceData.airspaces) {
+        // Auto-load airspace data if not loaded and display is enabled
+        loadAirspaceData();
+        return;
+      }
       
       const container = document.getElementById('airport-map-container');
       
@@ -1201,29 +1234,9 @@ router.get('/', (req, res) => {
     
     // Show airspace tooltip
     function showAirspaceTooltip(event, airspace) {
-      const tooltip = document.getElementById('airspace-tooltip') || createAirspaceTooltip();
-      tooltip.innerHTML =
-        '<strong>' + airspace.name + '</strong><br>' +
-        'Type: ' + airspace.type + '<br>' +
-        'Points: ' + (airspace.optimizedPointCount || airspace.points.length);
-      tooltip.style.left = event.pageX + 10 + 'px';
-      tooltip.style.top = event.pageY - 10 + 'px';
-      tooltip.style.display = 'block';
-    }
-    
-    // Hide airspace tooltip
-    function hideAirspaceTooltip() {
-      const tooltip = document.getElementById('airspace-tooltip');
-      if (tooltip) {
-        tooltip.style.display = 'none';
-      }
-    }
-    
-    // Create airspace tooltip element
-    function createAirspaceTooltip() {
       const tooltip = document.createElement('div');
       tooltip.id = 'airspace-tooltip';
-      tooltip.style.cssText =
+      tooltip.style.cssText = 
         'position: absolute;' +
         'background: rgba(0,0,0,0.9);' +
         'border: 1px solid #00ff00;' +
@@ -1231,23 +1244,90 @@ router.get('/', (req, res) => {
         'padding: 8px;' +
         'border-radius: 4px;' +
         'font-size: 11px;' +
-        'z-index: 10000;' +
-        'display: none;' +
-        'pointer-events: none;';
+        'z-index: 2000;' +
+        'pointer-events: none;' +
+        'max-width: 200px;';
+      
+      let tooltipContent = '<strong>' + airspace.name + '</strong><br>' +
+        'Type: ' + airspace.type + '<br>';
+      
+      if (airspace.metadata && airspace.metadata.floor) {
+        tooltipContent += 'Floor: ' + airspace.metadata.floor + 'ft<br>';
+      }
+      if (airspace.metadata && airspace.metadata.ceiling) {
+        tooltipContent += 'Ceiling: ' + airspace.metadata.ceiling + 'ft<br>';
+      }
+      tooltipContent += 'Points: ' + (airspace.points ? airspace.points.length : 0);
+      
+      tooltip.innerHTML = tooltipContent;
+      
+      tooltip.style.left = (event.pageX + 10) + 'px';
+      tooltip.style.top = (event.pageY - 10) + 'px';
+      
       document.body.appendChild(tooltip);
-      return tooltip;
+    }
+    
+    // Hide airspace tooltip
+    function hideAirspaceTooltip() {
+      const tooltip = document.getElementById('airspace-tooltip');
+      if (tooltip) {
+        tooltip.remove();
+      }
     }
     
     // Render airspace events
     function renderAirspaceEvents() {
-      // This could be implemented to show recent airspace events
-      // For now, we'll just log them
-      if (airspaceEvents.length > 0) {
-        console.log('Recent airspace events:', airspaceEvents);
-      }
+      if (!airspaceEvents || airspaceEvents.length === 0) return;
+      
+      // This could be expanded to show airspace events in a dedicated panel
+      console.log('Airspace events loaded:', airspaceEvents.length);
+      
+      // For now, just log recent events
+      const recentEvents = airspaceEvents.slice(0, 5);
+      recentEvents.forEach(event => {
+        console.log('Airspace event:', event.type, event.aircraft, event.airspace);
+      });
     }
     
-    // Initialize on load
+    // Add event listeners for airspace controls
+    document.addEventListener('DOMContentLoaded', function() {
+      // Airspace display toggle
+      const showAirspaceCheckbox = document.getElementById('show-airspace');
+      if (showAirspaceCheckbox) {
+        showAirspaceCheckbox.addEventListener('change', function() {
+          renderAirspace();
+          updateInfoPanel();
+        });
+      }
+      
+      // Airspace type checkboxes
+      const airspaceTypeCheckboxes = [
+        'airspace-ctr', 'airspace-cta', 'airspace-tma', 
+        'airspace-atz', 'airspace-fa', 'airspace-da'
+      ];
+      
+      airspaceTypeCheckboxes.forEach(id => {
+        const checkbox = document.getElementById(id);
+        if (checkbox) {
+          checkbox.addEventListener('change', function() {
+            if (document.getElementById('show-airspace').checked) {
+              loadAirspaceData();
+            }
+          });
+        }
+      });
+      
+      // Optimize airspace checkbox
+      const optimizeCheckbox = document.getElementById('optimize-airspace');
+      if (optimizeCheckbox) {
+        optimizeCheckbox.addEventListener('change', function() {
+          if (document.getElementById('show-airspace').checked) {
+            loadAirspaceData();
+          }
+        });
+      }
+    });
+    
     window.addEventListener('load', async () => {
       await initRadar();
       await applyRadarConfig();
@@ -1296,6 +1376,32 @@ router.post('/api/configure', async (req, res) => {
   try {
     if (!radarConnector) {
       return res.status(500).json({ success: false, error: 'Radar Connector not initialized' });
+    }
+    
+    // Ensure radarConnector has a valid radarConfig before configuring
+    if (!radarConnector.radarConfig) {
+      radarConnector.radarConfig = {
+        range: 50,
+        center: { lat: 51.5074, lon: -0.1278 },
+        zoom: 10,
+        rotation: 0,
+        sweepSpeed: 4,
+        showTrails: true,
+        trailLength: 20,
+        showLabels: true,
+        showAltitude: true,
+        showSpeed: true,
+        showHeading: true,
+        showSquawk: true,
+        showEmergency: true,
+        colorByAltitude: true,
+        colorBySpeed: true,
+        colorByType: true,
+        showCoastline: true,
+        coastlineColor: '#0066cc',
+        coastlineWidth: 2,
+        coastlineOpacity: 0.8
+      };
     }
     
     const config = radarConnector.configureRadar(req.body);
@@ -1633,7 +1739,7 @@ router.get('/api/augmented-flights', async (req, res) => {
       
       // Get squawk code information if available
       if (adsbConnector.squawkCodeService && flight.squawk) {
-        const squawkInfo = adsbConnector.squawkCodeService.getSquawkCodeInfo(flight.squawk);
+        const squawkInfo = adsbConnector.squawkCodeService.lookupSquawkCode(flight.squawk);
         if (squawkInfo) {
           augmentedFlight.squawkInfo = squawkInfo;
         }
@@ -1641,7 +1747,7 @@ router.get('/api/augmented-flights', async (req, res) => {
       
       // Get aircraft information if available
       if (adsbConnector.aircraftDataService && flight.icao24) {
-        const aircraftInfo = adsbConnector.aircraftDataService.getAircraftInfo(flight.icao24);
+        const aircraftInfo = await adsbConnector.aircraftDataService.getAircraftRegistration(flight.icao24);
         if (aircraftInfo) {
           augmentedFlight.aircraftInfo = aircraftInfo;
         }

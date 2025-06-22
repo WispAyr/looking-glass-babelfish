@@ -16,44 +16,47 @@ class RadarConnector extends BaseConnector {
     this.airspaceService = null;
     this.config = config || {};
     
+    // Ensure we have a proper config structure
+    const radarConfig = this.config.config || this.config || {};
+    
     // Radar display configuration
     this.radarConfig = {
-      range: this.config.config?.range || 50, // nautical miles
-      center: this.config.config?.center || { lat: 51.5074, lon: -0.1278 }, // London default
-      zoom: this.config.config?.zoom || 10,
-      rotation: this.config.config?.rotation || 0, // degrees
-      sweepSpeed: this.config.config?.sweepSpeed || 4, // seconds per sweep
-      showTrails: this.config.config?.showTrails !== false,
-      trailLength: this.config.config?.trailLength || 20,
-      showLabels: this.config.config?.showLabels !== false,
-      showAltitude: this.config.config?.showAltitude !== false,
-      showSpeed: this.config.config?.showSpeed !== false,
-      showHeading: this.config.config?.showHeading !== false,
-      showSquawk: this.config.config?.showSquawk !== false,
-      showEmergency: this.config.config?.showEmergency !== false,
-      colorByAltitude: this.config.config?.colorByAltitude !== false,
-      colorBySpeed: this.config.config?.colorBySpeed !== false,
-      colorByType: this.config.config?.colorByType !== false,
-      showCoastline: this.config.config?.showCoastline !== false,
-      coastlineColor: this.config.config?.coastlineColor || '#0066cc',
-      coastlineWidth: this.config.config?.coastlineWidth || 2,
-      coastlineOpacity: this.config.config?.coastlineOpacity || 0.8
+      range: radarConfig.range || 50, // nautical miles
+      center: radarConfig.center || { lat: 51.5074, lon: -0.1278 }, // London default
+      zoom: radarConfig.zoom || 10,
+      rotation: radarConfig.rotation || 0, // degrees
+      sweepSpeed: radarConfig.sweepSpeed || 4, // seconds per sweep
+      showTrails: radarConfig.showTrails !== false,
+      trailLength: radarConfig.trailLength || 20,
+      showLabels: radarConfig.showLabels !== false,
+      showAltitude: radarConfig.showAltitude !== false,
+      showSpeed: radarConfig.showSpeed !== false,
+      showHeading: radarConfig.showHeading !== false,
+      showSquawk: radarConfig.showSquawk !== false,
+      showEmergency: radarConfig.showEmergency !== false,
+      colorByAltitude: radarConfig.colorByAltitude !== false,
+      colorBySpeed: radarConfig.colorBySpeed !== false,
+      colorByType: radarConfig.colorByType !== false,
+      showCoastline: radarConfig.showCoastline !== false,
+      coastlineColor: radarConfig.coastlineColor || '#0066cc',
+      coastlineWidth: radarConfig.coastlineWidth || 2,
+      coastlineOpacity: radarConfig.coastlineOpacity || 0.8
     };
     
     // Aircraft display settings
     this.aircraftDisplay = {
-      symbolSize: this.config.config?.symbolSize || 6,
-      symbolType: this.config.config?.symbolType || 'circle', // circle, triangle, square, diamond
-      trailOpacity: this.config.config?.trailOpacity || 0.6,
-      labelFontSize: this.config.config?.labelFontSize || 12,
-      labelOffset: this.config.config?.labelOffset || 15,
-      emergencyBlink: this.config.config?.emergencyBlink !== false,
-      altitudeThresholds: this.config.config?.altitudeThresholds || {
+      symbolSize: radarConfig.symbolSize || 6,
+      symbolType: radarConfig.symbolType || 'circle', // circle, triangle, square, diamond
+      trailOpacity: radarConfig.trailOpacity || 0.6,
+      labelFontSize: radarConfig.labelFontSize || 12,
+      labelOffset: radarConfig.labelOffset || 15,
+      emergencyBlink: radarConfig.emergencyBlink !== false,
+      altitudeThresholds: radarConfig.altitudeThresholds || {
         low: 1000,
         medium: 10000,
         high: 30000
       },
-      speedThresholds: this.config.config?.speedThresholds || {
+      speedThresholds: radarConfig.speedThresholds || {
         slow: 100,
         medium: 300,
         fast: 500
@@ -62,58 +65,58 @@ class RadarConnector extends BaseConnector {
     
     // Zone display settings
     this.zoneDisplay = {
-      showZones: this.config.config?.showZones !== false,
-      zoneOpacity: this.config.config?.zoneOpacity || 0.3,
-      zoneBorderWidth: this.config.config?.zoneBorderWidth || 2,
-      showZoneLabels: this.config.config?.showZoneLabels !== false,
-      zoneLabelFontSize: this.config.config?.zoneLabelFontSize || 10,
-      highlightActiveZones: this.config.config?.highlightActiveZones !== false
+      showZones: radarConfig.showZones !== false,
+      zoneOpacity: radarConfig.zoneOpacity || 0.3,
+      zoneBorderWidth: radarConfig.zoneBorderWidth || 2,
+      showZoneLabels: radarConfig.showZoneLabels !== false,
+      zoneLabelFontSize: radarConfig.zoneLabelFontSize || 10,
+      highlightActiveZones: radarConfig.highlightActiveZones !== false
     };
     
     // Coastline display settings
     this.coastlineDisplay = {
-      showCoastline: this.config.config?.showCoastline !== false,
-      coastlineColor: this.config.config?.coastlineColor || '#0066cc',
-      coastlineWidth: this.config.config?.coastlineWidth || 2,
-      coastlineOpacity: this.config.config?.coastlineOpacity || 0.8,
-      showCoastlineLabels: this.config.config?.showCoastlineLabels !== false,
-      coastlineLabelFontSize: this.config.config?.coastlineLabelFontSize || 10
+      showCoastline: radarConfig.showCoastline !== false,
+      coastlineColor: radarConfig.coastlineColor || '#0066cc',
+      coastlineWidth: radarConfig.coastlineWidth || 2,
+      coastlineOpacity: radarConfig.coastlineOpacity || 0.8,
+      showCoastlineLabels: radarConfig.showCoastlineLabels !== false,
+      coastlineLabelFontSize: radarConfig.coastlineLabelFontSize || 10
     };
     
     // Filter settings
     this.filters = {
       altitude: {
-        min: this.config.config?.altitudeMin || 0,
-        max: this.config.config?.altitudeMax || 50000,
-        enabled: this.config.config?.altitudeFilter !== false
+        min: radarConfig.altitudeMin || 0,
+        max: radarConfig.altitudeMax || 50000,
+        enabled: radarConfig.altitudeFilter !== false
       },
       speed: {
-        min: this.config.config?.speedMin || 0,
-        max: this.config.config?.speedMax || 1000,
-        enabled: this.config.config?.speedFilter !== false
+        min: radarConfig.speedMin || 0,
+        max: radarConfig.speedMax || 1000,
+        enabled: radarConfig.speedFilter !== false
       },
       distance: {
-        max: this.config.config?.distanceMax || 100,
-        enabled: this.config.config?.distanceFilter !== false
+        max: radarConfig.distanceMax || 100,
+        enabled: radarConfig.distanceFilter !== false
       },
       aircraftType: {
-        types: this.config.config?.aircraftTypes || [],
-        enabled: this.config.config?.typeFilter !== false
+        types: radarConfig.aircraftTypes || [],
+        enabled: radarConfig.typeFilter !== false
       },
       callsign: {
-        pattern: this.config.config?.callsignPattern || '',
-        enabled: this.config.config?.callsignFilter !== false
+        pattern: radarConfig.callsignPattern || '',
+        enabled: radarConfig.callsignFilter !== false
       },
       squawk: {
-        codes: this.config.config?.squawkCodes || [],
-        enabled: this.config.config?.squawkFilter !== false
+        codes: radarConfig.squawkCodes || [],
+        enabled: radarConfig.squawkFilter !== false
       }
     };
     
     // Radar sweep animation
     this.sweepAngle = 0;
     this.sweepTimer = null;
-    this.isSweeping = this.config.config?.sweepAnimation !== false;
+    this.isSweeping = radarConfig.sweepAnimation !== false;
     
     // Aircraft data cache
     this.aircraftData = new Map();
@@ -146,9 +149,34 @@ class RadarConnector extends BaseConnector {
     this.airportVectorService = services.airportVectorService;
     this.coastlineVectorService = services.coastlineVectorService;
     this.airspaceService = services.airspaceService;
-    if (this.adsbConnector) {
-        this.config = this.adsbConnector.radarConfig;
+    
+    // Ensure radarConfig is always initialized
+    if (!this.radarConfig) {
+      this.radarConfig = {
+        range: 50,
+        center: { lat: 51.5074, lon: -0.1278 },
+        zoom: 10,
+        rotation: 0,
+        sweepSpeed: 4,
+        showTrails: true,
+        trailLength: 20,
+        showLabels: true,
+        showAltitude: true,
+        showSpeed: true,
+        showHeading: true,
+        showSquawk: true,
+        showEmergency: true,
+        colorByAltitude: true,
+        colorBySpeed: true,
+        colorByType: true,
+        showCoastline: true,
+        coastlineColor: '#0066cc',
+        coastlineWidth: 2,
+        coastlineOpacity: 0.8
+      };
+      this.logger.info('Radar config initialized with defaults');
     }
+    
     this.logger.info('Radar Connector initialized with dependencies.');
   }
   
@@ -451,10 +479,68 @@ class RadarConnector extends BaseConnector {
    * Get radar display (include coastline if enabled)
    */
   getRadarDisplay() {
+    // Get aircraft data from ADSB connector if available
+    let aircraft = [];
+    if (this.adsbConnector && this.adsbConnector.getAircraft) {
+      try {
+        const aircraftResult = this.adsbConnector.getAircraft();
+        if (aircraftResult && aircraftResult.aircraft) {
+          aircraft = aircraftResult.aircraft;
+          // Clean up aircraft data to remove circular references
+          aircraft = aircraft.map(ac => ({
+            icao24: ac.icao24,
+            callsign: ac.callsign,
+            lat: ac.lat,
+            lon: ac.lon,
+            altitude: ac.altitude,
+            velocity: ac.velocity,
+            track: ac.track,
+            squawk: ac.squawk,
+            emergency: ac.emergency,
+            lastUpdate: ac.lastUpdate,
+            // Only include essential properties, avoid circular references
+            aircraftType: ac.aircraftType,
+            registration: ac.registration,
+            operator: ac.operator
+          }));
+          // Update the local aircraft data cache
+          this.updateAircraftData(aircraft);
+        }
+      } catch (error) {
+        this.logger.warn('Failed to get aircraft data from ADSB connector', { error: error.message });
+        // Fall back to cached data
+        aircraft = Array.from(this.aircraftData?.values?.() || []);
+      }
+    } else {
+      // Use cached data if no ADSB connector
+      aircraft = Array.from(this.aircraftData?.values?.() || []);
+    }
+
     const display = {
-      aircraft: Array.from(this.aircraftData?.values?.() || []),
+      aircraft: aircraft,
       zones: Array.from(this.zoneData?.values?.() || []),
-      // ... other display data ...
+      config: this.radarConfig || {
+        range: 50,
+        center: { lat: 51.5074, lon: -0.1278 },
+        zoom: 10,
+        rotation: 0,
+        sweepSpeed: 4,
+        showTrails: true,
+        trailLength: 20,
+        showLabels: true,
+        showAltitude: true,
+        showSpeed: true,
+        showHeading: true,
+        showSquawk: true,
+        showEmergency: true,
+        colorByAltitude: true,
+        colorBySpeed: true,
+        colorByType: true,
+        showCoastline: true,
+        coastlineColor: '#0066cc',
+        coastlineWidth: 2,
+        coastlineOpacity: 0.8
+      }
     };
     
     // Add airspace data if available
@@ -463,7 +549,21 @@ class RadarConnector extends BaseConnector {
         const center = this.radarConfig?.center || { lat: 51.5074, lon: -0.1278 };
         const range = this.radarConfig?.range || 50;
         const airspaces = this.airspaceService.getAirspaceForVisualization(center, range);
-        display.airspaces = airspaces;
+        // Clean up airspace data to prevent circular references
+        display.airspaces = airspaces.map(airspace => ({
+          id: airspace.id,
+          name: airspace.name,
+          type: airspace.type,
+          class: airspace.class,
+          floor: airspace.metadata?.floor,
+          ceiling: airspace.metadata?.ceiling,
+          color: airspace.color,
+          bounds: airspace.bounds,
+          // Only include essential polygon data
+          polygons: airspace.polygons ? airspace.polygons.map(polygon => 
+            polygon.map(point => ({ lat: point.lat, lon: point.lon }))
+          ) : []
+        }));
       } catch (error) {
         this.logger.warn('Failed to get airspace data for radar display', { error: error.message });
         display.airspaces = [];
@@ -485,39 +585,60 @@ class RadarConnector extends BaseConnector {
    * Configure radar display
    */
   configureRadar(parameters) {
+    // Safety check - ensure radarConfig is always defined
+    if (!this.radarConfig) {
+      this.radarConfig = {
+        range: 50,
+        center: { lat: 51.5074, lon: -0.1278 },
+        zoom: 10,
+        rotation: 0,
+        sweepSpeed: 4,
+        showTrails: true,
+        trailLength: 20,
+        showLabels: true,
+        showAltitude: true,
+        showSpeed: true,
+        showHeading: true,
+        showSquawk: true,
+        showEmergency: true,
+        colorByAltitude: true,
+        colorBySpeed: true,
+        colorByType: true,
+        showCoastline: true,
+        coastlineColor: '#0066cc',
+        coastlineWidth: 2,
+        coastlineOpacity: 0.8
+      };
+      this.logger.info('Radar config initialized with defaults');
+    }
+    
     // Update radar configuration
     if (parameters.range !== undefined) {
-      this.radarConfig = this.radarConfig || {};
       this.radarConfig.range = parameters.range;
     }
     
     if (parameters.center) {
-      this.radarConfig = this.radarConfig || {};
       this.radarConfig.center = parameters.center;
     }
     
     if (parameters.displayMode) {
-      this.radarConfig = this.radarConfig || {};
       this.radarConfig.displayMode = parameters.displayMode;
     }
     
     if (parameters.showTrails !== undefined) {
-      this.radarConfig = this.radarConfig || {};
       this.radarConfig.showTrails = parameters.showTrails;
     }
     
     if (parameters.trailLength) {
-      this.radarConfig = this.radarConfig || {};
       this.radarConfig.trailLength = parameters.trailLength;
     }
     
     if (parameters.showCoastline !== undefined) {
-      this.radarConfig = this.radarConfig || {};
       this.radarConfig.showCoastline = parameters.showCoastline;
     }
     
     // Also configure ADSB connector if available
-    if (this.adsbConnector) {
+    if (this.adsbConnector && this.adsbConnector.configureRadar) {
       this.adsbConnector.configureRadar(parameters);
     }
     

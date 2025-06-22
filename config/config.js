@@ -13,54 +13,6 @@ const config = {
     }
   },
 
-  // Unifi Protect Configuration
-  unifi: {
-    // Default device configuration (can be overridden per device)
-    default: {
-      host: process.env.UNIFI_HOST || '10.0.0.1',
-      port: process.env.UNIFI_PORT || 443,
-      protocol: process.env.UNIFI_PROTOCOL || 'https',
-      apiKey: process.env.UNIFI_API_KEY || 'wye3aapIuxAz2omKg4WFdCSncRBfSzPx',
-      username: process.env.UNIFI_USERNAME,
-      password: process.env.UNIFI_PASSWORD,
-      verifySSL: process.env.UNIFI_VERIFY_SSL !== 'false',
-      timeout: parseInt(process.env.UNIFI_TIMEOUT) || 10000
-    },
-    
-    // Multiple device support
-    devices: [
-      {
-        id: 'communications-van',
-        name: 'Communications Van',
-        host: '10.0.0.1',
-        port: 443,
-        protocol: 'https',
-        apiKey: 'wye3aapIuxAz2omKg4WFdCSncRBfSzPx',
-        verifySSL: false,
-        description: 'Primary Unifi Protect system in communications van'
-      }
-      // Add more devices as needed
-    ]
-  },
-
-  // MQTT Configuration (for future broker functionality)
-  mqtt: {
-    enabled: process.env.MQTT_ENABLED === 'true',
-    broker: {
-      host: process.env.MQTT_BROKER_HOST || 'localhost',
-      port: parseInt(process.env.MQTT_BROKER_PORT) || 1883,
-      username: process.env.MQTT_USERNAME,
-      password: process.env.MQTT_PASSWORD,
-      clientId: process.env.MQTT_CLIENT_ID || 'babelfish-lookingglass'
-    },
-    topics: {
-      events: 'unifi/events',
-      cameras: 'unifi/cameras',
-      system: 'unifi/system',
-      control: 'unifi/control'
-    }
-  },
-
   // Logging Configuration
   logging: {
     level: process.env.LOG_LEVEL || 'info',
@@ -80,11 +32,6 @@ const config = {
     realTimeUpdates: {
       enabled: process.env.DASHBOARD_REALTIME_ENABLED !== 'false',
       maxSubscribers: parseInt(process.env.DASHBOARD_MAX_SUBSCRIBERS) || 100
-    },
-    speedAlerts: {
-      enabled: process.env.SPEED_ALERTS_ENABLED !== 'false',
-      threshold: parseInt(process.env.SPEED_ALERT_THRESHOLD) || 30,
-      cooldownMinutes: parseInt(process.env.SPEED_ALERT_COOLDOWN) || 5
     }
   },
 
@@ -121,12 +68,12 @@ const config = {
       contentSecurityPolicy: {
         directives: {
           defaultSrc: ["'self'"],
-          scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+          scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://unpkg.com", "https://cdnjs.cloudflare.com"],
           scriptSrcAttr: ["'unsafe-inline'"],
-          styleSrc: ["'self'", "'unsafe-inline'", "https://cdnjs.cloudflare.com"],
-          imgSrc: ["'self'", "data:", "https:"],
+          styleSrc: ["'self'", "'unsafe-inline'", "https://cdnjs.cloudflare.com", "https://unpkg.com", "https://fonts.googleapis.com"],
+          imgSrc: ["'self'", "data:", "https:", "https://unpkg.com", "https://cdnjs.cloudflare.com"],
           connectSrc: ["'self'", "ws:", "wss:"],
-          fontSrc: ["'self'", "https:", "data:", "https://cdnjs.cloudflare.com"],
+          fontSrc: ["'self'", "https:", "data:", "https://cdnjs.cloudflare.com", "https://fonts.gstatic.com", "https://unpkg.com"],
           objectSrc: ["'none'"],
           mediaSrc: ["'self'"],
           frameSrc: ["'none'"]
@@ -242,11 +189,6 @@ const config = {
       enabled: process.env.ANALYTICS_ENGINE_ENABLED !== 'false',
       maxEvents: parseInt(process.env.ANALYTICS_MAX_EVENTS) || 10000,
       maxPlateTracking: parseInt(process.env.ANALYTICS_MAX_PLATES) || 1000,
-      speedCalculation: {
-        enabled: process.env.SPEED_CALCULATION_ENABLED !== 'false',
-        minTimeBetweenDetections: parseInt(process.env.SPEED_MIN_TIME) || 1000, // 1 second
-        maxTimeBetweenDetections: parseInt(process.env.SPEED_MAX_TIME) || 300000 // 5 minutes
-      },
       peopleCounting: {
         enabled: process.env.PEOPLE_COUNTING_ENABLED !== 'false',
         maxOccupancyHistory: parseInt(process.env.OCCUPANCY_HISTORY_MAX) || 1000
@@ -257,25 +199,6 @@ const config = {
       confidenceThreshold: parseFloat(process.env.PLATE_CONFIDENCE_THRESHOLD) || 0.8,
       maxTrackingTime: parseInt(process.env.PLATE_MAX_TRACKING_TIME) || 3600000 // 1 hour
     }
-  },
-
-  // Speed Calculation System Configuration
-  speedCalculation: {
-    enabled: process.env.SPEED_CALCULATION_ENABLED !== 'false',
-    minTimeBetweenDetections: parseInt(process.env.SPEED_MIN_TIME) || 1000, // 1 second
-    maxTimeBetweenDetections: parseInt(process.env.SPEED_MAX_TIME) || 300000, // 5 minutes
-    minSpeedThreshold: parseInt(process.env.SPEED_MIN_THRESHOLD) || 5, // 5 km/h
-    maxSpeedThreshold: parseInt(process.env.SPEED_MAX_THRESHOLD) || 200, // 200 km/h
-    confidenceThreshold: parseFloat(process.env.SPEED_CONFIDENCE_THRESHOLD) || 0.8,
-    retentionHours: parseInt(process.env.SPEED_RETENTION_HOURS) || 24,
-    alerts: {
-      enabled: process.env.SPEED_ALERTS_ENABLED !== 'false',
-      threshold: parseInt(process.env.SPEED_ALERT_THRESHOLD) || 100, // km/h
-      highThreshold: parseInt(process.env.SPEED_ALERT_HIGH) || 120, // km/h
-      mediumThreshold: parseInt(process.env.SPEED_ALERT_MEDIUM) || 100 // km/h
-    },
-    realTimeUpdates: process.env.SPEED_REALTIME_UPDATES !== 'false',
-    webGuiIntegration: process.env.SPEED_WEBGUI_INTEGRATION !== 'false'
   },
 
   // Airport Vector Service Configuration
@@ -354,7 +277,9 @@ const config = {
     synchronous: process.env.DATABASE_SYNCHRONOUS || 'NORMAL',
     cacheSize: parseInt(process.env.DATABASE_CACHE_SIZE) || 10000,
     tempStore: process.env.DATABASE_TEMP_STORE || 'MEMORY'
-  }
+  },
+
+  enableRemotionVideoRenders: false
 };
 
 // Environment-specific overrides

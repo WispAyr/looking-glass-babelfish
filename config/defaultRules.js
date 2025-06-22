@@ -168,6 +168,75 @@ const defaultRules = [
     }
   },
 
+  // UniFi Protect Smart Detect Zone Rule
+  {
+    id: 'unifi-smart-detect-zone-rule',
+    name: 'UniFi Protect Smart Detect Zone',
+    description: 'Handle smart detect zone events from UniFi Protect cameras',
+    conditions: {
+      eventType: 'smartDetectZone',
+      source: 'unifi-protect-websocket'
+    },
+    actions: [
+      {
+        type: 'send_notification',
+        parameters: {
+          message: '🤖 Smart Detection Alert: {{data.smartDetectTypes.0}} detected on camera {{deviceId}}',
+          priority: 'medium',
+          channels: ['gui']
+        }
+      },
+      {
+        type: 'mqtt_publish',
+        parameters: {
+          topic: 'unifi/events/smart-detect-zone',
+          payload: {
+            type: 'smartDetectZone',
+            cameraId: '{{deviceId}}',
+            detectionTypes: '{{data.smartDetectTypes}}',
+            confidence: '{{data.score}}',
+            timestamp: '{{timestamp}}',
+            source: '{{source}}'
+          },
+          qos: 1
+        }
+      },
+      {
+        type: 'log_event',
+        parameters: {
+          level: 'info',
+          message: 'Smart detect zone event processed',
+          data: {
+            rule: 'unifi-smart-detect-zone-rule',
+            eventType: '{{type}}',
+            cameraId: '{{deviceId}}',
+            detectionTypes: '{{data.smartDetectTypes}}',
+            confidence: '{{data.score}}'
+          }
+        }
+      },
+      {
+        type: 'store_data',
+        parameters: {
+          key: 'smart_detections',
+          value: {
+            cameraId: '{{deviceId}}',
+            detectionTypes: '{{data.smartDetectTypes}}',
+            confidence: '{{data.score}}',
+            timestamp: '{{timestamp}}',
+            eventId: '{{eventId}}'
+          },
+          ttl: 3600 // 1 hour
+        }
+      }
+    ],
+    metadata: {
+      enabled: true,
+      category: 'security',
+      priority: 2
+    }
+  },
+
   // Ring Event Rule
   {
     id: 'ring-notification-rule',
@@ -591,7 +660,260 @@ const defaultRules = [
       category: 'telegram',
       priority: 1
     }
+  },
+
+  // ADSB Emergency Squawk Rule
+  {
+    id: 'adsb-emergency-squawk-rule',
+    name: 'ADSB Emergency Squawk Alert',
+    description: 'Alert on emergency squawk codes from aircraft',
+    conditions: {
+      eventType: 'emergency:detected',
+      source: 'adsb-main'
+    },
+    actions: [
+      {
+        type: 'telegram_send',
+        parameters: {
+          connectorId: 'telegram-bot',
+          operation: 'text',
+          chatId: '@fhNYM0MnPJQ2NjE8',
+          text: '🚨 *EMERGENCY SQUAWK DETECTED* 🚨\n\n✈️ Aircraft: {{data.aircraft.callsign}} ({{data.aircraft.icao24}})\n🆘 Emergency Type: {{data.emergencyType}}\n🔢 Squawk: {{data.squawk}}\n📍 Position: {{data.aircraft.lat}}, {{data.aircraft.lon}}\n🛫 Altitude: {{data.aircraft.altitude}}ft\n⏰ Time: {{timestamp}}\n\nEmergency squawk code detected on aircraft!',
+          parseMode: 'Markdown'
+        }
+      },
+      {
+        type: 'mqtt_publish',
+        parameters: {
+          topic: 'adsb/events/emergency',
+          payload: {
+            type: 'emergency:detected',
+            aircraft: '{{data.aircraft.icao24}}',
+            callsign: '{{data.aircraft.callsign}}',
+            emergencyType: '{{data.emergencyType}}',
+            squawk: '{{data.squawk}}',
+            timestamp: '{{timestamp}}',
+            source: '{{source}}'
+          },
+          qos: 2
+        }
+      },
+      {
+        type: 'log_event',
+        parameters: {
+          level: 'warn',
+          message: 'Emergency squawk detected',
+          data: {
+            rule: 'adsb-emergency-squawk-rule',
+            aircraft: '{{data.aircraft.icao24}}',
+            emergencyType: '{{data.emergencyType}}',
+            squawk: '{{data.squawk}}'
+          }
+        }
+      }
+    ],
+    metadata: {
+      enabled: true,
+      category: 'adsb',
+      priority: 3
+    }
+  },
+
+  // ADSB Airspace Entry Rule
+  {
+    id: 'adsb-airspace-entry-rule',
+    name: 'ADSB Airspace Entry Alert',
+    description: 'Alert when aircraft enter controlled airspace',
+    conditions: {
+      eventType: 'airspace:entry',
+      source: 'adsb-main'
+    },
+    actions: [
+      {
+        type: 'mqtt_publish',
+        parameters: {
+          topic: 'adsb/events/airspace-entry',
+          payload: {
+            type: 'airspace:entry',
+            aircraft: '{{data.aircraft.icao24}}',
+            callsign: '{{data.aircraft.callsign}}',
+            airspace: '{{data.airspace.name}}',
+            airspaceType: '{{data.airspace.type}}',
+            timestamp: '{{timestamp}}',
+            source: '{{source}}'
+          },
+          qos: 1
+        }
+      },
+      {
+        type: 'log_event',
+        parameters: {
+          level: 'info',
+          message: 'Aircraft entered airspace',
+          data: {
+            rule: 'adsb-airspace-entry-rule',
+            aircraft: '{{data.aircraft.icao24}}',
+            airspace: '{{data.airspace.name}}',
+            airspaceType: '{{data.airspace.type}}'
+          }
+        }
+      }
+    ],
+    metadata: {
+      enabled: true,
+      category: 'adsb',
+      priority: 2
+    }
+  },
+
+  // ADSB Approach Detection Rule
+  {
+    id: 'adsb-approach-detection-rule',
+    name: 'ADSB Approach Detection',
+    description: 'Alert when aircraft are on approach',
+    conditions: {
+      eventType: 'approach:detected',
+      source: 'adsb-main'
+    },
+    actions: [
+      {
+        type: 'mqtt_publish',
+        parameters: {
+          topic: 'adsb/events/approach',
+          payload: {
+            type: 'approach:detected',
+            aircraft: '{{data.aircraft.icao24}}',
+            callsign: '{{data.aircraft.callsign}}',
+            runway: '{{data.airspace.name}}',
+            airport: '{{data.metadata.airport}}',
+            confidence: '{{data.metadata.confidence}}',
+            timestamp: '{{timestamp}}',
+            source: '{{source}}'
+          },
+          qos: 1
+        }
+      },
+      {
+        type: 'log_event',
+        parameters: {
+          level: 'info',
+          message: 'Aircraft on approach detected',
+          data: {
+            rule: 'adsb-approach-detection-rule',
+            aircraft: '{{data.aircraft.icao24}}',
+            runway: '{{data.airspace.name}}',
+            airport: '{{data.metadata.airport}}'
+          }
+        }
+      }
+    ],
+    metadata: {
+      enabled: true,
+      category: 'adsb',
+      priority: 2
+    }
+  },
+
+  // ADSB Status Monitoring Rule
+  {
+    id: 'adsb-status-monitoring-rule',
+    name: 'ADSB Status Monitoring',
+    description: 'Monitor ADSB system status and performance',
+    conditions: {
+      eventType: 'adsb:status',
+      source: 'adsb-main'
+    },
+    actions: [
+      {
+        type: 'mqtt_publish',
+        parameters: {
+          topic: 'adsb/status',
+          payload: {
+            type: 'adsb:status',
+            aircraftCount: '{{data.aircraftCount}}',
+            activeFlights: '{{data.activeFlights}}',
+            responseTime: '{{data.responseTime}}',
+            pollCount: '{{data.metadata.pollCount}}',
+            timestamp: '{{timestamp}}',
+            source: '{{source}}'
+          },
+          qos: 0,
+          retain: true
+        }
+      },
+      {
+        type: 'log_event',
+        parameters: {
+          level: 'debug',
+          message: 'ADSB status update',
+          data: {
+            rule: 'adsb-status-monitoring-rule',
+            aircraftCount: '{{data.aircraftCount}}',
+            activeFlights: '{{data.activeFlights}}',
+            responseTime: '{{data.responseTime}}'
+          }
+        }
+      }
+    ],
+    metadata: {
+      enabled: true,
+      category: 'adsb',
+      priority: 0
+    }
+  },
+
+  // UniFi Protect Motion Rule
+  {
+    id: 'unifi-motion-rule',
+    name: 'UniFi Protect Motion Detection',
+    description: 'Handle motion events from UniFi Protect cameras',
+    conditions: {
+      eventType: 'motion',
+      source: 'unifi-protect-websocket'
+    },
+    actions: [
+      {
+        type: 'mqtt_publish',
+        parameters: {
+          topic: 'unifi/events/motion',
+          payload: {
+            type: 'motion',
+            cameraId: '{{data.cameraId}}',
+            entityId: '{{data.entityId}}',
+            timestamp: '{{timestamp}}',
+            source: '{{source}}',
+            metadata: {
+              rule: 'unifi-motion-rule',
+              processed: true
+            }
+          },
+          qos: 1,
+          retain: false
+        }
+      },
+      {
+        type: 'log_event',
+        parameters: {
+          level: 'info',
+          message: 'Motion event processed from UniFi Protect',
+          data: {
+            rule: 'unifi-motion-rule',
+            eventType: '{{type}}',
+            cameraId: '{{data.cameraId}}',
+            source: '{{source}}'
+          }
+        }
+      }
+    ],
+    metadata: {
+      enabled: true,
+      category: 'unifi',
+      priority: 1
+    }
   }
 ];
 
-module.exports = defaultRules; 
+module.exports = {
+  ...defaultRules,
+  enableRemotionVideoRenders: false,
+}; 
