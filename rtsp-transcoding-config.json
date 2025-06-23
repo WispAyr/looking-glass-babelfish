@@ -1,0 +1,29 @@
+{
+  "autoDetect": true,
+  "connectors": {
+    "unifiProtect": {
+      "enabled": true,
+      "connectors": [
+        "unifi-protect-main"
+      ],
+      "streamFormat": "rtsps",
+      "quality": "high"
+    },
+    "hikvision": {
+      "enabled": true,
+      "connectors": [],
+      "streamFormat": "rtsp",
+      "quality": "high"
+    },
+    "ankkeDvr": {
+      "enabled": true,
+      "connectors": [],
+      "streamFormat": "rtsp",
+      "quality": "high"
+    }
+  },
+  "cameras": [],
+  "segmentDuration": 2,
+  "hlsListSize": 5,
+  "maxConcurrentStreams": 16
+}

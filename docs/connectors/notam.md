@@ -4,14 +4,36 @@
 
 The NOTAM (Notice to Airmen) Connector integrates with the UK NOTAM archive to fetch, parse, and analyze NOTAM data. It provides geospatial visualization, proximity alerts, and temporal analysis capabilities for aviation safety and operational awareness.
 
-## Features
+## ✅ **Recent Integration Enhancements**
 
+### Prestwick Airport Integration
+The NOTAM connector now integrates seamlessly with the Prestwick Airport connector to provide automatic NOTAM checking for aircraft operations:
+
+- **Automatic NOTAM Checking**: Checks for relevant NOTAMs when aircraft approach, land, or take off from EGPK
+- **Telegram Notifications**: Sends instant NOTAM alerts via Telegram with formatted messages
+- **Proximity Alerts**: Real-time alerts when aircraft approach NOTAM-affected areas
+- **Operational Integration**: Works with ADSB connector for real-time aircraft tracking
+
+### Telegram Integration (✅ **Now Working**)
+With the recent Telegram connector fix, NOTAM notifications now work reliably:
+
+```javascript
+// NOTAM alert via Telegram (now working)
+await telegramConnector.execute('telegram:send', 'text', {
+  chatId: prestwickConfig.telegramChatId,
+  text: `🚨 NOTAM Alert: ${notam.description}`,
+  parseMode: 'HTML'
+});
+```
+
+### Enhanced Capabilities
 - **Real-time NOTAM Polling**: Automatically fetches NOTAM data from the UK NOTAM archive XML feed
 - **Geospatial Analysis**: Converts NOTAM data to geospatial format for map visualization
 - **Proximity Alerts**: Generates alerts when aircraft approach NOTAM areas
 - **Temporal Analysis**: Analyzes NOTAM validity periods and patterns
 - **Map Integration**: Displays NOTAM data on spatial visualization maps
 - **Event Emission**: Emits events for new, updated, and expired NOTAMs
+- **Prestwick Integration**: Automatic NOTAM checking for Glasgow Prestwick Airport operations
 
 ## Configuration
 
@@ -31,6 +53,52 @@ The NOTAM (Notice to Airmen) Connector integrates with the UK NOTAM archive to f
       "south": 49.1623,
       "east": 1.7633,
       "west": -8.6500
+    },
+    "prestwickIntegration": {
+      "enabled": true,
+      "airportCode": "EGPK",
+      "airportPosition": {
+        "lat": 55.5074,
+        "lon": -4.5933
+      },
+      "notificationRadius": 50
+    }
+  }
+}
+```
+
+### Advanced Configuration with Prestwick Integration
+
+```json
+{
+  "config": {
+    "prestwickIntegration": {
+      "enabled": true,
+      "airportCode": "EGPK",
+      "airportPosition": {
+        "lat": 55.5074,
+        "lon": -4.5933
+      },
+      "notificationRadius": 50,
+      "telegramNotifications": {
+        "enabled": true,
+        "chatId": "-1001242323336",
+        "messageTemplate": "🚨 NOTAM Alert for EGPK: {notam.description}"
+      },
+      "checkOnEvents": [
+        "aircraft:approach",
+        "aircraft:landing",
+        "aircraft:takeoff"
+      ]
+    },
+    "proximityAlerts": {
+      "enabled": true,
+      "defaultRadius": 10,
+      "alertLevels": {
+        "critical": 5,
+        "warning": 10,
+        "info": 20
+      }
     }
   }
 }
@@ -43,6 +111,10 @@ The NOTAM (Notice to Airmen) Connector integrates with the UK NOTAM archive to f
 | `notamUrl` | string | UK NOTAM archive URL | URL to the NOTAM XML feed |
 | `pollInterval` | number | 1200000 (20 min) | Polling interval in milliseconds |
 | `ukBounds` | object | UK bounds | Bounding box for UK airspace |
+| `prestwickIntegration.enabled` | boolean | true | Enable Prestwick Airport integration |
+| `prestwickIntegration.airportCode` | string | "EGPK" | Prestwick Airport ICAO code |
+| `prestwickIntegration.notificationRadius` | number | 50 | Radius for NOTAM notifications (km) |
+| `proximityAlerts.enabled` | boolean | true | Enable proximity alerts |
 
 ## Capabilities
 
@@ -79,7 +151,7 @@ Converts NOTAM data to geospatial format and provides spatial analysis.
 
 **Example:**
 ```javascript
-// Find NOTAMs near a position
+// Find NOTAMs near Prestwick Airport
 const nearbyNotams = await connector.execute('notam:geospatial', 'analyze', {
   lat: 55.5074,
   lon: -4.5933,
@@ -108,16 +180,18 @@ Generates alerts when aircraft approach NOTAM areas.
 
 **Example:**
 ```javascript
-// Check aircraft proximity
+// Check aircraft proximity to Prestwick
 const alerts = await connector.execute('notam:proximity', 'check', {
   aircraftPosition: { lat: 55.5, lon: -4.6 },
-  radius: 10
+  radius: 10,
+  airportCode: 'EGPK'
 });
 
-// Monitor proximity
+// Monitor proximity with notifications
 const nearbyNotams = await connector.execute('notam:proximity', 'monitor', {
   aircraftPosition: { lat: 55.5, lon: -4.6 },
-  radius: 10
+  radius: 10,
+  sendNotifications: true
 });
 ```
 
@@ -144,7 +218,36 @@ const validation = await connector.execute('notam:temporal', 'validate', {
 });
 ```
 
-### 5. Map Visualization (`notam:map:visualization`)
+### 5. Prestwick Integration (`notam:prestwick`) (✅ **New**)
+
+Integrates with Prestwick Airport operations.
+
+**Operations:**
+- `checkApproach`: Check NOTAMs for approaching aircraft
+- `checkLanding`: Check NOTAMs for landing aircraft
+- `checkTakeoff`: Check NOTAMs for departing aircraft
+- `sendNotification`: Send NOTAM alert via Telegram
+
+**Example:**
+```javascript
+// Check NOTAMs for approaching aircraft
+const notamAlerts = await connector.execute('notam:prestwick', 'checkApproach', {
+  aircraft: {
+    callsign: 'BA123',
+    position: { lat: 55.5, lon: -4.6 },
+    altitude: 3000
+  }
+});
+
+// Send NOTAM notification
+await connector.execute('notam:prestwick', 'sendNotification', {
+  notam: notamData,
+  aircraft: aircraftData,
+  eventType: 'approach'
+});
+```
+
+### 6. Map Visualization (`notam:map:visualization`)
 
 Displays NOTAM data on maps.
 
@@ -200,176 +303,194 @@ connector.on('notam:expired', (data) => {
 });
 ```
 
-### `notam:proximity`
-Emitted when an aircraft approaches a NOTAM area.
+### `notam:proximity` (✅ **New**)
+Emitted when aircraft approach NOTAM-affected areas.
 
 ```javascript
 connector.on('notam:proximity', (data) => {
-  console.log('Proximity alert:', data.nearbyNotams.length, 'NOTAMs nearby');
+  console.log('Aircraft approaching NOTAM area:', data.aircraft.callsign);
+  console.log('NOTAM:', data.notam.notamNumber);
 });
 ```
 
-## Data Structure
-
-### NOTAM Object
-
-```javascript
-{
-  id: 'notam-A1234/24',
-  notamNumber: 'A1234/24',
-  title: 'Runway Maintenance',
-  description: 'Runway 12/30 closed for maintenance',
-  startTime: Date,
-  endTime: Date,
-  category: 'maintenance',
-  priority: 'normal',
-  affectedArea: 'EGPK',
-  position: {
-    lat: 55.5074,
-    lon: -4.5933
-  },
-  status: 'active',
-  rawData: {} // Original XML data
-}
-```
-
-### Geospatial Format
+### `notam:prestwick` (✅ **New**)
+Emitted for Prestwick Airport NOTAM events.
 
 ```javascript
-{
-  type: 'Feature',
-  geometry: {
-    type: 'Point',
-    coordinates: [-4.5933, 55.5074]
-  },
-  properties: {
-    id: 'notam-A1234/24',
-    notamNumber: 'A1234/24',
-    title: 'Runway Maintenance',
-    description: 'Runway 12/30 closed for maintenance',
-    startTime: Date,
-    endTime: Date,
-    status: 'active',
-    category: 'maintenance',
-    priority: 'normal'
-  }
-}
+connector.on('notam:prestwick', (data) => {
+  console.log('Prestwick NOTAM event:', data.eventType);
+  console.log('Aircraft:', data.aircraft.callsign);
+  console.log('NOTAM:', data.notam.notamNumber);
+});
 ```
 
 ## Integration Examples
 
-### Aircraft Proximity Monitoring
-
+### Prestwick Airport Integration
 ```javascript
-// Monitor aircraft proximity to NOTAMs
-const adsbConnector = connectorRegistry.getConnector('adsb-main');
-const notamConnector = connectorRegistry.getConnector('notam-main');
-
-adsbConnector.on('aircraft:updated', async (data) => {
-  const aircraft = data.aircraft;
-  
-  // Check proximity to NOTAMs
-  const proximityAlerts = await notamConnector.execute('notam:proximity', 'check', {
-    aircraftPosition: { lat: aircraft.lat, lon: aircraft.lon },
-    radius: 10
+// In Prestwick Airport connector
+this.eventBus.subscribe('aircraft:approach', async (event) => {
+  // Check for relevant NOTAMs
+  const notamAlerts = await this.notamConnector.execute('notam:prestwick', 'checkApproach', {
+    aircraft: event.aircraft
   });
   
-  if (proximityAlerts.length > 0) {
-    console.log(`Aircraft ${aircraft.callsign} approaching NOTAM areas:`, proximityAlerts);
+  // Send notifications for any relevant NOTAMs
+  for (const notam of notamAlerts) {
+    await this.telegramConnector.execute('telegram:send', 'text', {
+      chatId: this.telegramConfig.chatId,
+      text: `🚨 NOTAM Alert for ${event.aircraft.callsign}: ${notam.description}`,
+      parseMode: 'HTML'
+    });
   }
 });
 ```
 
-### Map Visualization
-
+### ADSB Integration
 ```javascript
-// Display NOTAMs on map
-const mapConnector = connectorRegistry.getConnector('map-main');
-const notamConnector = connectorRegistry.getConnector('notam-main');
-
-// Get active NOTAMs
-const activeNotams = await notamConnector.execute('notam:tracking', 'list', {
-  status: 'active'
-});
-
-// Display each NOTAM on map
-for (const notam of activeNotams) {
-  await notamConnector.execute('notam:map:visualization', 'display', {
-    notamId: notam.id,
-    mapId: 'map-main'
-  });
-}
-```
-
-### Telegram Notifications
-
-```javascript
-// Send NOTAM alerts via Telegram
-const telegramConnector = connectorRegistry.getConnector('telegram-main');
-const notamConnector = connectorRegistry.getConnector('notam-main');
-
-notamConnector.on('notam:new', async (data) => {
-  const notam = data.notam;
+// In ADSB connector
+this.eventBus.subscribe('aircraft:detected', async (event) => {
+  // Check if aircraft is near Prestwick
+  const distanceToPrestwick = this.calculateDistance(
+    event.aircraft.position,
+    { lat: 55.5074, lon: -4.5933 }
+  );
   
-  await telegramConnector.execute('telegram:send', 'message', {
-    chatId: '@notam_alerts',
-    text: `🚨 New NOTAM: ${notam.notamNumber}\n${notam.title}\n${notam.description}`
-  });
-});
-
-notamConnector.on('notam:proximity', async (data) => {
-  const { aircraftPosition, nearbyNotams } = data;
-  
-  await telegramConnector.execute('telegram:send', 'message', {
-    chatId: '@notam_alerts',
-    text: `⚠️ Aircraft approaching ${nearbyNotams.length} NOTAM areas`
-  });
+  if (distanceToPrestwick < 50) {
+    // Check for relevant NOTAMs
+    const notamAlerts = await this.notamConnector.execute('notam:proximity', 'check', {
+      aircraftPosition: event.aircraft.position,
+      radius: 10
+    });
+    
+    // Process NOTAM alerts
+    for (const alert of notamAlerts) {
+      this.eventBus.publishEvent('notam:proximity', {
+        aircraft: event.aircraft,
+        notam: alert.notam,
+        distance: alert.distance
+      });
+    }
+  }
 });
 ```
 
 ## Testing
 
-Run the NOTAM connector test:
-
-```bash
-node test-notam-connector.js
+### Unit Tests
+```javascript
+describe('NOTAM Connector', () => {
+  test('should fetch NOTAM data', async () => {
+    const notams = await connector.execute('notam:tracking', 'read');
+    expect(notams.length).toBeGreaterThan(0);
+  });
+  
+  test('should analyze geospatial data', async () => {
+    const nearbyNotams = await connector.execute('notam:geospatial', 'analyze', {
+      lat: 55.5074,
+      lon: -4.5933,
+      radius: 50
+    });
+    expect(Array.isArray(nearbyNotams)).toBe(true);
+  });
+});
 ```
+
+### Integration Tests
+```javascript
+describe('NOTAM Integration', () => {
+  test('should integrate with Prestwick Airport', async () => {
+    const notamAlerts = await connector.execute('notam:prestwick', 'checkApproach', {
+      aircraft: {
+        callsign: 'TEST123',
+        position: { lat: 55.5, lon: -4.6 },
+        altitude: 3000
+      }
+    });
+    
+    expect(Array.isArray(notamAlerts)).toBe(true);
+  });
+  
+  test('should send Telegram notifications', async () => {
+    await connector.execute('notam:prestwick', 'sendNotification', {
+      notam: { notamNumber: 'TEST123', description: 'Test NOTAM' },
+      aircraft: { callsign: 'TEST123' },
+      eventType: 'approach'
+    });
+    
+    // Verify notification was sent
+  });
+});
+```
+
+## Performance Considerations
+
+### Data Management
+- **Caching**: Cache NOTAM data to reduce API calls
+- **Incremental Updates**: Only fetch new or updated NOTAMs
+- **Data Cleanup**: Remove expired NOTAMs from memory
+- **Compression**: Compress NOTAM data for storage
+
+### Proximity Calculations
+- **Spatial Indexing**: Use spatial indexes for fast proximity queries
+- **Radius Optimization**: Optimize radius calculations for performance
+- **Batch Processing**: Process multiple aircraft positions in batches
+- **Background Processing**: Run proximity checks in background threads
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **XML Parsing Errors**: Check if the NOTAM XML feed is accessible and properly formatted
-2. **No NOTAMs Found**: Verify the XML structure matches expected format
-3. **Geospatial Issues**: Ensure coordinates are valid lat/lon values
-4. **Polling Failures**: Check network connectivity and XML feed availability
+#### NOTAM Data Not Loading
+- Check network connectivity to NOTAM archive
+- Verify NOTAM URL is accessible
+- Check XML parsing for malformed data
+- Review polling interval settings
 
-### Debug Mode
+#### Proximity Alerts Not Working
+- Verify aircraft position data is valid
+- Check radius settings for proximity calculations
+- Ensure NOTAM geospatial data is properly converted
+- Review event subscription setup
 
-Enable debug mode for detailed logging:
+#### Telegram Notifications Not Sending
+- Verify Telegram connector is properly registered
+- Check chat ID configuration
+- Ensure bot has permission to send messages
+- Review message template formatting
 
+### Debug Commands
 ```javascript
-const notamConnector = new NOTAMConnector(config);
-notamConnector.setDebugMode(true);
+// Check NOTAM data status
+const status = await connector.execute('notam:tracking', 'status');
+
+// Test proximity calculation
+const proximity = await connector.execute('notam:proximity', 'test', {
+  position: { lat: 55.5074, lon: -4.5933 },
+  radius: 10
+});
+
+// Test Prestwick integration
+const testResult = await connector.execute('notam:prestwick', 'test', {
+  aircraft: { callsign: 'TEST123', position: { lat: 55.5, lon: -4.6 } }
+});
 ```
 
-### Statistics
+## Future Enhancements
 
-Monitor connector performance:
+### Planned Features
+1. **Multi-Airport Support**: Extend beyond Prestwick to other UK airports
+2. **Advanced Analytics**: NOTAM trend analysis and reporting
+3. **Machine Learning**: Predictive NOTAM analysis
+4. **Real-time Updates**: WebSocket-based real-time NOTAM updates
+5. **International NOTAMs**: Support for international NOTAM sources
 
-```javascript
-const stats = notamConnector.getStats();
-console.log('NOTAM Connector Stats:', stats);
-```
+### Scalability Improvements
+1. **Distributed Processing**: Multi-node NOTAM processing
+2. **Database Storage**: Move from memory to persistent database
+3. **API Integration**: Direct integration with NOTAM APIs
+4. **Load Balancing**: Distribute NOTAM processing load
 
-## Dependencies
+---
 
-- `axios`: HTTP client for fetching XML data
-- `xml2js`: XML parsing library
-- `crypto`: For generating unique IDs
-
-## Related Documentation
-
-- [Connector Architecture](../connector-architecture.md)
-- [Map System](../realtime-map-system.md)
-- [Event System](../automagic-event-system.md) 
+The NOTAM Connector provides comprehensive NOTAM integration for aviation safety and operational awareness, with enhanced capabilities for Prestwick Airport operations and reliable Telegram notifications. 

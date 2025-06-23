@@ -24,7 +24,7 @@ async function testTelegramIntegration() {
     console.log('✅ Connector registry initialized');
     
     // Get Telegram connector
-    const telegramConnector = registry.getConnector('telegram-bot');
+    const telegramConnector = registry.getConnector('telegram-bot-main');
     if (!telegramConnector) {
       throw new Error('Telegram connector not found');
     }
@@ -39,7 +39,7 @@ async function testTelegramIntegration() {
     console.log('📤 Sending test message to Telegram channel...');
     
     const testMessage = await telegramConnector.execute('telegram:send', 'text', {
-      chatId: '@fhNYM0MnPJQ2NjE8',
+      chatId: '-1001242323336',
       text: '🤖 *Babelfish Looking Glass Test* 🤖\n\n✅ Telegram integration is working!\n\n📹 UniFi Protect events will now be sent to this channel.\n\n🕐 Test time: ' + new Date().toLocaleString(),
       parseMode: 'Markdown'
     });
@@ -52,7 +52,7 @@ async function testTelegramIntegration() {
     
     // Test with emojis and formatting
     await telegramConnector.execute('telegram:send', 'text', {
-      chatId: '@fhNYM0MnPJQ2NjE8',
+      chatId: '-1001242323336',
       text: '🚨 *Motion Detection Test* 🚨\n\n📹 Camera: Test Camera\n📍 Location: Front Door\n⏰ Time: ' + new Date().toLocaleString() + '\n\nThis is how motion alerts will appear.',
       parseMode: 'Markdown'
     });
@@ -61,7 +61,7 @@ async function testTelegramIntegration() {
     
     // Test smart detection message
     await telegramConnector.execute('telegram:send', 'text', {
-      chatId: '@fhNYM0MnPJQ2NjE8',
+      chatId: '-1001242323336',
       text: '🤖 *Smart Detection Test* 🤖\n\n📹 Camera: Test Camera\n📍 Location: Backyard\n🔍 Detection: Person\n⏰ Time: ' + new Date().toLocaleString() + '\n\nThis is how smart detection alerts will appear.',
       parseMode: 'Markdown'
     });

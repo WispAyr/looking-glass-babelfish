@@ -22,6 +22,7 @@
         "enableBaseStationIntegration": true,
         "baseStationDbPath": "./aviationdata/BaseStation.sqb",
         "enableAirspaceAwareness": true,
+        "enableGroundEventDetection": true,
         "airport": {
           "icao": "EGPK",
           "name": "Glasgow Prestwick Airport",
@@ -65,6 +66,86 @@
       }
     },
     {
+      "id": "telegram-bot-main",
+      "type": "telegram",
+      "name": "Telegram Bot",
+      "description": "Telegram bot for notifications and alerts",
+      "config": {
+        "token": "6730537017:AAGnK4toKXph8kodfSE80msciRdUPqgVIvw",
+        "mode": "polling",
+        "pollingInterval": 1000,
+        "pollingTimeout": 10,
+        "enabled": true,
+        "defaultChatId": "-1001242323336",
+        "chatInfo": {
+          "id": "-1001242323336",
+          "title": "EGPK Movement",
+          "username": "egpkmovements",
+          "type": "supergroup"
+        },
+        "messageSettings": {
+          "parseMode": "HTML",
+          "disableWebPagePreview": true,
+          "disableNotification": false
+        },
+        "maxReconnectAttempts": 5,
+        "enableMessageHistory": true,
+        "maxHistorySize": 1000
+      },
+      "capabilities": {
+        "enabled": [
+          "telegram:send",
+          "telegram:receive",
+          "telegram:chat"
+        ],
+        "disabled": []
+      }
+    },
+    {
+      "id": "prestwick-airport-main",
+      "type": "prestwick-airport",
+      "name": "Prestwick Airport",
+      "description": "Prestwick Airport aircraft operations tracking with NOTAM integration",
+      "config": {
+        "prestwick": {
+          "airportCode": "EGPK",
+          "airportName": "Glasgow Prestwick Airport",
+          "latitude": 55.5074,
+          "longitude": -4.5933,
+          "approachRadius": 20,
+          "runwayThreshold": 5
+        },
+        "telegram": {
+          "enabled": true,
+          "chatId": "-1001242323336",
+          "notifyApproaches": true,
+          "notifyLandings": true,
+          "notifyTakeoffs": true,
+          "notifyDepartures": true,
+          "notifyNotams": true
+        },
+        "notam": {
+          "enabled": true,
+          "searchRadius": 50,
+          "checkOnApproach": true,
+          "checkOnLanding": true,
+          "checkOnTakeoff": true,
+          "priorityThreshold": "medium"
+        }
+      },
+      "capabilities": {
+        "enabled": [
+          "aircraft:tracking",
+          "airport:operations",
+          "runway:detection",
+          "events:aircraft",
+          "telegram:notifications",
+          "notam:integration"
+        ],
+        "disabled": []
+      }
+    },
+    {
       "id": "unifi-protect-main",
       "type": "unifi-protect",
       "name": "UniFi Protect System",
@@ -74,6 +155,46 @@
         "port": 443,
         "protocol": "https",
         "apiKey": "dEWe0tk_uFV8dpdg9-iqEGAO_ndEBhjo",
+        "username": "",
+        "password": "",
+        "verifySSL": false,
+        "timeout": 10000,
+        "autoDiscovery": {
+          "enabled": true,
+          "refreshInterval": 300000,
+          "createEntities": true,
+          "subscribeToEvents": true,
+          "eventTypes": [
+            "motion",
+            "smart",
+            "ring",
+            "recording",
+            "connection"
+          ]
+        }
+      },
+      "capabilities": {
+        "enabled": [
+          "camera:management",
+          "camera:video:stream",
+          "camera:event:motion",
+          "system:info"
+        ],
+        "disabled": [
+          "system:users"
+        ]
+      }
+    },
+    {
+      "id": "unifi-protect-noc",
+      "type": "unifi-protect",
+      "name": "UniFi Protect System NOC",
+      "description": "Noc UniFi Protect video management system",
+      "config": {
+        "host": "192.168.1.1",
+        "port": 443,
+        "protocol": "https",
+        "apiKey": "NBlLFSNr689McJdCUpjmz5u-3C6mwFya",
         "username": "",
         "password": "",
         "verifySSL": false,
@@ -133,32 +254,6 @@
         ],
         "disabled": [
           "mqtt:history"
-        ]
-      }
-    },
-    {
-      "id": "telegram-bot-main",
-      "type": "telegram",
-      "name": "Telegram Bot",
-      "description": "Telegram bot for notifications and alerts",
-      "config": {
-        "token": "YOUR_TELEGRAM_BOT_TOKEN",
-        "chatId": "@fhNYM0MnPJQ2NjE8",
-        "enabled": true,
-        "notifications": {
-          "motion": true,
-          "speed": true,
-          "system": true
-        }
-      },
-      "capabilities": {
-        "enabled": [
-          "telegram:send",
-          "telegram:receive",
-          "telegram:notify"
-        ],
-        "disabled": [
-          "telegram:commands"
         ]
       }
     },
@@ -435,6 +530,157 @@
           "notam:proximity",
           "notam:temporal",
           "notam:map:visualization"
+        ],
+        "disabled": []
+      }
+    },
+    {
+      "id": "system-visualizer-main",
+      "type": "system-visualizer",
+      "name": "System Architecture Visualizer",
+      "description": "Real-time visualization of system connectors and data flow",
+      "config": {
+        "port": 3001,
+        "updateInterval": 1000,
+        "enableWebSocket": true,
+        "enableDataFlow": true,
+        "enableMetrics": true,
+        "theme": "dark",
+        "layout": "force-directed"
+      },
+      "capabilities": {
+        "enabled": [
+          "visualization:system",
+          "visualization:connectors",
+          "visualization:dataflow",
+          "visualization:metrics"
+        ],
+        "disabled": []
+      }
+    },
+    {
+      "id": "alarm-manager-main",
+      "type": "alarm-manager",
+      "name": "Alarm Manager",
+      "description": "Centralized alarm and notification management system",
+      "config": {
+        "enabled": true,
+        "autoConnect": true,
+        "defaultChatId": "-1001242323336",
+        "telegram": {
+          "chatId": "-1001242323336",
+          "enabled": true
+        },
+        "mqtt": {
+          "topic": "alarms/notifications",
+          "enabled": true
+        },
+        "rules": [
+          {
+            "id": "emergency-aircraft",
+            "name": "Emergency Aircraft Detection",
+            "description": "Alert when emergency squawk codes are detected",
+            "priority": "critical",
+            "conditions": {
+              "eventType": "aircraft:emergency",
+              "minSeverity": "high"
+            },
+            "actions": [
+              {
+                "type": "notification",
+                "channels": ["telegram", "mqtt"],
+                "message": "🚨 <b>EMERGENCY AIRCRAFT DETECTED</b>\n\nAircraft: {{event.data.callsign}}\nSquawk: {{event.data.squawk}}\nLocation: {{event.data.lat}}, {{event.data.lon}}\nAltitude: {{event.data.altitude}}ft\nSpeed: {{event.data.speed}}kts\n\nTime: {{event.timestamp}}",
+                "priority": "critical"
+              }
+            ]
+          },
+          {
+            "id": "motion-detection",
+            "name": "Motion Detection Alert",
+            "description": "Alert when motion is detected on cameras",
+            "priority": "medium",
+            "conditions": {
+              "eventType": "motion",
+              "source": "unifi-protect"
+            },
+            "actions": [
+              {
+                "type": "notification",
+                "channels": ["telegram"],
+                "message": "📹 <b>Motion Detected</b>\n\nCamera: {{event.data.device}}\nLocation: {{event.data.location}}\nTime: {{event.timestamp}}\n\nRule: {{rule.name}}",
+                "priority": "medium"
+              }
+            ]
+          },
+          {
+            "id": "aircraft-approach",
+            "name": "Aircraft Approach Alert",
+            "description": "Alert when aircraft approach the airport",
+            "priority": "medium",
+            "conditions": {
+              "eventType": "aircraft:approach",
+              "source": "prestwick-airport"
+            },
+            "actions": [
+              {
+                "type": "notification",
+                "channels": ["telegram"],
+                "message": "✈️ <b>Aircraft Approaching</b>\n\nCallsign: {{event.data.callsign}}\nType: {{event.data.aircraftType}}\nDistance: {{event.data.distance}}nm\nAltitude: {{event.data.altitude}}ft\n\nTime: {{event.timestamp}}",
+                "priority": "medium"
+              }
+            ]
+          }
+        ]
+      },
+      "capabilities": {
+        "enabled": [
+          "alarm:management",
+          "alarm:rules",
+          "alarm:notifications",
+          "alarm:monitoring"
+        ],
+        "disabled": []
+      }
+    },
+    {
+      "id": "display-manager-main",
+      "type": "display-manager",
+      "name": "Display Manager",
+      "description": "Interactive display manager for command center environments with drag-and-drop interface",
+      "config": {
+        "displayConfig": {
+          "port": 3002,
+          "host": "localhost",
+          "baseUrl": "http://localhost:3002",
+          "refreshInterval": 1000,
+          "blackoutMode": false,
+          "privacyMode": false
+        },
+        "zoneConfig": {
+          "enabled": true,
+          "defaultZone": "main",
+          "zones": ["main", "secondary", "emergency", "noc", "command", "operations"]
+        },
+        "templateConfig": {
+          "defaultTemplates": true,
+          "templatePath": "./templates/display",
+          "customTemplates": {}
+        },
+        "alarmIntegration": {
+          "enabled": true,
+          "alarmManagerId": "alarm-manager-main",
+          "priorityLevels": ["low", "medium", "high", "critical"]
+        }
+      },
+      "capabilities": {
+        "enabled": [
+          "display:management",
+          "display:views",
+          "display:templates",
+          "display:zones",
+          "display:realtime",
+          "display:alarms",
+          "display:privacy"
         ],
         "disabled": []
       }

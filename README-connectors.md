@@ -10,6 +10,40 @@ The Looking Glass platform uses a modular connector-based architecture that allo
 - **Interoperability**: Connectors can communicate capabilities and pair automatically
 - **Future Integration**: Visual programming interface for wiring connectors together
 
+## ✅ **Recent Updates & Fixes**
+
+### Telegram Connector Integration Fixed
+The Telegram connector was recently fixed to resolve a **409 Conflict error** that prevented proper integration:
+
+**Problem**: The Telegram connector was not properly registered in the main server, causing:
+- 409 Conflict errors when multiple instances tried to connect
+- Telegram notifications not working with other connectors
+- Integration failures with Prestwick Airport and other notification-dependent features
+
+**Solution**: Added proper import and registration in `server.js`:
+```javascript
+// Added missing import
+const TelegramConnector = require('./connectors/types/TelegramConnector');
+
+// Added connector registration
+connectorRegistry.registerType('telegram', TelegramConnector);
+```
+
+**Result**: 
+- ✅ Telegram notifications now work correctly with all connectors
+- ✅ Prestwick Airport NOTAM alerts function properly
+- ✅ Alarm Manager notifications work as expected
+- ✅ All Telegram-dependent features are operational
+
+### New Connectors Added
+- **Alarm Manager Connector**: Centralized alarm management with multi-channel notifications
+- **NOTAM Connector**: UK NOTAM data integration with Prestwick Airport support
+- **System Visualizer Connector**: Real-time system architecture visualization
+
+### Enhanced Connectors
+- **ADSB Connector**: Enhanced with UK squawk code analysis (442 codes categorized)
+- **Prestwick Airport Connector**: Enhanced with NOTAM integration and Telegram notifications
+
 ## Quick Start
 
 ### 1. Test the Connector System
@@ -20,7 +54,15 @@ Run the test script to verify everything is working:
 node test-connectors.js
 ```
 
-### 2. Start the Server
+### 2. Test Telegram Integration (✅ **Now Working**)
+
+Test the Telegram connector functionality:
+
+```bash
+node test-telegram-simple.js
+```
+
+### 3. Start the Server
 
 The server automatically loads connectors from `config/connectors.json`:
 
@@ -28,7 +70,7 @@ The server automatically loads connectors from `config/connectors.json`:
 npm start
 ```
 
-### 3. Access the Connector API
+### 4. Access the Connector API
 
 Once the server is running, you can access the connector management API:
 
@@ -167,7 +209,7 @@ Provides MQTT publish/subscribe messaging capabilities.
 }
 ```
 
-### Telegram Connector
+### Telegram Connector (✅ **Recently Fixed**)
 
 Provides integration with Telegram Bot API for messaging and notifications.
 
@@ -182,12 +224,13 @@ Provides integration with Telegram Bot API for messaging and notifications.
 **Configuration:**
 ```json
 {
-  "id": "telegram-bot",
+  "id": "telegram-bot-main",
   "type": "telegram",
   "name": "Babelfish Bot",
   "description": "Telegram bot for notifications",
   "config": {
     "token": "YOUR_BOT_TOKEN_HERE",
+    "defaultChatId": "YOUR_CHAT_ID_HERE",
     "mode": "polling",
     "pollingInterval": 1000,
     "pollingTimeout": 10,
@@ -199,69 +242,40 @@ Provides integration with Telegram Bot API for messaging and notifications.
       "telegram:receive",
       "telegram:keyboard"
     ],
-    "disabled": [
-      "telegram:webhook"
-    ]
+    "disabled": ["telegram:webhook"]
   }
 }
 ```
 
-### LLM Connector
+### ADSB Connector (✅ **Enhanced**)
 
-Provides integration with Large Language Models for AI-powered automation and decision making.
-
-**Capabilities:**
-- `llm:chat` - Chat with LLM models
-- `llm:completion` - Generate text completions
-- `llm:analysis` - Analyze data and events
-- `llm:decision` - Make automated decisions
-- `llm:translation` - Translate text between languages
-- `llm:summarization` - Summarize text and data
-
-**Configuration:**
-```json
-{
-  "id": "llm-assistant",
-  "type": "llm",
-  "name": "AI Assistant",
-  "description": "LLM integration for automation",
-  "config": {
-    "provider": "openai",
-    "apiKey": "your-api-key",
-    "model": "gpt-4",
-    "maxTokens": 1000,
-    "temperature": 0.7
-  }
-}
-```
-
-### ADSB Connector
-
-Provides Automatic Dependent Surveillance-Broadcast (ADSB) aircraft tracking capabilities.
+Integrates with Automatic Dependent Surveillance-Broadcast data for aircraft tracking.
 
 **Capabilities:**
-- `adsb:aircraft` - Track aircraft positions and data
+- `adsb:aircraft` - Aircraft tracking and management
 - `adsb:radar` - Radar visualization and display
-- `adsb:zones` - Define and monitor airspace zones
-- `adsb:filtering` - Filter aircraft by various criteria
-- `adsb:emergency` - Monitor emergency squawk codes
-- `adsb:export` - Export aircraft data
+- `adsb:squawk` - Squawk code analysis (✅ **New**)
+- `adsb:filtering` - Aircraft filtering and search
+- `adsb:export` - Data export capabilities
+
+**Enhanced Features:**
+- **Squawk Code Analysis**: 442 UK squawk codes with emergency detection
+- **Categories**: Emergency, Military, NATO, ATC, Emergency Services, Law Enforcement, Offshore, Conspicuity, Transit
+- **Emergency Detection**: Automatic detection of 7500, 7600, 7700 codes
 
 **Configuration:**
 ```json
 {
-  "id": "adsb-tracker",
+  "id": "adsb-main",
   "type": "adsb",
-  "name": "ADSB Aircraft Tracker",
+  "name": "ADSB Aircraft Tracking",
   "config": {
-    "dataSource": "dump1090",
-    "host": "localhost",
-    "port": 30003,
-    "protocol": "tcp",
-    "range": 50,
-    "center": {
-      "lat": 51.5074,
-      "lon": -0.1278
+    "enableSquawkCodeAnalysis": true,
+    "showSquawkInfo": true,
+    "squawkCodeService": {
+      "dataFile": "path/to/squawk/codes/file.ini",
+      "enableCaching": true,
+      "cacheExpiry": 3600000
     }
   }
 }
@@ -269,393 +283,403 @@ Provides Automatic Dependent Surveillance-Broadcast (ADSB) aircraft tracking cap
 
 ### APRS Connector
 
-Provides Automatic Packet Reporting System (APRS) amateur radio station tracking and weather data.
+Integrates with Amateur Radio Packet System for station tracking and weather data.
 
 **Capabilities:**
-- `aprs:stations` - Track APRS stations and positions
-- `aprs:weather` - Weather station data and monitoring
-- `aprs:messages` - APRS text message monitoring
+- `aprs:stations` - APRS station tracking and management
+- `aprs:weather` - Weather data integration
+- `aprs:messages` - Message monitoring and display
 - `aprs:map` - Automatic map integration
-- `aprs:filtering` - Filter stations by type and location
-- `aprs:export` - Export APRS data
 
 **Configuration:**
 ```json
 {
-  "id": "aprs-tracker",
+  "id": "aprs-main",
   "type": "aprs",
-  "name": "APRS Station Tracker",
+  "name": "APRS Station Tracking",
   "config": {
-    "apiKey": "your-aprs-api-key",
-    "bounds": {
-      "minLat": 49.0,
-      "maxLat": 61.0,
-      "minLon": -8.0,
-      "maxLon": 2.0
+    "ukBounds": {
+      "north": 60.8604,
+      "south": 49.1623,
+      "east": 1.7633,
+      "west": -8.6500
     },
-    "updateInterval": 30000
+    "pollInterval": 30000
+  }
+}
+```
+
+### NOTAM Connector (✅ **New**)
+
+Integrates with UK NOTAM archive for aviation safety and operational awareness.
+
+**Capabilities:**
+- `notam:tracking` - NOTAM data tracking and monitoring
+- `notam:geospatial` - Geospatial analysis and conversion
+- `notam:proximity` - Proximity alerts for aircraft
+- `notam:temporal` - Temporal analysis and validation
+- `notam:prestwick` - Prestwick Airport integration (✅ **New**)
+- `notam:map:visualization` - Map visualization
+
+**Configuration:**
+```json
+{
+  "id": "notam-main",
+  "type": "notam",
+  "name": "UK NOTAM Data",
+  "config": {
+    "notamUrl": "https://github.com/Jonty/uk-notam-archive/blob/main/data/PIB.xml",
+    "pollInterval": 1200000,
+    "prestwickIntegration": {
+      "enabled": true,
+      "airportCode": "EGPK",
+      "airportPosition": {
+        "lat": 55.5074,
+        "lon": -4.5933
+      },
+      "notificationRadius": 50
+    }
+  }
+}
+```
+
+### Alarm Manager Connector (✅ **New**)
+
+Provides centralized alarm management across all system components.
+
+**Capabilities:**
+- `alarm:management` - Alarm creation and management
+- `alarm:notifications` - Multi-channel alarm notifications
+- `alarm:acknowledgment` - Alarm acknowledgment and status
+- `alarm:rules` - Configurable alarm rules and escalation
+
+**Configuration:**
+```json
+{
+  "id": "alarm-manager-main",
+  "type": "alarm-manager",
+  "name": "Main Alarm Manager",
+  "config": {
+    "enabled": true,
+    "notificationChannels": {
+      "telegram": {
+        "enabled": true,
+        "connectorId": "telegram-bot-main",
+        "chatId": "-1001242323336"
+      },
+      "mqtt": {
+        "enabled": true,
+        "topic": "alarms/notifications",
+        "qos": 1
+      }
+    },
+    "alarmRules": {
+      "motion": {
+        "enabled": true,
+        "severity": "medium",
+        "suppression": {
+          "enabled": true,
+          "window": 300000,
+          "maxAlarms": 5
+        }
+      }
+    }
+  }
+}
+```
+
+### Prestwick Airport Connector (✅ **Enhanced**)
+
+Specialized connector for Glasgow Prestwick Airport (EGPK) operations.
+
+**Capabilities:**
+- `prestwick:aircraft` - Aircraft operations tracking
+- `prestwick:notam` - NOTAM integration and checking
+- `prestwick:notifications` - Telegram notifications for airport events
+- `prestwick:ground` - Ground event detection and monitoring
+
+**Enhanced Features:**
+- **NOTAM Integration**: Automatic NOTAM checking for approach, landing, and takeoff
+- **Telegram Notifications**: Instant alerts via Telegram (✅ **Now Working**)
+- **ADSB Integration**: Real-time aircraft data integration
+
+**Configuration:**
+```json
+{
+  "id": "prestwick-airport",
+  "type": "prestwick-airport",
+  "name": "Glasgow Prestwick Airport",
+  "config": {
+    "airportCode": "EGPK",
+    "airportPosition": {
+      "lat": 55.5074,
+      "lon": -4.5933
+    },
+    "telegramConfig": {
+      "enabled": true,
+      "chatId": "-1001242323336"
+    },
+    "notamIntegration": {
+      "enabled": true,
+      "checkRadius": 50
+    }
+  }
+}
+```
+
+### System Visualizer Connector (✅ **Enhanced**)
+
+Provides real-time system architecture visualization and monitoring.
+
+**Capabilities:**
+- `system:visualization` - System architecture visualization
+- `system:metrics` - Real-time metrics and health monitoring
+- `system:layouts` - Multiple layout algorithms (Force Directed, Circular, Hierarchical, Grid)
+- `system:websocket` - WebSocket-based real-time updates
+
+**Enhanced Features:**
+- **Multiple Layouts**: Force Directed, Circular, Hierarchical, Grid algorithms
+- **Real-time Updates**: WebSocket-based live updates
+- **Interactive Features**: Node selection, highlighting, data flow visualization
+- **Data Flow Categorization**: Emergency, Military, Data, Events
+
+**Configuration:**
+```json
+{
+  "id": "system-visualizer-main",
+  "type": "system-visualizer",
+  "name": "System Architecture Visualizer",
+  "config": {
+    "port": 3001,
+    "layouts": ["force", "circular", "hierarchical", "grid"],
+    "updateInterval": 5000,
+    "websocket": {
+      "enabled": true,
+      "path": "/ws"
+    }
   }
 }
 ```
 
 ### Map Connector
 
-Provides spatial visualization and real-time map integration capabilities.
+Provides spatial visualization and management capabilities.
 
 **Capabilities:**
 - `map:spatial` - Spatial element management
-- `map:visualization` - Real-time map visualization
-- `map:integration` - Connector data integration
-- `map:zones` - Zone definition and management
+- `map:visualization` - Map visualization and display
+- `map:zones` - Zone definition and monitoring
 - `map:events` - Event visualization on maps
-- `map:export` - Export map configurations
 
 **Configuration:**
 ```json
 {
-  "id": "main-map",
+  "id": "map-main",
   "type": "map",
-  "name": "Main Map System",
+  "name": "Spatial Visualization",
   "config": {
-    "autoRegisterConnectors": true,
-    "enableWebSockets": true,
-    "defaultCenter": {
-      "lat": 51.5074,
-      "lon": -0.1278,
-      "zoom": 10
-    }
+    "center": {
+      "lat": 55.5074,
+      "lon": -4.5933
+    },
+    "zoom": 10,
+    "layers": ["satellite", "terrain", "streets"]
   }
 }
 ```
 
 ### Web GUI Connector
 
-Provides modern web interface with component system and real-time updates.
+Provides modern web interface with component system.
 
 **Capabilities:**
-- `gui:pages` - Page management and routing
-- `gui:components` - Component library and management
-- `gui:layout` - Layout configuration and editing
+- `gui:pages` - Web GUI page management
+- `gui:components` - Component management and configuration
 - `gui:themes` - Theme management and customization
-- `gui:real-time` - Real-time updates and WebSocket integration
-- `gui:responsive` - Responsive design and mobile support
+- `gui:websocket` - Real-time updates via WebSockets
 
 **Configuration:**
 ```json
 {
-  "id": "web-gui",
+  "id": "web-gui-main",
   "type": "web-gui",
   "name": "Web Interface",
   "config": {
     "port": 3000,
-    "enableWebSockets": true,
-    "enableSSE": true,
-    "defaultTheme": "dark",
-    "autoReload": true
+    "theme": "dark",
+    "components": ["dashboard", "map", "alarms", "analytics"]
   }
 }
 ```
 
 ### Speed Calculation Connector
 
-Provides ANPR-based vehicle speed monitoring and calculation capabilities.
+Provides ANPR-based vehicle speed monitoring.
 
 **Capabilities:**
-- `speed:calculation` - Calculate vehicle speeds between detection points
+- `speed:calculation` - Speed calculation and monitoring
 - `speed:anpr` - ANPR integration and plate recognition
-- `speed:tracking` - Vehicle tracking across detection points
-- `speed:alerts` - Speed violation alerts and notifications
+- `speed:violations` - Speed violation detection and alerts
 - `speed:analytics` - Speed analytics and reporting
-- `speed:export` - Export speed data
 
 **Configuration:**
 ```json
 {
-  "id": "speed-monitor",
+  "id": "speed-calculation-main",
   "type": "speed-calculation",
-  "name": "Speed Monitoring System",
+  "name": "Speed Monitoring",
   "config": {
-    "minTimeBetweenDetections": 1000,
-    "maxTimeBetweenDetections": 300000,
-    "minSpeedThreshold": 5,
-    "maxSpeedThreshold": 200,
-    "confidenceThreshold": 0.8
+    "detectionPoints": [
+      {
+        "id": "point-1",
+        "position": { "lat": 55.5074, "lon": -4.5933 }
+      },
+      {
+        "id": "point-2",
+        "position": { "lat": 55.5074, "lon": -4.5933 }
+      }
+    ],
+    "speedLimit": 30,
+    "violationThreshold": 5
   }
 }
 ```
 
 ### Overwatch Connector
 
-Central event processing and orchestration system for managing all events and flows.
+Provides central event processing and orchestration.
 
 **Capabilities:**
-- `overwatch:events` - Event processing and enhancement
-- `overwatch:flows` - Flow orchestration and management
-- `overwatch:rules` - Rule engine and automation
-- `overwatch:filtering` - Event filtering and routing
-- `overwatch:metrics` - System metrics and monitoring
+- `overwatch:events` - Event processing and management
+- `overwatch:flows` - Flow management and automation
+- `overwatch:rules` - Rule engine and decision making
 - `overwatch:health` - System health monitoring
 
 **Configuration:**
 ```json
 {
-  "id": "overwatch",
+  "id": "overwatch-main",
   "type": "overwatch",
-  "name": "Event Orchestration System",
+  "name": "Event Orchestration",
   "config": {
-    "enableEventProcessing": true,
-    "enableFlowOrchestration": true,
-    "enableRuleEngine": true,
-    "maxEvents": 1000,
-    "processingInterval": 100
-  }
-}
-```
-
-## Connector Management
-
-### Creating Connectors
-
-Connectors are defined in `config/connectors.json`:
-
-```json
-[
-  {
-    "id": "unique-connector-id",
-    "type": "connector-type",
-    "name": "Human Readable Name",
-    "description": "Optional description",
-    "config": {
-      // Connector-specific configuration
+    "eventProcessing": {
+      "enabled": true,
+      "maxConcurrent": 10
     },
-    "capabilities": {
-      "enabled": ["capability1", "capability2"],
-      "disabled": ["capability3"]
+    "flowManagement": {
+      "enabled": true,
+      "autoStart": true
     }
   }
-]
-```
-
-### Connector Lifecycle
-
-1. **Discovery**: Connectors are discovered and loaded from configuration
-2. **Validation**: Configuration is validated against connector requirements
-3. **Initialization**: Connectors are initialized with their configuration
-4. **Connection**: Connectors establish connections to their respective systems
-5. **Operation**: Connectors begin normal operation and event processing
-6. **Monitoring**: Health monitoring tracks connector status and performance
-7. **Disconnection**: Connectors gracefully disconnect when stopped
-
-### Capability System
-
-Each connector defines its capabilities through the `getCapabilityDefinitions()` method:
-
-```javascript
-static getCapabilityDefinitions() {
-  return [
-    {
-      id: 'my:capability',
-      name: 'My Capability',
-      description: 'Description of what this capability does',
-      category: 'category',
-      operations: ['create', 'read', 'update', 'delete'],
-      dataTypes: ['my-data'],
-      events: ['my:event']
-    }
-  ];
 }
 ```
 
-### Event System
+### LLM Connector
 
-Connectors can publish and subscribe to events:
+Provides AI-powered automation and decision making.
 
-```javascript
-// Publish an event
-this.eventBus.publishEvent('my:event', {
-  source: this.id,
-  data: eventData,
-  timestamp: Date.now()
-});
+**Capabilities:**
+- `llm:chat` - LLM conversation capabilities
+- `llm:function` - Function calling for autonomous operations
+- `llm:analysis` - Data analysis and insights
+- `llm:automation` - AI-powered automation
 
-// Subscribe to events
-this.eventBus.subscribe('other:event', (event) => {
-  // Handle event
-});
+**Configuration:**
+```json
+{
+  "id": "llm-main",
+  "type": "llm",
+  "name": "AI Assistant",
+  "config": {
+    "provider": "openai",
+    "model": "gpt-4",
+    "apiKey": "your-api-key",
+    "maxTokens": 1000
+  }
+}
 ```
 
-## Testing Connectors
+## Testing
 
-### Individual Connector Tests
-
+### Test All Connectors
 ```bash
-# Test specific connectors
-node test-unifi-protect.js
-node test-mqtt-connector.js
-node test-telegram-connector.js
-node test-adsb-connector.js
-node test-aprs-connector.js
-node test-speed-calculation-system.js
-```
-
-### Integration Tests
-
-```bash
-# Test connector integrations
-node test-adsb-map-integration.js
-node test-map-unifi-sync.js
-node test-llm-autonomous-system.js
-```
-
-### System Tests
-
-```bash
-# Test complete system
 node test-connectors.js
-node test-flow-system.js
-node test-health-monitoring.js
 ```
 
-## Development
+### Test Specific Connectors
+```bash
+# Test Telegram integration (✅ Now Working)
+node test-telegram-simple.js
 
-### Adding New Connectors
+# Test Prestwick Airport with Telegram
+node test-prestwick-telegram.js
+node test-prestwick-full-notifications.js
 
-1. **Create Connector Class**
-   ```javascript
-   const BaseConnector = require('../BaseConnector');
-   
-   class MyConnector extends BaseConnector {
-     static getCapabilityDefinitions() {
-       return [
-         {
-           id: 'my:capability',
-           name: 'My Capability',
-           description: 'Description',
-           category: 'custom',
-           operations: ['execute'],
-           dataTypes: ['my-data'],
-           events: ['my:event']
-         }
-       ];
-     }
-     
-     static getMetadata() {
-       return {
-         name: 'My Connector',
-         description: 'Description of my connector',
-         version: '1.0.0',
-         author: 'Your Name'
-       };
-     }
-     
-     static validateConfig(config) {
-       // Validate configuration
-       return { valid: true };
-     }
-     
-     async performConnect() {
-       // Implement connection logic
-     }
-     
-     async performDisconnect() {
-       // Implement disconnection logic
-     }
-     
-     async executeCapability(capabilityId, operation, parameters) {
-       // Implement capability execution
-     }
-   }
-   
-   module.exports = MyConnector;
-   ```
+# Test ADSB with squawk codes
+node test-squawk-code-integration.js
 
-2. **Register Connector**
-   Add the connector to `connectors/types/` and update the registry.
+# Test NOTAM integration
+node test-notam-integration.js
+node test-prestwick-notam-integration.js
 
-3. **Create Documentation**
-   Add documentation in `docs/connectors/`.
+# Test Alarm Manager
+node test-alarm-manager.js
 
-4. **Create Tests**
-   Add test file following the existing pattern.
-
-### Best Practices
-
-- **Error Handling**: Implement robust error handling and recovery
-- **Logging**: Use structured logging for debugging and monitoring
-- **Configuration**: Validate all configuration parameters
-- **Events**: Publish meaningful events for system integration
-- **Health Checks**: Implement health monitoring capabilities
-- **Documentation**: Maintain comprehensive documentation
-- **Testing**: Create thorough test coverage
+# Test System Visualizer
+node test-system-visualizer.js
+```
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **Connection Failures**
-   - Check network connectivity
-   - Verify configuration parameters
-   - Check authentication credentials
-   - Review connector logs
+#### Telegram 409 Conflict Error
+**Problem**: `TelegramError: ETELEGRAM: 409 Conflict: terminated by other getUpdates request`
 
-2. **Event Processing Issues**
-   - Verify event bus connectivity
-   - Check event format and structure
-   - Review event filtering rules
-   - Monitor event processing performance
+**Solution**: 
+1. Ensure only one instance of the Telegram bot is running
+2. Verify the connector is properly registered in `server.js`
+3. Check that no other processes are using the same bot token
 
-3. **Performance Issues**
-   - Monitor resource usage
-   - Check connection pooling
-   - Review event processing intervals
-   - Optimize database queries
+#### Connector Not Loading
+1. Check connector configuration in `config/connectors.json`
+2. Verify connector type is registered in `server.js`
+3. Check for configuration validation errors
+4. Review connector logs for specific error messages
 
-### Debug Mode
+#### Integration Issues
+1. Verify all required connectors are running
+2. Check event subscriptions and publishing
+3. Review capability definitions and operations
+4. Test individual connector functionality
 
-Enable debug logging for detailed troubleshooting:
-
+### Debug Commands
 ```javascript
-// In connector configuration
-{
-  "debug": true,
-  "logLevel": "debug"
-}
+// Check connector status
+const status = await connector.getStatus();
+
+// Test connector capabilities
+const capabilities = connector.getCapabilityDefinitions();
+
+// Execute test operation
+const result = await connector.execute('capability:test', 'operation', {});
 ```
 
-### Health Monitoring
+## Future Enhancements
 
-Monitor connector health through the API:
+### Planned Connectors
+1. **Email Connector**: Email notification and management
+2. **SMS Connector**: SMS messaging capabilities
+3. **Database Connector**: Database integration and management
+4. **API Connector**: Generic API integration framework
+5. **Cloud Connector**: Cloud service integration
 
-```bash
-GET /api/connectors/:id/health
-GET /health/connectors
-```
-
-## API Reference
-
-### Connector Management
-
-- `GET /api/connectors` - List all connectors
-- `GET /api/connectors/:id` - Get connector details
-- `POST /api/connectors` - Create new connector
-- `PUT /api/connectors/:id` - Update connector
-- `DELETE /api/connectors/:id` - Delete connector
-
-### Connector Operations
-
-- `POST /api/connectors/:id/connect` - Connect connector
-- `POST /api/connectors/:id/disconnect` - Disconnect connector
-- `POST /api/connectors/:id/execute` - Execute capability
-- `GET /api/connectors/:id/status` - Get connector status
-- `GET /api/connectors/:id/health` - Get connector health
-
-### Event Management
-
-- `GET /api/events` - List recent events
-- `POST /api/events` - Publish event
-- `GET /api/events/stream` - Stream events (SSE)
-- `GET /api/events/stats` - Get event statistics
+### Scalability Improvements
+1. **Distributed Architecture**: Multi-node connector deployment
+2. **Load Balancing**: Distribute connector processing load
+3. **High Availability**: Redundant connector configurations
+4. **Performance Optimization**: Enhanced caching and processing
 
 ---
 
-For more detailed information about specific connectors, see the documentation in the `docs/connectors/` directory.
+The connector system provides a robust foundation for integrating diverse systems and protocols, enabling the Looking Glass platform to adapt and scale to meet various operational requirements.

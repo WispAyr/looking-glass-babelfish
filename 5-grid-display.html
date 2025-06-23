@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>5-Grid Command Center Display</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #000;
+            color: #fff;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .grid-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            grid-template-rows: 1fr 1fr;
+            gap: 10px;
+            height: 100vh;
+            padding: 10px;
+        }
+
+        .display-frame {
+            background: #1a1a1a;
+            border: 2px solid #333;
+            border-radius: 8px;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.3s ease;
+        }
+
+        .display-frame:hover {
+            border-color: #00ff00;
+            box-shadow: 0 0 20px rgba(0, 255, 0, 0.3);
+        }
+
+        .display-frame iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+            background: #000;
+        }
+
+        .display-label {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            color: #00ff00;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            z-index: 10;
+        }
+
+        .display-status {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #ff0000;
+            z-index: 10;
+        }
+
+        .display-status.online {
+            background: #00ff00;
+        }
+
+        .display-status.loading {
+            background: #ffff00;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+
+        .controls {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #333;
+            z-index: 100;
+        }
+
+        .controls button {
+            background: #333;
+            color: #fff;
+            border: 1px solid #555;
+            padding: 8px 12px;
+            margin: 2px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .controls button:hover {
+            background: #555;
+        }
+
+        .controls button.active {
+            background: #00ff00;
+            color: #000;
+        }
+
+        .fullscreen-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: #000;
+            z-index: 1000;
+            display: none;
+        }
+
+        .fullscreen-overlay.active {
+            display: block;
+        }
+
+        .fullscreen-overlay iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+
+        .fullscreen-close {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(255, 0, 0, 0.8);
+            color: #fff;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+
+        .loading-message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #00ff00;
+            font-size: 18px;
+            text-align: center;
+        }
+
+        .error-message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #ff0000;
+            font-size: 14px;
+            text-align: center;
+            background: rgba(255, 0, 0, 0.1);
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #ff0000;
+        }
+    </style>
+</head>
+<body>
+    <div class="controls">
+        <button onclick="toggleFullscreen()">Fullscreen</button>
+        <button onclick="refreshAll()">Refresh All</button>
+        <button onclick="toggleAutoRefresh()" id="autoRefreshBtn">Auto Refresh</button>
+        <button onclick="showStatus()">Status</button>
+    </div>
+
+    <div class="grid-container">
+        <!-- Display 1: ADSB Radar -->
+        <div class="display-frame" id="display-1">
+            <div class="display-label">ADSB Radar</div>
+            <div class="display-status loading" id="status-1"></div>
+            <iframe src="http://localhost:3000/radar" 
+                    onload="setStatus('1', 'online')" 
+                    onerror="setStatus('1', 'error')"
+                    id="iframe-1"></iframe>
+            <div class="loading-message" id="loading-1">Loading ADSB Radar...</div>
+            <div class="error-message" id="error-1" style="display: none;">Failed to load ADSB Radar</div>
+        </div>
+
+        <!-- Display 2: Camera Grid -->
+        <div class="display-frame" id="display-2">
+            <div class="display-label">Camera Grid</div>
+            <div class="display-status loading" id="status-2"></div>
+            <iframe src="http://localhost:3000/unifi" 
+                    onload="setStatus('2', 'online')" 
+                    onerror="setStatus('2', 'error')"
+                    id="iframe-2"></iframe>
+            <div class="loading-message" id="loading-2">Loading Camera Grid...</div>
+            <div class="error-message" id="error-2" style="display: none;">Failed to load Camera Grid</div>
+        </div>
+
+        <!-- Display 3: System Status -->
+        <div class="display-frame" id="display-3">
+            <div class="display-label">System Status</div>
+            <div class="display-status loading" id="status-3"></div>
+            <iframe src="http://localhost:3000/system" 
+                    onload="setStatus('3', 'online')" 
+                    onerror="setStatus('3', 'error')"
+                    id="iframe-3"></iframe>
+            <div class="loading-message" id="loading-3">Loading System Status...</div>
+            <div class="error-message" id="error-3" style="display: none;">Failed to load System Status</div>
+        </div>
+
+        <!-- Display 4: Map View -->
+        <div class="display-frame" id="display-4">
+            <div class="display-label">Map View</div>
+            <div class="display-status loading" id="status-4"></div>
+            <iframe src="http://localhost:3000/map.html" 
+                    onload="setStatus('4', 'online')" 
+                    onerror="setStatus('4', 'error')"
+                    id="iframe-4"></iframe>
+            <div class="loading-message" id="loading-4">Loading Map View...</div>
+            <div class="error-message" id="error-4" style="display: none;">Failed to load Map View</div>
+        </div>
+
+        <!-- Display 5: Alarm Dashboard -->
+        <div class="display-frame" id="display-5">
+            <div class="display-label">Alarm Dashboard</div>
+            <div class="display-status loading" id="status-5"></div>
+            <iframe src="http://localhost:3000/alarms" 
+                    onload="setStatus('5', 'online')" 
+                    onerror="setStatus('5', 'error')"
+                    id="iframe-5"></iframe>
+            <div class="loading-message" id="loading-5">Loading Alarm Dashboard...</div>
+            <div class="error-message" id="error-5" style="display: none;">Failed to load Alarm Dashboard</div>
+        </div>
+    </div>
+
+    <!-- Fullscreen overlay -->
+    <div class="fullscreen-overlay" id="fullscreenOverlay">
+        <button class="fullscreen-close" onclick="closeFullscreen()">✕</button>
+        <iframe id="fullscreenIframe"></iframe>
+    </div>
+
+    <script>
+        let autoRefreshInterval = null;
+        let autoRefreshEnabled = false;
+
+        function setStatus(displayId, status) {
+            const statusElement = document.getElementById(`status-${displayId}`);
+            const loadingElement = document.getElementById(`loading-${displayId}`);
+            const errorElement = document.getElementById(`error-${displayId}`);
+            
+            statusElement.className = `display-status ${status}`;
+            
+            if (status === 'online') {
+                loadingElement.style.display = 'none';
+                errorElement.style.display = 'none';
+            } else if (status === 'error') {
+                loadingElement.style.display = 'none';
+                errorElement.style.display = 'block';
+            }
+        }
+
+        function refreshAll() {
+            for (let i = 1; i <= 5; i++) {
+                const iframe = document.getElementById(`iframe-${i}`);
+                if (iframe) {
+                    iframe.src = iframe.src;
+                    setStatus(i.toString(), 'loading');
+                }
+            }
+        }
+
+        function toggleAutoRefresh() {
+            const btn = document.getElementById('autoRefreshBtn');
+            
+            if (autoRefreshEnabled) {
+                if (autoRefreshInterval) {
+                    clearInterval(autoRefreshInterval);
+                    autoRefreshInterval = null;
+                }
+                autoRefreshEnabled = false;
+                btn.textContent = 'Auto Refresh';
+                btn.classList.remove('active');
+            } else {
+                autoRefreshInterval = setInterval(refreshAll, 30000); // Refresh every 30 seconds
+                autoRefreshEnabled = true;
+                btn.textContent = 'Stop Auto';
+                btn.classList.add('active');
+            }
+        }
+
+        function toggleFullscreen() {
+            if (document.fullscreenElement) {
+                document.exitFullscreen();
+            } else {
+                document.documentElement.requestFullscreen();
+            }
+        }
+
+        function showStatus() {
+            const statuses = [];
+            for (let i = 1; i <= 5; i++) {
+                const statusElement = document.getElementById(`status-${i}`);
+                const status = statusElement.classList.contains('online') ? 'Online' : 
+                             statusElement.classList.contains('loading') ? 'Loading' : 'Error';
+                statuses.push(`Display ${i}: ${status}`);
+            }
+            alert('Display Status:\n' + statuses.join('\n'));
+        }
+
+        function openFullscreen(displayId) {
+            const overlay = document.getElementById('fullscreenOverlay');
+            const iframe = document.getElementById('fullscreenIframe');
+            const sourceIframe = document.getElementById(`iframe-${displayId}`);
+            
+            iframe.src = sourceIframe.src;
+            overlay.classList.add('active');
+        }
+
+        function closeFullscreen() {
+            const overlay = document.getElementById('fullscreenOverlay');
+            const iframe = document.getElementById('fullscreenIframe');
+            
+            iframe.src = '';
+            overlay.classList.remove('active');
+        }
+
+        // Add click handlers for fullscreen
+        document.querySelectorAll('.display-frame').forEach((frame, index) => {
+            frame.addEventListener('dblclick', () => {
+                openFullscreen((index + 1).toString());
+            });
+        });
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            switch(e.key) {
+                case 'F11':
+                    e.preventDefault();
+                    toggleFullscreen();
+                    break;
+                case 'r':
+                case 'R':
+                    if (e.ctrlKey) {
+                        e.preventDefault();
+                        refreshAll();
+                    }
+                    break;
+                case 'Escape':
+                    if (document.getElementById('fullscreenOverlay').classList.contains('active')) {
+                        closeFullscreen();
+                    }
+                    break;
+            }
+        });
+
+        // Auto-refresh on page load
+        setTimeout(() => {
+            const onlineCount = document.querySelectorAll('.display-status.online').length;
+            if (onlineCount < 5) {
+                console.log(`Only ${onlineCount}/5 displays loaded successfully. Consider refreshing.`);
+            }
+        }, 5000);
+    </script>
+</body>
+</html> 

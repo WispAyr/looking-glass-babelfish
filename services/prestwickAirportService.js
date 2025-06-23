@@ -53,7 +53,8 @@ class PrestwickAirportService {
       approach: [],
       landing: [],
       takeoff: [],
-      departure: []
+      departure: [],
+      'notam:alert': []
     };
 
     // Statistics
@@ -62,7 +63,20 @@ class PrestwickAirportService {
       totalLandings: 0,
       totalTakeoffs: 0,
       totalDepartures: 0,
+      notamQueries: 0,
+      notamAlerts: 0,
       lastUpdate: new Date().toISOString()
+    };
+
+    // NOTAM integration
+    this.notamConnector = null;
+    this.notamConfig = {
+      enabled: true,
+      searchRadius: 50, // km around Prestwick
+      checkOnApproach: true,
+      checkOnLanding: true,
+      checkOnTakeoff: true,
+      priorityThreshold: 'medium'
     };
 
     this.logger = winston.createLogger({
@@ -283,9 +297,9 @@ class PrestwickAirportService {
   }
 
   /**
-   * Handle aircraft state transitions
+   * Handle aircraft state transition and trigger events
    */
-  handleStateTransition(icao24, previousState, newState, aircraftData) {
+  async handleStateTransition(icao24, previousState, newState, aircraftData) {
     const event = {
       id: `prestwick-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       type: `aircraft:${newState}`,
@@ -339,6 +353,42 @@ class PrestwickAirportService {
       altitude: aircraftData.altitude,
       speed: aircraftData.speed
     });
+
+    // Check for NOTAMs and send Telegram notifications
+    if (this.notamConnector && this.notamConfig.enabled) {
+      try {
+        const aircraftPosition = {
+          lat: aircraftData.latitude,
+          lon: aircraftData.longitude
+        };
+        
+        const notamAlerts = await this.getNotamAlerts(aircraftPosition, newState);
+        
+        if (notamAlerts.length > 0) {
+          this.logger.info(`Found ${notamAlerts.length} NOTAM alerts for ${newState} operation`);
+          
+          // Send Telegram notifications for each NOTAM alert
+          for (const alert of notamAlerts) {
+            // Emit event for NOTAM alert
+            if (this.eventCallbacks['notam:alert']) {
+              this.eventCallbacks['notam:alert'].forEach(callback => {
+                try {
+                  callback({
+                    ...event,
+                    type: 'notam:alert',
+                    data: { ...event.data, notamAlert: alert }
+                  });
+                } catch (error) {
+                  this.logger.error('Error in NOTAM alert callback', { error: error.message });
+                }
+              });
+            }
+          }
+        }
+      } catch (error) {
+        this.logger.error('Error checking NOTAMs during state transition', { error: error.message });
+      }
+    }
 
     // Trigger callbacks
     if (this.eventCallbacks[newState]) {
@@ -426,8 +476,218 @@ class PrestwickAirportService {
       totalLandings: 0,
       totalTakeoffs: 0,
       totalDepartures: 0,
+      notamQueries: 0,
+      notamAlerts: 0,
       lastUpdate: new Date().toISOString()
     };
+  }
+
+  /**
+   * Set NOTAM connector reference
+   */
+  setNotamConnector(notamConnector) {
+    this.notamConnector = notamConnector;
+    this.logger.info('NOTAM connector integrated with Prestwick service');
+  }
+
+  /**
+   * Query NOTAMs related to Prestwick Airport
+   */
+  async queryNotams(radius = 50, category = null, priority = null, aircraftPosition = null) {
+    if (!this.notamConnector) {
+      this.logger.warn('NOTAM connector not available');
+      return [];
+    }
+
+    try {
+      this.stats.notamQueries++;
+      
+      // Use aircraft position if provided, otherwise use airport position
+      const searchPosition = aircraftPosition || {
+        lat: this.config.latitude,
+        lon: this.config.longitude
+      };
+
+      // Get all NOTAMs from the connector
+      const allNotams = this.notamConnector.getNOTAMs();
+      
+      // Filter NOTAMs by distance and add distance information
+      const nearbyNotams = allNotams.filter(notam => {
+        if (!notam.position || !notam.position.lat || !notam.position.lon) {
+          return false;
+        }
+        
+        const distance = this.calculateDistance(
+          searchPosition.lat, searchPosition.lon,
+          notam.position.lat, notam.position.lon
+        ) / 1000; // Convert to km
+        
+        notam.distance = distance;
+        return distance <= radius;
+      });
+
+      // Filter by category if specified
+      let filteredNotams = nearbyNotams;
+      if (category && category !== 'all') {
+        filteredNotams = filteredNotams.filter(notam => notam.category === category);
+      }
+
+      // Filter by priority if specified
+      if (priority && priority !== 'all') {
+        filteredNotams = filteredNotams.filter(notam => notam.priority === priority);
+      }
+
+      // Sort by distance
+      filteredNotams.sort((a, b) => a.distance - b.distance);
+
+      this.logger.info(`Found ${filteredNotams.length} NOTAMs within ${radius}km of Prestwick`);
+      return filteredNotams;
+
+    } catch (error) {
+      this.logger.error('Error querying NOTAMs', { error: error.message });
+      return [];
+    }
+  }
+
+  /**
+   * Check specific NOTAM details
+   */
+  async checkNotam(notamId) {
+    if (!this.notamConnector) {
+      this.logger.warn('NOTAM connector not available');
+      return null;
+    }
+
+    try {
+      const notam = await this.notamConnector.executeCapability(
+        'notam:tracking',
+        'get',
+        { notamId }
+      );
+
+      if (notam) {
+        this.logger.info(`Retrieved NOTAM details for ${notamId}`);
+        return notam;
+      } else {
+        this.logger.warn(`NOTAM ${notamId} not found`);
+        return null;
+      }
+
+    } catch (error) {
+      this.logger.error('Error checking NOTAM', { error: error.message, notamId });
+      return null;
+    }
+  }
+
+  /**
+   * Get NOTAM alerts for aircraft operations
+   */
+  async getNotamAlerts(aircraftPosition, operationType = 'approach') {
+    if (!this.notamConnector || !this.notamConfig.enabled) {
+      return [];
+    }
+
+    try {
+      // Check if we should check NOTAMs for this operation type
+      const shouldCheck = this.shouldCheckNotamsForOperation(operationType);
+      if (!shouldCheck) {
+        return [];
+      }
+
+      // Query NOTAMs around the aircraft position
+      const nearbyNotams = await this.queryNotams(
+        this.notamConfig.searchRadius,
+        null,
+        this.notamConfig.priorityThreshold,
+        aircraftPosition
+      );
+
+      // Filter NOTAMs that are relevant to the operation
+      const relevantNotams = this.filterRelevantNotams(nearbyNotams, operationType);
+
+      if (relevantNotams.length > 0) {
+        this.stats.notamAlerts++;
+        this.logger.info(`Found ${relevantNotams.length} relevant NOTAMs for ${operationType} operation`);
+        
+        // Generate alerts
+        const alerts = relevantNotams.map(notam => ({
+          type: 'notam:alert',
+          notamId: notam.id,
+          notamNumber: notam.notamNumber,
+          title: notam.title,
+          description: notam.description,
+          priority: notam.priority,
+          category: notam.category,
+          distance: notam.distance,
+          operationType,
+          aircraftPosition,
+          timestamp: new Date().toISOString()
+        }));
+
+        return alerts;
+      }
+
+      return [];
+
+    } catch (error) {
+      this.logger.error('Error getting NOTAM alerts', { error: error.message });
+      return [];
+    }
+  }
+
+  /**
+   * Check if NOTAMs should be checked for a specific operation
+   */
+  shouldCheckNotamsForOperation(operationType) {
+    switch (operationType) {
+      case 'approach':
+        return this.notamConfig.checkOnApproach;
+      case 'landing':
+        return this.notamConfig.checkOnLanding;
+      case 'takeoff':
+        return this.notamConfig.checkOnTakeoff;
+      default:
+        return false;
+    }
+  }
+
+  /**
+   * Filter NOTAMs that are relevant to the aircraft operation
+   */
+  filterRelevantNotams(notams, operationType) {
+    return notams.filter(notam => {
+      // Check if NOTAM is active
+      const now = new Date();
+      if (notam.endTime && now > notam.endTime) {
+        return false;
+      }
+      if (notam.startTime && now < notam.startTime) {
+        return false;
+      }
+
+      // Check if NOTAM is relevant to the operation
+      const relevantCategories = this.getRelevantCategories(operationType);
+      if (relevantCategories.length > 0 && !relevantCategories.includes(notam.category)) {
+        return false;
+      }
+
+      return true;
+    });
+  }
+
+  /**
+   * Get relevant NOTAM categories for an operation
+   */
+  getRelevantCategories(operationType) {
+    switch (operationType) {
+      case 'approach':
+      case 'landing':
+        return ['runway', 'approach', 'landing', 'airport', 'navigation'];
+      case 'takeoff':
+        return ['runway', 'takeoff', 'airport', 'navigation'];
+      default:
+        return [];
+    }
   }
 }
 

@@ -14,7 +14,7 @@ class ConnectorRegistry extends EventEmitter {
     super();
     
     // Store logger
-    this.logger = logger;
+    this.logger = logger || console;
     
     // Connector type registry
     this.connectorTypes = new Map();
@@ -172,6 +172,11 @@ class ConnectorRegistry extends EventEmitter {
     
     if (this.connectors.has(connector.id)) {
       throw new Error(`Connector with ID '${connector.id}' already exists`);
+    }
+    
+    // Ensure connector has a logger
+    if (!connector.logger) {
+      connector.logger = this.logger;
     }
     
     this.connectors.set(connector.id, connector);

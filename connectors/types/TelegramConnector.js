@@ -17,9 +17,22 @@ class TelegramConnector extends BaseConnector {
     // Connection mode (polling or webhook)
     this.mode = this.config.mode || 'polling';
     
+    // Default chat ID and chat info
+    this.defaultChatId = this.config.defaultChatId;
+    this.chatInfo = this.config.chatInfo || {};
+    
+    // Message settings
+    this.messageSettings = {
+      parseMode: 'HTML',
+      disableWebPagePreview: true,
+      disableNotification: false,
+      ...this.config.messageSettings
+    };
+    
     // Message history
     this.messageHistory = new Map();
-    this.maxHistorySize = 1000;
+    this.maxHistorySize = this.config.maxHistorySize || 1000;
+    this.enableMessageHistory = this.config.enableMessageHistory !== false;
     
     // Chat tracking
     this.activeChats = new Map();
@@ -46,6 +59,24 @@ class TelegramConnector extends BaseConnector {
   }
   
   /**
+   * Check if bot is already running
+   */
+  async checkBotStatus() {
+    try {
+      const response = await fetch(`https://api.telegram.org/bot${this.config.token}/getMe`);
+      const data = await response.json();
+      
+      if (data.ok) {
+        return { running: true, bot: data.result };
+      } else {
+        return { running: false, error: data.description };
+      }
+    } catch (error) {
+      return { running: false, error: error.message };
+    }
+  }
+  
+  /**
    * Perform connection to Telegram Bot API
    */
   async performConnect() {
@@ -56,6 +87,12 @@ class TelegramConnector extends BaseConnector {
     }
     
     try {
+      // Check if bot is already running
+      const status = await this.checkBotStatus();
+      if (!status.running) {
+        throw new Error(`Bot is not available: ${status.error}`);
+      }
+      
       if (this.mode === 'webhook') {
         await this.connectWebhook();
       } else {
@@ -81,6 +118,13 @@ class TelegramConnector extends BaseConnector {
     const options = {
       webHook: {
         port: this.webhookPort
+      },
+      // Add SSL configuration to handle self-signed certificates
+      request: {
+        // Disable SSL certificate verification to handle self-signed certificates
+        rejectUnauthorized: false,
+        // Alternative approach - ignore SSL errors
+        strictSSL: false
       }
     };
     
@@ -90,9 +134,16 @@ class TelegramConnector extends BaseConnector {
     
     this.bot = new TelegramBot(this.config.token, options);
     
-    // Set up webhook
-    if (this.webhookUrl) {
-      await this.bot.setWebHook(this.webhookUrl);
+    // Set up webhook with better error handling
+    try {
+      if (this.webhookUrl) {
+        await this.bot.setWebHook(this.webhookUrl);
+      }
+    } catch (error) {
+      if (error.response && error.response.body && error.response.body.error_code === 409) {
+        throw new Error(`ETELEGRAM: 409 Conflict: Another instance of this Telegram bot is already running. Please stop other instances or use a different bot token. Original error: ${error.response.body.description}`);
+      }
+      throw error;
     }
     
     this.setupEventHandlers();
@@ -107,6 +158,13 @@ class TelegramConnector extends BaseConnector {
         interval: this.pollingInterval,
         timeout: this.pollingTimeout,
         autoStart: false
+      },
+      // Add SSL configuration to handle self-signed certificates
+      request: {
+        // Disable SSL certificate verification to handle self-signed certificates
+        rejectUnauthorized: false,
+        // Alternative approach - ignore SSL errors
+        strictSSL: false
       }
     };
     
@@ -114,8 +172,15 @@ class TelegramConnector extends BaseConnector {
     
     this.setupEventHandlers();
     
-    // Start polling
-    await this.bot.startPolling();
+    // Start polling with better error handling
+    try {
+      await this.bot.startPolling();
+    } catch (error) {
+      if (error.response && error.response.body && error.response.body.error_code === 409) {
+        throw new Error(`ETELEGRAM: 409 Conflict: Another instance of this Telegram bot is already running. Please stop other instances or use a different bot token. Original error: ${error.response.body.description}`);
+      }
+      throw error;
+    }
   }
   
   /**
@@ -187,6 +252,9 @@ class TelegramConnector extends BaseConnector {
       
       case 'telegram:webhook':
         return this.executeWebhookOperations(operation, parameters);
+      
+      case 'telegram:default':
+        return this.executeDefaultChatOperations(operation, parameters);
       
       default:
         throw new Error(`Unknown capability: ${capabilityId}`);
@@ -305,25 +373,68 @@ class TelegramConnector extends BaseConnector {
   }
   
   /**
+   * Execute default chat operations
+   */
+  async executeDefaultChatOperations(operation, parameters) {
+    switch (operation) {
+      case 'info':
+        return this.getDefaultChatInfo();
+      
+      case 'send':
+        return this.sendToDefaultChat(parameters.text, parameters);
+      
+      case 'receive':
+        return this.getMessageHistory(this.defaultChatId);
+      
+      default:
+        throw new Error(`Unknown default chat operation: ${operation}`);
+    }
+  }
+  
+  /**
    * Send text message
    */
   async sendTextMessage(parameters) {
     const { chatId, text, parseMode, disableWebPagePreview, disableNotification, replyToMessageId } = parameters;
     
-    if (!chatId || !text) {
-      throw new Error('chatId and text are required');
+    // Use default chat ID if not provided
+    const targetChatId = chatId || this.defaultChatId;
+    
+    if (!targetChatId || !text) {
+      throw new Error('chatId (or defaultChatId) and text are required');
     }
     
     const options = {
-      parse_mode: parseMode,
-      disable_web_page_preview: disableWebPagePreview,
-      disable_notification: disableNotification,
+      parse_mode: parseMode || this.messageSettings.parseMode,
+      disable_web_page_preview: disableWebPagePreview !== undefined ? disableWebPagePreview : this.messageSettings.disableWebPagePreview,
+      disable_notification: disableNotification !== undefined ? disableNotification : this.messageSettings.disableNotification,
       reply_to_message_id: replyToMessageId
     };
     
     try {
-      const result = await this.bot.sendMessage(chatId, text, options);
-      this.storeMessageInHistory(result);
+      const result = await this.bot.sendMessage(targetChatId, text, options);
+      
+      // Store message in history if enabled
+      if (this.enableMessageHistory) {
+        this.storeMessageInHistory(result);
+      }
+      
+      // Emit event when message is sent successfully
+      if (this.eventBus) {
+        this.eventBus.publishEvent('telegram:message:sent', {
+          source: this.id,
+          data: {
+            chatId: targetChatId,
+            messageId: result.message_id,
+            text: text,
+            chat: result.chat,
+            date: result.date,
+            timestamp: Date.now()
+          },
+          timestamp: Date.now()
+        });
+      }
+      
       return result;
     } catch (error) {
       console.error('Error sending text message:', error);
@@ -351,6 +462,24 @@ class TelegramConnector extends BaseConnector {
     try {
       const result = await this.bot.sendPhoto(chatId, photo, options);
       this.storeMessageInHistory(result);
+      
+      // Emit event when photo is sent successfully
+      if (this.eventBus) {
+        this.eventBus.publishEvent('telegram:message:sent', {
+          source: this.id,
+          data: {
+            chatId: chatId,
+            messageId: result.message_id,
+            type: 'photo',
+            caption: caption,
+            chat: result.chat,
+            date: result.date,
+            timestamp: Date.now()
+          },
+          timestamp: Date.now()
+        });
+      }
+      
       return result;
     } catch (error) {
       console.error('Error sending photo:', error);
@@ -919,6 +1048,13 @@ class TelegramConnector extends BaseConnector {
         description: 'Manage webhook configuration',
         operations: ['set', 'delete', 'info'],
         requiresConnection: true
+      },
+      {
+        id: 'telegram:default',
+        name: 'Default Chat Operations',
+        description: 'Perform operations on the default chat',
+        operations: ['info', 'send', 'receive'],
+        requiresConnection: true
       }
     ];
   }
@@ -927,15 +1063,18 @@ class TelegramConnector extends BaseConnector {
    * Validate configuration
    */
   static validateConfig(config) {
-    if (!config.token) {
+    // The config parameter is the full connector config, so we need to access config.config.token
+    const connectorConfig = config.config || config;
+    
+    if (!connectorConfig.token) {
       throw new Error('Bot token is required');
     }
     
-    if (config.mode && !['polling', 'webhook'].includes(config.mode)) {
+    if (connectorConfig.mode && !['polling', 'webhook'].includes(connectorConfig.mode)) {
       throw new Error('Mode must be either "polling" or "webhook"');
     }
     
-    if (config.mode === 'webhook' && !config.webhookUrl) {
+    if (connectorConfig.mode === 'webhook' && !connectorConfig.webhookUrl) {
       throw new Error('Webhook URL is required for webhook mode');
     }
   }
@@ -966,6 +1105,30 @@ class TelegramConnector extends BaseConnector {
         maxReconnectAttempts: { type: 'number', default: 5, description: 'Maximum reconnection attempts' }
       }
     };
+  }
+  
+  /**
+   * Send message to default chat
+   */
+  async sendToDefaultChat(text, options = {}) {
+    return this.sendTextMessage({
+      text,
+      ...options
+    });
+  }
+
+  /**
+   * Get default chat information
+   */
+  getDefaultChatInfo() {
+    return this.chatInfo;
+  }
+
+  /**
+   * Get default chat ID
+   */
+  getDefaultChatId() {
+    return this.defaultChatId;
   }
 }
 

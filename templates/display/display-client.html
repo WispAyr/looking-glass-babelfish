@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Display Client - {{displayId}}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #000;
+            color: #fff;
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        .display-container {
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+            background: #000;
+        }
+
+        .status-bar {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 30px;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 10px;
+            font-size: 12px;
+            z-index: 1000;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .connection-status {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #ff0000;
+        }
+
+        .connection-status.connected {
+            background: #00ff00;
+        }
+
+        .content-area {
+            width: 100%;
+            height: 100%;
+            padding-top: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(12, 1fr);
+            grid-template-rows: repeat(6, 1fr);
+            gap: 10px;
+            width: 100%;
+            height: 100%;
+            padding: 10px;
+        }
+
+        .component {
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 5px;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            min-height: 100px;
+        }
+
+        .component.map {
+            background: linear-gradient(45deg, #1a1a1a, #2a2a2a);
+        }
+
+        .component.radar {
+            background: linear-gradient(45deg, #1a1a1a, #1a2a1a);
+        }
+
+        .component.alarms {
+            background: linear-gradient(45deg, #2a1a1a, #1a1a2a);
+        }
+
+        .component.status {
+            background: linear-gradient(45deg, #1a2a1a, #2a1a1a);
+        }
+
+        .component.weather {
+            background: linear-gradient(45deg, #1a1a2a, #2a2a1a);
+        }
+
+        .emergency-mode {
+            background: #ff0000 !important;
+            color: #fff;
+            animation: emergency-pulse 1s infinite;
+        }
+
+        @keyframes emergency-pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        .privacy-mode {
+            background: #000 !important;
+            color: #000;
+        }
+
+        .privacy-mode::after {
+            content: "PRIVACY MODE";
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #fff;
+            font-size: 24px;
+            font-weight: bold;
+        }
+
+        .blackout-mode {
+            background: #000 !important;
+            color: #000;
+        }
+
+        .blackout-mode::after {
+            content: "BLACKOUT";
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #fff;
+            font-size: 24px;
+            font-weight: bold;
+        }
+
+        .notification {
+            position: fixed;
+            top: 50px;
+            right: 20px;
+            background: #333;
+            color: #fff;
+            padding: 15px;
+            border-radius: 5px;
+            border-left: 4px solid #00ff00;
+            max-width: 300px;
+            z-index: 1001;
+            animation: slide-in 0.3s ease-out;
+        }
+
+        @keyframes slide-in {
+            from { transform: translateX(100%); }
+            to { transform: translateX(0); }
+        }
+
+        .notification.error {
+            border-left-color: #ff0000;
+        }
+
+        .notification.warning {
+            border-left-color: #ffff00;
+        }
+
+        .notification.critical {
+            border-left-color: #ff0000;
+            background: #ff0000;
+        }
+
+        .loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            gap: 20px;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #333;
+            border-top: 4px solid #00ff00;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="display-container" id="displayContainer">
+        <div class="status-bar">
+            <div class="status-indicator">
+                <div class="connection-status" id="connectionStatus"></div>
+                <span id="displayId">Display: {{displayId}}</span>
+            </div>
+            <div class="status-indicator">
+                <span id="statusText">Connecting...</span>
+                <span id="timestamp"></span>
+            </div>
+        </div>
+
+        <div class="content-area" id="contentArea">
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <div>Connecting to Display Manager...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class DisplayClient {
+            constructor() {
+                this.displayId = '{{displayId}}';
+                this.ws = null;
+                this.reconnectAttempts = 0;
+                this.maxReconnectAttempts = 5;
+                this.reconnectDelay = 1000;
+                this.displayInfo = null;
+                this.content = null;
+                
+                this.init();
+            }
+
+            init() {
+                this.updateTimestamp();
+                setInterval(() => this.updateTimestamp(), 1000);
+                this.connect();
+            }
+
+            updateTimestamp() {
+                const now = new Date();
+                document.getElementById('timestamp').textContent = now.toLocaleTimeString();
+            }
+
+            connect() {
+                const wsUrl = `ws://localhost:3002/display/${this.displayId}`;
+                console.log(`Connecting to: ${wsUrl}`);
+                
+                this.ws = new WebSocket(wsUrl);
+                
+                this.ws.onopen = () => {
+                    console.log('WebSocket connected');
+                    this.reconnectAttempts = 0;
+                    this.updateConnectionStatus(true);
+                    this.updateStatus('Connected');
+                    this.hideLoading();
+                };
+                
+                this.ws.onmessage = (event) => {
+                    try {
+                        const message = JSON.parse(event.data);
+                        this.handleMessage(message);
+                    } catch (error) {
+                        console.error('Error parsing message:', error);
+                    }
+                };
+                
+                this.ws.onclose = () => {
+                    console.log('WebSocket disconnected');
+                    this.updateConnectionStatus(false);
+                    this.updateStatus('Disconnected');
+                    this.showLoading('Connection lost. Reconnecting...');
+                    this.scheduleReconnect();
+                };
+                
+                this.ws.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    this.showNotification('Connection error', 'error');
+                };
+            }
+
+            handleMessage(message) {
+                console.log('Received message:', message);
+                
+                switch (message.type) {
+                    case 'display:info':
+                        this.displayInfo = message.data;
+                        this.renderDisplay();
+                        break;
+                        
+                    case 'content:updated':
+                        this.content = message.data;
+                        this.renderContent();
+                        break;
+                        
+                    case 'display:activated':
+                        this.updateStatus('Active');
+                        this.showNotification('Display activated', 'info');
+                        break;
+                        
+                    case 'display:deactivated':
+                        this.updateStatus('Inactive');
+                        this.showNotification('Display deactivated', 'warning');
+                        break;
+                        
+                    case 'display:blackout':
+                        this.activateBlackoutMode(message.data.reason);
+                        break;
+                        
+                    case 'privacy:enabled':
+                        this.activatePrivacyMode(message.data.duration);
+                        break;
+                        
+                    case 'privacy:disabled':
+                        this.deactivatePrivacyMode();
+                        break;
+                        
+                    case 'alarm:triggered':
+                        this.handleAlarm(message.data);
+                        break;
+                        
+                    default:
+                        console.log('Unknown message type:', message.type);
+                }
+            }
+
+            renderDisplay() {
+                if (this.displayInfo) {
+                    document.getElementById('displayId').textContent = `Display: ${this.displayInfo.name}`;
+                    this.updateStatus(this.displayInfo.status);
+                }
+            }
+
+            renderContent() {
+                if (!this.content) return;
+                
+                const contentArea = document.getElementById('contentArea');
+                contentArea.innerHTML = '';
+                
+                switch (this.content.type) {
+                    case 'template':
+                        this.renderTemplate(this.content);
+                        break;
+                    case 'view':
+                        this.renderView(this.content);
+                        break;
+                    default:
+                        this.renderDefaultContent();
+                }
+            }
+
+            renderTemplate(content) {
+                const contentArea = document.getElementById('contentArea');
+                
+                if (content.content.type === 'dashboard') {
+                    this.renderDashboard(content.content);
+                } else if (content.content.type === 'emergency') {
+                    this.renderEmergency(content.content);
+                } else {
+                    this.renderDefaultContent();
+                }
+            }
+
+            renderDashboard(dashboard) {
+                const contentArea = document.getElementById('contentArea');
+                const grid = document.createElement('div');
+                grid.className = 'dashboard-grid';
+                
+                if (dashboard.components) {
+                    dashboard.components.forEach(component => {
+                        const comp = document.createElement('div');
+                        comp.className = `component ${component.type}`;
+                        comp.style.gridColumn = `${component.position.x + 1} / span ${component.position.width}`;
+                        comp.style.gridRow = `${component.position.y + 1} / span ${component.position.height}`;
+                        
+                        comp.innerHTML = `
+                            <h3>${component.type.toUpperCase()}</h3>
+                            <p>${component.id}</p>
+                        `;
+                        
+                        grid.appendChild(comp);
+                    });
+                }
+                
+                contentArea.appendChild(grid);
+            }
+
+            renderEmergency(emergency) {
+                const contentArea = document.getElementById('contentArea');
+                contentArea.className = 'content-area emergency-mode';
+                
+                const alert = document.createElement('div');
+                alert.style.cssText = `
+                    text-align: center;
+                    font-size: 48px;
+                    font-weight: bold;
+                    color: #fff;
+                `;
+                alert.textContent = 'EMERGENCY MODE';
+                
+                contentArea.appendChild(alert);
+            }
+
+            renderDefaultContent() {
+                const contentArea = document.getElementById('contentArea');
+                contentArea.innerHTML = `
+                    <div style="text-align: center; font-size: 24px;">
+                        <h1>Display Ready</h1>
+                        <p>Waiting for content...</p>
+                    </div>
+                `;
+            }
+
+            handleAlarm(alarmData) {
+                this.showNotification(
+                    `ALARM: ${alarmData.message}`,
+                    alarmData.priority === 'critical' ? 'critical' : 'warning'
+                );
+                
+                if (alarmData.priority === 'critical') {
+                    this.activateEmergencyMode();
+                }
+            }
+
+            activateBlackoutMode(reason) {
+                const container = document.getElementById('displayContainer');
+                container.className = 'display-container blackout-mode';
+                this.showNotification(`Blackout activated: ${reason}`, 'error');
+            }
+
+            activatePrivacyMode(duration) {
+                const container = document.getElementById('displayContainer');
+                container.className = 'display-container privacy-mode';
+                this.showNotification('Privacy mode activated', 'warning');
+                
+                if (duration) {
+                    setTimeout(() => {
+                        this.deactivatePrivacyMode();
+                    }, duration);
+                }
+            }
+
+            deactivatePrivacyMode() {
+                const container = document.getElementById('displayContainer');
+                container.className = 'display-container';
+                this.showNotification('Privacy mode deactivated', 'info');
+            }
+
+            activateEmergencyMode() {
+                const container = document.getElementById('displayContainer');
+                container.className = 'display-container emergency-mode';
+            }
+
+            updateConnectionStatus(connected) {
+                const status = document.getElementById('connectionStatus');
+                status.className = connected ? 'connection-status connected' : 'connection-status';
+            }
+
+            updateStatus(status) {
+                document.getElementById('statusText').textContent = status;
+            }
+
+            showLoading(message = 'Loading...') {
+                const contentArea = document.getElementById('contentArea');
+                contentArea.innerHTML = `
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        <div>${message}</div>
+                    </div>
+                `;
+            }
+
+            hideLoading() {
+                const loading = document.getElementById('loading');
+                if (loading) {
+                    loading.style.display = 'none';
+                }
+            }
+
+            showNotification(message, type = 'info') {
+                const notification = document.createElement('div');
+                notification.className = `notification ${type}`;
+                notification.textContent = message;
+                
+                document.body.appendChild(notification);
+                
+                setTimeout(() => {
+                    notification.remove();
+                }, 5000);
+            }
+
+            scheduleReconnect() {
+                if (this.reconnectAttempts < this.maxReconnectAttempts) {
+                    this.reconnectAttempts++;
+                    setTimeout(() => {
+                        this.connect();
+                    }, this.reconnectDelay * this.reconnectAttempts);
+                } else {
+                    this.updateStatus('Connection failed');
+                    this.showNotification('Max reconnection attempts reached', 'error');
+                }
+            }
+        }
+
+        // Initialize the display client when the page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            new DisplayClient();
+        });
+    </script>
+</body>
+</html> 

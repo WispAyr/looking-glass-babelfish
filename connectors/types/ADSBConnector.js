@@ -149,6 +149,18 @@ class ADSBConnector extends BaseConnector {
     this.airspaceEvents = [];
     this.emergencyEvents = [];
     this.aircraftSquawkContext = new Map();
+    
+    // Airspace awareness
+    this.enableAirspaceAwareness = config.enableAirspaceAwareness !== false;
+    this.airspaceService = null;
+    this.aircraftAirspaceContext = new Map();
+    
+    // Ground event detection
+    this.enableGroundEventDetection = config.enableGroundEventDetection !== false;
+    
+    // Squawk code analysis
+    this.enableSquawkCodeAnalysis = config.enableSquawkCodeAnalysis !== false;
+    this.squawkCodeService = null;
   }
 
   /**
@@ -1921,6 +1933,41 @@ class ADSBConnector extends BaseConnector {
               error: error.message,
               airspaceServiceAvailable: !!this.airspaceService,
               enableAirspaceAwareness: this.enableAirspaceAwareness
+            });
+          }
+        }
+        
+        // Process ground events for aircraft on the ground
+        if (this.enableGroundEventDetection && aircraft.lat && aircraft.lon && aircraft.altitude) {
+          try {
+            // Check if aircraft is on ground and generate appropriate events
+            if (this.isAircraftOnGround(aircraft)) {
+              // Get current airspace context for the aircraft
+              const airspaceContext = this.aircraftAirspaceContext.get(icao24);
+              const currentAirspace = airspaceContext?.current?.[0] || null;
+              
+              // Generate ground movement event
+              this.generateGroundMovementEvent(aircraft, currentAirspace);
+              
+              // Generate helicopter specific events
+              if (this.isHelicopter(aircraft)) {
+                this.generateHelicopterEvent(aircraft, currentAirspace);
+              }
+              
+              // Generate taxi events
+              if (this.isAircraftTaxiing(aircraft)) {
+                this.generateTaxiEvent(aircraft, currentAirspace);
+              }
+              
+              // Generate parking events
+              if (this.isAircraftParked(aircraft)) {
+                this.generateParkingEvent(aircraft, currentAirspace);
+              }
+            }
+          } catch (error) {
+            this.logger.debug('Failed to process ground events for aircraft', { 
+              icao24, 
+              error: error.message 
             });
           }
         }

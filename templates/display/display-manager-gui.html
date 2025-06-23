@@ -1,0 +1,1037 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Display Manager - Drag & Drop Interface</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1a1a1a;
+            color: #fff;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .app-container {
+            display: flex;
+            height: 100vh;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 300px;
+            background: #2a2a2a;
+            border-right: 1px solid #444;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar-header {
+            padding: 20px;
+            border-bottom: 1px solid #444;
+            background: #333;
+        }
+
+        .sidebar-header h2 {
+            margin-bottom: 10px;
+            color: #00ff00;
+        }
+
+        .sidebar-section {
+            padding: 15px;
+            border-bottom: 1px solid #444;
+        }
+
+        .sidebar-section h3 {
+            margin-bottom: 10px;
+            color: #00ff00;
+            font-size: 14px;
+            text-transform: uppercase;
+        }
+
+        /* Component Palette */
+        .component-palette {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .component-item {
+            background: #3a3a3a;
+            border: 2px solid #555;
+            border-radius: 5px;
+            padding: 10px;
+            text-align: center;
+            cursor: grab;
+            transition: all 0.2s;
+            user-select: none;
+        }
+
+        .component-item:hover {
+            border-color: #00ff00;
+            background: #4a4a4a;
+        }
+
+        .component-item:active {
+            cursor: grabbing;
+        }
+
+        .component-item.dragging {
+            opacity: 0.5;
+        }
+
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .toolbar {
+            background: #333;
+            padding: 15px;
+            border-bottom: 1px solid #444;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .toolbar-left {
+            display: flex;
+            gap: 10px;
+        }
+
+        .toolbar-right {
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn {
+            background: #555;
+            color: #fff;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .btn:hover {
+            background: #666;
+        }
+
+        .btn.primary {
+            background: #00ff00;
+            color: #000;
+        }
+
+        .btn.primary:hover {
+            background: #00cc00;
+        }
+
+        .btn.danger {
+            background: #ff4444;
+        }
+
+        .btn.danger:hover {
+            background: #cc3333;
+        }
+
+        /* Canvas Area */
+        .canvas-container {
+            flex: 1;
+            padding: 20px;
+            overflow: auto;
+        }
+
+        .canvas {
+            background: #2a2a2a;
+            border: 2px dashed #555;
+            border-radius: 8px;
+            min-height: 600px;
+            position: relative;
+            display: grid;
+            grid-template-columns: repeat(12, 1fr);
+            grid-template-rows: repeat(6, 1fr);
+            gap: 5px;
+            padding: 10px;
+        }
+
+        .canvas.drop-zone {
+            border-color: #00ff00;
+            background: #2a2a2a;
+        }
+
+        /* Grid Lines */
+        .grid-line {
+            position: absolute;
+            background: #444;
+            pointer-events: none;
+        }
+
+        .grid-line.vertical {
+            width: 1px;
+            height: 100%;
+        }
+
+        .grid-line.horizontal {
+            height: 1px;
+            width: 100%;
+        }
+
+        /* Dropped Components */
+        .dropped-component {
+            background: #4a4a4a;
+            border: 2px solid #666;
+            border-radius: 5px;
+            padding: 10px;
+            position: relative;
+            cursor: move;
+            transition: all 0.2s;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            min-height: 80px;
+        }
+
+        .dropped-component:hover {
+            border-color: #00ff00;
+            background: #5a5a5a;
+        }
+
+        .dropped-component.selected {
+            border-color: #00ff00;
+            background: #5a5a5a;
+            box-shadow: 0 0 10px rgba(0, 255, 0, 0.3);
+        }
+
+        .component-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            width: 100%;
+            margin-bottom: 5px;
+        }
+
+        .component-title {
+            font-size: 12px;
+            font-weight: bold;
+            color: #00ff00;
+        }
+
+        .component-remove {
+            background: #ff4444;
+            color: #fff;
+            border: none;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .component-remove:hover {
+            background: #cc3333;
+        }
+
+        /* Properties Panel */
+        .properties-panel {
+            width: 300px;
+            background: #2a2a2a;
+            border-left: 1px solid #444;
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        .properties-panel h3 {
+            margin-bottom: 15px;
+            color: #00ff00;
+        }
+
+        .property-group {
+            margin-bottom: 15px;
+        }
+
+        .property-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 12px;
+            color: #ccc;
+        }
+
+        .property-group input,
+        .property-group select {
+            width: 100%;
+            padding: 8px;
+            background: #3a3a3a;
+            border: 1px solid #555;
+            border-radius: 4px;
+            color: #fff;
+            font-size: 12px;
+        }
+
+        .property-group input:focus,
+        .property-group select:focus {
+            outline: none;
+            border-color: #00ff00;
+        }
+
+        /* Display List */
+        .display-list {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .display-item {
+            background: #3a3a3a;
+            border: 1px solid #555;
+            border-radius: 4px;
+            padding: 8px;
+            margin-bottom: 5px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .display-item:hover {
+            background: #4a4a4a;
+            border-color: #00ff00;
+        }
+
+        .display-item.selected {
+            background: #00ff00;
+            color: #000;
+        }
+
+        /* Status Bar */
+        .status-bar {
+            background: #333;
+            padding: 10px 20px;
+            border-top: 1px solid #444;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 12px;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .connection-status {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #ff0000;
+        }
+
+        .connection-status.connected {
+            background: #00ff00;
+        }
+
+        /* Modal */
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .modal.show {
+            display: flex;
+        }
+
+        .modal-content {
+            background: #2a2a2a;
+            border: 1px solid #555;
+            border-radius: 8px;
+            padding: 20px;
+            min-width: 400px;
+            max-width: 600px;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            color: #fff;
+            font-size: 20px;
+            cursor: pointer;
+        }
+
+        /* Responsive */
+        @media (max-width: 1200px) {
+            .sidebar,
+            .properties-panel {
+                width: 250px;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .app-container {
+                flex-direction: column;
+            }
+            
+            .sidebar,
+            .properties-panel {
+                width: 100%;
+                height: auto;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <h2>Display Manager</h2>
+                <div class="status-indicator">
+                    <div class="connection-status" id="connectionStatus"></div>
+                    <span id="connectionText">Connecting...</span>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <h3>Components</h3>
+                <div class="component-palette" id="componentPalette">
+                    <div class="component-item" draggable="true" data-type="map">
+                        <div>🗺️</div>
+                        <div>Map</div>
+                    </div>
+                    <div class="component-item" draggable="true" data-type="radar">
+                        <div>📡</div>
+                        <div>Radar</div>
+                    </div>
+                    <div class="component-item" draggable="true" data-type="alarms">
+                        <div>🚨</div>
+                        <div>Alarms</div>
+                    </div>
+                    <div class="component-item" draggable="true" data-type="status">
+                        <div>📊</div>
+                        <div>Status</div>
+                    </div>
+                    <div class="component-item" draggable="true" data-type="weather">
+                        <div>🌤️</div>
+                        <div>Weather</div>
+                    </div>
+                    <div class="component-item" draggable="true" data-type="camera">
+                        <div>📹</div>
+                        <div>Camera</div>
+                    </div>
+                    <div class="component-item" draggable="true" data-type="chart">
+                        <div>📈</div>
+                        <div>Chart</div>
+                    </div>
+                    <div class="component-item" draggable="true" data-type="table">
+                        <div>📋</div>
+                        <div>Table</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <h3>Displays</h3>
+                <div class="display-list" id="displayList">
+                    <!-- Displays will be populated here -->
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <h3>Templates</h3>
+                <div id="templateList">
+                    <!-- Templates will be populated here -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <div class="toolbar">
+                <div class="toolbar-left">
+                    <button class="btn" id="newViewBtn">New View</button>
+                    <button class="btn" id="saveViewBtn">Save View</button>
+                    <button class="btn" id="loadViewBtn">Load View</button>
+                    <button class="btn" id="clearCanvasBtn">Clear</button>
+                </div>
+                <div class="toolbar-right">
+                    <button class="btn primary" id="applyViewBtn">Apply to Displays</button>
+                    <button class="btn" id="previewBtn">Preview</button>
+                </div>
+            </div>
+
+            <div class="canvas-container">
+                <div class="canvas" id="canvas">
+                    <!-- Grid lines will be added here -->
+                </div>
+            </div>
+
+            <div class="status-bar">
+                <div class="status-indicator">
+                    <span id="statusText">Ready</span>
+                </div>
+                <div class="status-indicator">
+                    <span id="gridInfo">Grid: 12x6</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Properties Panel -->
+        <div class="properties-panel">
+            <h3>Properties</h3>
+            <div id="propertiesContent">
+                <p>Select a component to edit its properties</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for saving/loading -->
+    <div class="modal" id="saveModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Save View</h3>
+                <button class="modal-close" onclick="closeModal('saveModal')">&times;</button>
+            </div>
+            <div class="property-group">
+                <label for="viewName">View Name:</label>
+                <input type="text" id="viewName" placeholder="Enter view name">
+            </div>
+            <div class="property-group">
+                <label for="viewDescription">Description:</label>
+                <input type="text" id="viewDescription" placeholder="Enter description">
+            </div>
+            <div style="text-align: right; margin-top: 20px;">
+                <button class="btn" onclick="closeModal('saveModal')">Cancel</button>
+                <button class="btn primary" onclick="saveView()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class DisplayManagerGUI {
+            constructor() {
+                this.canvas = document.getElementById('canvas');
+                this.componentPalette = document.getElementById('componentPalette');
+                this.displayList = document.getElementById('displayList');
+                this.templateList = document.getElementById('templateList');
+                this.propertiesContent = document.getElementById('propertiesContent');
+                this.connectionStatus = document.getElementById('connectionStatus');
+                this.connectionText = document.getElementById('connectionText');
+                this.statusText = document.getElementById('statusText');
+                
+                this.ws = null;
+                this.displays = new Map();
+                this.templates = new Map();
+                this.selectedComponent = null;
+                this.draggedComponent = null;
+                this.canvasData = [];
+                
+                this.init();
+            }
+
+            init() {
+                this.setupEventListeners();
+                this.setupGrid();
+                this.connect();
+                this.updateStatus('Ready');
+            }
+
+            setupEventListeners() {
+                // Component palette drag events
+                this.componentPalette.addEventListener('dragstart', (e) => {
+                    this.handleDragStart(e);
+                });
+
+                this.componentPalette.addEventListener('dragend', (e) => {
+                    this.handleDragEnd(e);
+                });
+
+                // Canvas drop events
+                this.canvas.addEventListener('dragover', (e) => {
+                    this.handleDragOver(e);
+                });
+
+                this.canvas.addEventListener('drop', (e) => {
+                    this.handleDrop(e);
+                });
+
+                this.canvas.addEventListener('dragenter', (e) => {
+                    this.handleDragEnter(e);
+                });
+
+                this.canvas.addEventListener('dragleave', (e) => {
+                    this.handleDragLeave(e);
+                });
+
+                // Button events
+                document.getElementById('newViewBtn').addEventListener('click', () => {
+                    this.newView();
+                });
+
+                document.getElementById('saveViewBtn').addEventListener('click', () => {
+                    this.showSaveModal();
+                });
+
+                document.getElementById('loadViewBtn').addEventListener('click', () => {
+                    this.loadView();
+                });
+
+                document.getElementById('clearCanvasBtn').addEventListener('click', () => {
+                    this.clearCanvas();
+                });
+
+                document.getElementById('applyViewBtn').addEventListener('click', () => {
+                    this.applyView();
+                });
+
+                document.getElementById('previewBtn').addEventListener('click', () => {
+                    this.previewView();
+                });
+            }
+
+            setupGrid() {
+                // Add grid lines
+                for (let i = 1; i < 12; i++) {
+                    const line = document.createElement('div');
+                    line.className = 'grid-line vertical';
+                    line.style.left = `${(i * 100) / 12}%`;
+                    this.canvas.appendChild(line);
+                }
+
+                for (let i = 1; i < 6; i++) {
+                    const line = document.createElement('div');
+                    line.className = 'grid-line horizontal';
+                    line.style.top = `${(i * 100) / 6}%`;
+                    this.canvas.appendChild(line);
+                }
+            }
+
+            connect() {
+                const wsUrl = 'ws://localhost:3002/manager';
+                this.ws = new WebSocket(wsUrl);
+
+                this.ws.onopen = () => {
+                    this.updateConnectionStatus(true);
+                    this.updateStatus('Connected to Display Manager');
+                    this.loadDisplays();
+                    this.loadTemplates();
+                };
+
+                this.ws.onmessage = (event) => {
+                    try {
+                        const message = JSON.parse(event.data);
+                        this.handleMessage(message);
+                    } catch (error) {
+                        console.error('Error parsing message:', error);
+                    }
+                };
+
+                this.ws.onclose = () => {
+                    this.updateConnectionStatus(false);
+                    this.updateStatus('Disconnected from Display Manager');
+                };
+
+                this.ws.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    this.updateStatus('Connection error');
+                };
+            }
+
+            handleMessage(message) {
+                switch (message.type) {
+                    case 'displays:list':
+                        this.updateDisplays(message.data);
+                        break;
+                    case 'templates:list':
+                        this.updateTemplates(message.data);
+                        break;
+                    case 'view:saved':
+                        this.updateStatus('View saved successfully');
+                        break;
+                    case 'view:applied':
+                        this.updateStatus('View applied to displays');
+                        break;
+                    default:
+                        console.log('Unknown message type:', message.type);
+                }
+            }
+
+            handleDragStart(e) {
+                if (e.target.classList.contains('component-item')) {
+                    this.draggedComponent = {
+                        type: e.target.dataset.type,
+                        element: e.target
+                    };
+                    e.target.classList.add('dragging');
+                    e.dataTransfer.effectAllowed = 'copy';
+                }
+            }
+
+            handleDragEnd(e) {
+                if (e.target.classList.contains('component-item')) {
+                    e.target.classList.remove('dragging');
+                    this.draggedComponent = null;
+                }
+            }
+
+            handleDragOver(e) {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'copy';
+            }
+
+            handleDragEnter(e) {
+                e.preventDefault();
+                this.canvas.classList.add('drop-zone');
+            }
+
+            handleDragLeave(e) {
+                if (!this.canvas.contains(e.relatedTarget)) {
+                    this.canvas.classList.remove('drop-zone');
+                }
+            }
+
+            handleDrop(e) {
+                e.preventDefault();
+                this.canvas.classList.remove('drop-zone');
+
+                if (!this.draggedComponent) return;
+
+                const rect = this.canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+
+                const gridX = Math.floor((x / rect.width) * 12);
+                const gridY = Math.floor((y / rect.height) * 6);
+
+                this.addComponent(this.draggedComponent.type, gridX, gridY);
+                this.draggedComponent = null;
+            }
+
+            addComponent(type, x, y) {
+                const component = {
+                    id: this.generateId(),
+                    type: type,
+                    position: { x, y, width: 2, height: 1 },
+                    settings: {}
+                };
+
+                this.canvasData.push(component);
+                this.renderComponent(component);
+                this.updateStatus(`Added ${type} component`);
+            }
+
+            renderComponent(component) {
+                const element = document.createElement('div');
+                element.className = 'dropped-component';
+                element.dataset.componentId = component.id;
+                element.style.gridColumn = `${component.position.x + 1} / span ${component.position.width}`;
+                element.style.gridRow = `${component.position.y + 1} / span ${component.position.height}`;
+
+                element.innerHTML = `
+                    <div class="component-header">
+                        <div class="component-title">${component.type.toUpperCase()}</div>
+                        <button class="component-remove" onclick="gui.removeComponent('${component.id}')">&times;</button>
+                    </div>
+                    <div>${this.getComponentIcon(component.type)}</div>
+                `;
+
+                element.addEventListener('click', () => {
+                    this.selectComponent(component.id);
+                });
+
+                this.canvas.appendChild(element);
+            }
+
+            getComponentIcon(type) {
+                const icons = {
+                    map: '🗺️',
+                    radar: '📡',
+                    alarms: '🚨',
+                    status: '📊',
+                    weather: '🌤️',
+                    camera: '📹',
+                    chart: '📈',
+                    table: '📋'
+                };
+                return icons[type] || '📄';
+            }
+
+            removeComponent(componentId) {
+                this.canvasData = this.canvasData.filter(c => c.id !== componentId);
+                const element = document.querySelector(`[data-component-id="${componentId}"]`);
+                if (element) {
+                    element.remove();
+                }
+                this.updateStatus('Component removed');
+            }
+
+            selectComponent(componentId) {
+                // Remove previous selection
+                document.querySelectorAll('.dropped-component').forEach(el => {
+                    el.classList.remove('selected');
+                });
+
+                // Add selection to clicked component
+                const element = document.querySelector(`[data-component-id="${componentId}"]`);
+                if (element) {
+                    element.classList.add('selected');
+                }
+
+                this.selectedComponent = this.canvasData.find(c => c.id === componentId);
+                this.showProperties();
+            }
+
+            showProperties() {
+                if (!this.selectedComponent) {
+                    this.propertiesContent.innerHTML = '<p>Select a component to edit its properties</p>';
+                    return;
+                }
+
+                const component = this.selectedComponent;
+                this.propertiesContent.innerHTML = `
+                    <div class="property-group">
+                        <label>Component Type:</label>
+                        <input type="text" value="${component.type}" readonly>
+                    </div>
+                    <div class="property-group">
+                        <label>Position X:</label>
+                        <input type="number" value="${component.position.x}" min="0" max="11" 
+                               onchange="gui.updateComponentProperty('x', this.value)">
+                    </div>
+                    <div class="property-group">
+                        <label>Position Y:</label>
+                        <input type="number" value="${component.position.y}" min="0" max="5" 
+                               onchange="gui.updateComponentProperty('y', this.value)">
+                    </div>
+                    <div class="property-group">
+                        <label>Width:</label>
+                        <input type="number" value="${component.position.width}" min="1" max="12" 
+                               onchange="gui.updateComponentProperty('width', this.value)">
+                    </div>
+                    <div class="property-group">
+                        <label>Height:</label>
+                        <input type="number" value="${component.position.height}" min="1" max="6" 
+                               onchange="gui.updateComponentProperty('height', this.value)">
+                    </div>
+                `;
+            }
+
+            updateComponentProperty(property, value) {
+                if (!this.selectedComponent) return;
+
+                if (['x', 'y', 'width', 'height'].includes(property)) {
+                    this.selectedComponent.position[property] = parseInt(value);
+                } else {
+                    this.selectedComponent.settings[property] = value;
+                }
+
+                this.renderCanvas();
+                this.updateStatus('Component updated');
+            }
+
+            renderCanvas() {
+                // Clear existing components
+                document.querySelectorAll('.dropped-component').forEach(el => el.remove());
+
+                // Re-render all components
+                this.canvasData.forEach(component => {
+                    this.renderComponent(component);
+                });
+            }
+
+            newView() {
+                this.canvasData = [];
+                this.renderCanvas();
+                this.updateStatus('New view created');
+            }
+
+            showSaveModal() {
+                document.getElementById('saveModal').classList.add('show');
+            }
+
+            saveView() {
+                const name = document.getElementById('viewName').value;
+                const description = document.getElementById('viewDescription').value;
+
+                if (!name) {
+                    alert('Please enter a view name');
+                    return;
+                }
+
+                const viewData = {
+                    name: name,
+                    description: description,
+                    layout: {
+                        type: 'grid',
+                        components: this.canvasData
+                    }
+                };
+
+                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                    this.ws.send(JSON.stringify({
+                        type: 'view:save',
+                        data: viewData
+                    }));
+                }
+
+                this.closeModal('saveModal');
+            }
+
+            loadView() {
+                // Implementation for loading views
+                this.updateStatus('Load view functionality coming soon');
+            }
+
+            clearCanvas() {
+                if (confirm('Are you sure you want to clear the canvas?')) {
+                    this.canvasData = [];
+                    this.renderCanvas();
+                    this.updateStatus('Canvas cleared');
+                }
+            }
+
+            applyView() {
+                const selectedDisplays = Array.from(document.querySelectorAll('.display-item.selected'))
+                    .map(el => el.dataset.displayId);
+
+                if (selectedDisplays.length === 0) {
+                    alert('Please select at least one display');
+                    return;
+                }
+
+                const viewData = {
+                    layout: {
+                        type: 'grid',
+                        components: this.canvasData
+                    },
+                    displays: selectedDisplays
+                };
+
+                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                    this.ws.send(JSON.stringify({
+                        type: 'view:apply',
+                        data: viewData
+                    }));
+                }
+            }
+
+            previewView() {
+                // Implementation for preview functionality
+                this.updateStatus('Preview functionality coming soon');
+            }
+
+            loadDisplays() {
+                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                    this.ws.send(JSON.stringify({
+                        type: 'displays:get'
+                    }));
+                }
+            }
+
+            loadTemplates() {
+                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                    this.ws.send(JSON.stringify({
+                        type: 'templates:get'
+                    }));
+                }
+            }
+
+            updateDisplays(displays) {
+                this.displays = new Map(displays.map(d => [d.id, d]));
+                this.renderDisplayList();
+            }
+
+            updateTemplates(templates) {
+                this.templates = new Map(templates.map(t => [t.id, t]));
+                this.renderTemplateList();
+            }
+
+            renderDisplayList() {
+                this.displayList.innerHTML = '';
+                this.displays.forEach(display => {
+                    const item = document.createElement('div');
+                    item.className = 'display-item';
+                    item.dataset.displayId = display.id;
+                    item.textContent = display.name;
+                    item.addEventListener('click', () => {
+                        document.querySelectorAll('.display-item').forEach(el => el.classList.remove('selected'));
+                        item.classList.add('selected');
+                    });
+                    this.displayList.appendChild(item);
+                });
+            }
+
+            renderTemplateList() {
+                this.templateList.innerHTML = '';
+                this.templates.forEach(template => {
+                    const item = document.createElement('div');
+                    item.className = 'display-item';
+                    item.textContent = template.name;
+                    item.addEventListener('click', () => {
+                        this.loadTemplate(template);
+                    });
+                    this.templateList.appendChild(item);
+                });
+            }
+
+            loadTemplate(template) {
+                if (template.content && template.content.components) {
+                    this.canvasData = template.content.components;
+                    this.renderCanvas();
+                    this.updateStatus(`Loaded template: ${template.name}`);
+                }
+            }
+
+            updateConnectionStatus(connected) {
+                this.connectionStatus.className = connected ? 'connection-status connected' : 'connection-status';
+                this.connectionText.textContent = connected ? 'Connected' : 'Disconnected';
+            }
+
+            updateStatus(message) {
+                this.statusText.textContent = message;
+            }
+
+            generateId() {
+                return 'comp_' + Math.random().toString(36).substr(2, 9);
+            }
+
+            closeModal(modalId) {
+                document.getElementById(modalId).classList.remove('show');
+            }
+        }
+
+        // Global functions for event handlers
+        function closeModal(modalId) {
+            gui.closeModal(modalId);
+        }
+
+        // Initialize the GUI
+        const gui = new DisplayManagerGUI();
+    </script>
+</body>
+</html> 

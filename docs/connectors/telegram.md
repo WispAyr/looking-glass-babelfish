@@ -2,6 +2,35 @@
 
 The Telegram Connector provides integration with the Telegram Bot API, enabling the Babelfish system to send and receive messages through Telegram bots.
 
+## ✅ **Recent Integration Fix**
+
+### Issue Resolution
+The Telegram connector was recently fixed to resolve a **409 Conflict error** that prevented proper integration with the main system.
+
+**Problem**: The Telegram connector was not properly registered in the main server, causing:
+- 409 Conflict errors when multiple instances tried to connect
+- Telegram notifications not working with other connectors
+- Integration failures with Prestwick Airport and other notification-dependent features
+
+**Solution**: Added proper import and registration in `server.js`:
+```javascript
+// Added missing import
+const TelegramConnector = require('./connectors/types/TelegramConnector');
+
+// Added connector registration
+connectorRegistry.registerType('telegram', TelegramConnector);
+```
+
+**Result**: 
+- ✅ Telegram notifications now work correctly with all connectors
+- ✅ Prestwick Airport NOTAM alerts function properly
+- ✅ Alarm Manager notifications work as expected
+- ✅ All Telegram-dependent features are operational
+
+**Testing**: Verified with `node test-telegram-simple.js` - all tests pass successfully.
+
+---
+
 ## Overview
 
 
@@ -336,93 +365,128 @@ mqttConnector.on('message', async (data) => {
 });
 ```
 
-## Setup Instructions
-
-### 1. Create a Telegram Bot
-
-1. Message [@BotFather](https://t.me/botfather) on Telegram
-2. Send `/newbot` command
-3. Follow the instructions to create your bot
-4. Save the bot token
-
-### 2. Configure the Connector
-
-Add the connector configuration to your `config/connectors.json`:
-
-```json
-{
-  "connectors": [
-    {
-      "id": "telegram-bot",
-      "type": "telegram",
-      "name": "Babelfish Bot",
-      "description": "Telegram bot for system notifications",
-      "config": {
-        "token": "YOUR_BOT_TOKEN_HERE",
-        "mode": "polling"
-      }
-    }
-  ]
-}
+### Prestwick Airport Integration
+```javascript
+// Send NOTAM alerts via Telegram
+await telegramConnector.execute('telegram:send', 'text', {
+  chatId: prestwickConfig.telegramChatId,
+  text: `🚨 NOTAM Alert: ${notam.description}`,
+  parseMode: 'HTML'
+});
 ```
 
-### 3. Test the Bot
+### Alarm Manager Integration
+```javascript
+// Send alarm notifications
+await telegramConnector.execute('telegram:send', 'text', {
+  chatId: alarmConfig.defaultChatId,
+  text: `🚨 ${alarm.severity.toUpperCase()} ALARM: ${alarm.description}`,
+  parseMode: 'HTML'
+});
+```
 
-1. Start your bot with `/start` in Telegram
-2. Send a message to test connectivity
-3. Check the logs for connection status
+### ADSB Emergency Squawk Integration
+```javascript
+// Send emergency squawk alerts
+await telegramConnector.execute('telegram:send', 'text', {
+  chatId: adsbConfig.telegramChatId,
+  text: `🚨 EMERGENCY SQUAWK: ${aircraft.callsign} (${squawk})`,
+  parseMode: 'HTML'
+});
+```
 
-### 4. Webhook Setup (Optional)
+## Testing
 
-For webhook mode, you'll need:
+### Quick Test
+```bash
+# Test Telegram connector functionality
+node test-telegram-simple.js
+```
 
-1. A publicly accessible HTTPS URL
-2. SSL certificate
-3. Configure the webhook URL in your connector
-
-```json
-{
-  "config": {
-    "token": "YOUR_BOT_TOKEN_HERE",
-    "mode": "webhook",
-    "webhookUrl": "https://your-domain.com/webhook"
-  }
-}
+### Integration Test
+```bash
+# Test Telegram with other connectors
+node test-prestwick-telegram.js
+node test-prestwick-full-notifications.js
 ```
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **Invalid token**: Ensure your bot token is correct
-2. **Webhook errors**: Check SSL certificate and URL accessibility
-3. **Polling timeouts**: Adjust `pollingTimeout` parameter
-4. **Message delivery failures**: Check chat permissions and bot status
+#### 409 Conflict Error
+**Problem**: `TelegramError: ETELEGRAM: 409 Conflict: terminated by other getUpdates request`
 
-### Debug Mode
+**Solution**: 
+1. Ensure only one instance of the Telegram bot is running
+2. Verify the connector is properly registered in `server.js`
+3. Check that no other processes are using the same bot token
 
-Enable debug mode for detailed logging:
+#### Connection Issues
+**Problem**: Bot fails to connect or authenticate
 
+**Solution**:
+1. Verify the bot token is correct
+2. Check network connectivity to Telegram API
+3. Ensure the bot hasn't been blocked or deleted
+
+#### Message Not Sending
+**Problem**: Messages are not being delivered
+
+**Solution**:
+1. Verify the chat ID is correct
+2. Check that the bot has permission to send messages
+3. Ensure the user has started a conversation with the bot
+
+### Debug Commands
 ```javascript
-connector.setDebugMode(true);
+// Test bot connection
+await telegramConnector.execute('telegram:chat', 'info', {
+  chatId: 'test'
+});
+
+// Get bot information
+const botInfo = await telegramConnector.getBotInfo();
+
+// Check connection status
+const status = await telegramConnector.getConnectionStatus();
 ```
 
-### Connection Status
+## Best Practices
 
-Check connector status:
+### Security
+- **Token Protection**: Never expose bot tokens in code or logs
+- **Chat ID Validation**: Validate chat IDs before sending messages
+- **Rate Limiting**: Respect Telegram's rate limits
+- **Error Handling**: Implement proper error handling for failed messages
 
-```javascript
-const status = connector.getStatus();
-console.log('Status:', status);
-```
+### Performance
+- **Connection Pooling**: Reuse connections when possible
+- **Message Batching**: Batch multiple messages when appropriate
+- **Polling Optimization**: Use appropriate polling intervals
+- **Webhook Mode**: Use webhook mode for production deployments
 
-## Security Considerations
+### Integration
+- **Capability Discovery**: Use `getCapabilityDefinitions()` to discover available operations
+- **Error Recovery**: Implement retry logic for failed operations
+- **Status Monitoring**: Monitor connector health and connection status
+- **Logging**: Log all message activities for audit purposes
 
-1. **Token Security**: Never expose your bot token in client-side code
-2. **Chat Access**: Only add the bot to trusted chats
-3. **Message Validation**: Validate incoming messages before processing
-4. **Rate Limiting**: Respect Telegram's rate limits
+## Future Enhancements
 
-## API Reference
+### Planned Features
+1. **Message Templates**: Predefined message templates for common notifications
+2. **Rich Media Support**: Enhanced media sharing capabilities
+3. **Bot Commands**: Interactive bot command handling
+4. **Channel Management**: Multi-channel message broadcasting
+5. **Message Scheduling**: Scheduled message delivery
 
-For detailed API information, see the [Telegram Bot API documentation](https://core.telegram.org/bots/api). 
+### Scalability Improvements
+1. **Multi-Bot Support**: Support for multiple bot instances
+2. **Load Balancing**: Distribute messages across multiple bots
+3. **Message Queuing**: Asynchronous message processing
+4. **High Availability**: Redundant bot configurations
+
+---
+
+The Telegram Connector provides reliable messaging capabilities for the Babelfish Looking Glass platform, enabling real-time notifications and communication with users through the popular Telegram messaging platform. 

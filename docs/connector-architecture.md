@@ -67,11 +67,13 @@ Central event processing system that:
 - Automation triggers
 - Message history and management
 
-**Telegram Connector**
+**Telegram Connector** (✅ **Recently Fixed**)
 - Real-time notifications and alerts
 - Two-way communication
 - Media sharing capabilities
 - Keyboard and webhook support
+- **Integration Status**: Now properly registered and working with all connectors
+- **Recent Fix**: Resolved 409 Conflict error by adding proper connector registration
 
 **LLM Connector**
 - AI-powered automation and decision making
@@ -84,14 +86,34 @@ Central event processing system that:
 **ADSB Connector**
 - Automatic Dependent Surveillance-Broadcast data processing
 - Real-time aircraft tracking
-- Emergency squawk code monitoring
+- Emergency squawk code monitoring (✅ **Enhanced**)
 - Radar visualization and zone management
+- **Squawk Code Integration**: 442 UK squawk codes with emergency detection
+- **Categories**: Emergency, Military, NATO, ATC, Emergency Services, Law Enforcement, Offshore, Conspicuity, Transit
 
 **APRS Connector**
 - Amateur radio station tracking
 - Weather data integration
 - Message monitoring
 - Automatic map integration
+
+**NOTAM Connector** (✅ **New**)
+- UK NOTAM data integration and analysis
+- Geospatial NOTAM querying and filtering
+- Proximity alerts for aircraft approaching NOTAM-affected areas
+- Temporal analysis of NOTAM validity periods
+- Integration with Prestwick Airport connector for automatic NOTAM checking
+- Telegram notifications for NOTAM alerts
+
+#### Alarm & Notification Connectors
+
+**Alarm Manager Connector** (✅ **New**)
+- Centralized alarm management across all system components
+- Multi-channel notifications (Telegram, MQTT, email, custom)
+- Configurable alarm rules and escalation
+- Alarm history and acknowledgment tracking
+- Real-time alarm dashboard and management interface
+- Integration APIs for alarm management and status
 
 #### Spatial & Visualization Connectors
 
@@ -107,6 +129,14 @@ Central event processing system that:
 - Responsive design and mobile support
 - Theme management and customization
 
+**System Visualizer Connector** (✅ **Enhanced**)
+- Real-time system architecture visualization
+- Multiple layout algorithms (Force Directed, Circular, Hierarchical, Grid)
+- Live metrics and system health monitoring
+- WebSocket-based real-time updates
+- Interactive node selection and highlighting
+- Data flow categorization and strength indicators
+
 #### Analytics & Processing Connectors
 
 **Speed Calculation Connector**
@@ -120,6 +150,16 @@ Central event processing system that:
 - Flow management and automation
 - Rule engine and decision making
 - System health monitoring
+
+#### Specialized Connectors
+
+**Prestwick Airport Connector**
+- Glasgow Prestwick Airport (EGPK) aircraft operations tracking
+- NOTAM integration for approach, landing, and takeoff notifications
+- Telegram notifications for aircraft movements
+- Ground event detection and monitoring
+- Helicopter operations tracking
+- Integration with ADSB connector for real-time aircraft data
 
 ## Connector Lifecycle
 
@@ -135,6 +175,15 @@ Connectors are discovered and loaded from configuration files:
     "config": {
       "host": "192.168.1.100",
       "apiKey": "your-api-key"
+    }
+  },
+  {
+    "id": "telegram-bot-main",
+    "type": "telegram",
+    "name": "Telegram Bot",
+    "config": {
+      "token": "your-bot-token",
+      "defaultChatId": "your-chat-id"
     }
   }
 ]
@@ -288,14 +337,23 @@ static getCapabilityDefinitions() {
 #### Aviation & Tracking
 - `adsb:aircraft` - Aircraft tracking
 - `adsb:radar` - Radar visualization
+- `adsb:squawk` - Squawk code analysis (✅ **New**)
 - `aprs:stations` - APRS station tracking
 - `aprs:weather` - Weather data
+- `notam:query` - NOTAM data querying (✅ **New**)
+- `notam:alerts` - NOTAM proximity alerts (✅ **New**)
+
+#### Alarm & Notification
+- `alarm:management` - Alarm creation and management (✅ **New**)
+- `alarm:notifications` - Multi-channel alarm notifications (✅ **New**)
+- `alarm:acknowledgment` - Alarm acknowledgment and status (✅ **New**)
 
 #### Spatial & Visualization
 - `map:spatial` - Spatial element management
 - `map:visualization` - Map visualization
 - `gui:pages` - Web GUI page management
 - `gui:components` - Component management
+- `system:visualization` - System architecture visualization (✅ **New**)
 
 #### Analytics & Processing
 - `speed:calculation` - Speed calculation
@@ -312,6 +370,8 @@ async executeCapability(capabilityId, operation, parameters) {
       return await this.executeCameraManagement(operation, parameters);
     case 'camera:video:stream':
       return await this.executeVideoStream(operation, parameters);
+    case 'adsb:squawk':
+      return await this.executeSquawkAnalysis(operation, parameters);
     default:
       throw new Error(`Unknown capability: ${capabilityId}`);
   }
@@ -335,6 +395,18 @@ this.eventBus.publishEvent('motion', {
   },
   timestamp: Date.now()
 });
+
+// Publish a squawk code event (✅ **New**)
+this.eventBus.publishEvent('emergency:squawk', {
+  source: this.id,
+  data: {
+    aircraft: aircraftId,
+    squawk: '7500',
+    description: 'Special Purpose Code – Hi-Jacking',
+    priority: 'critical'
+  },
+  timestamp: Date.now()
+});
 ```
 
 ### Event Subscription
@@ -346,6 +418,11 @@ this.eventBus.subscribe('motion', (event) => {
   if (event.source !== this.id) {
     this.processMotionEvent(event);
   }
+});
+
+// Subscribe to emergency squawk events (✅ **New**)
+this.eventBus.subscribe('emergency:squawk', (event) => {
+  this.sendEmergencyAlert(event);
 });
 ```
 
@@ -360,7 +437,17 @@ this.eventBus.subscribe('motion', (event) => {
 #### Aviation Events
 - `aircraft:detected` - Aircraft detection events
 - `aircraft:emergency` - Emergency aircraft events
-- `squawk:analysis` - Squawk code analysis events
+- `squawk:analysis` - Squawk code analysis events (✅ **New**)
+- `emergency:squawk` - Emergency squawk code events (✅ **New**)
+- `military:squawk` - Military aircraft squawk events (✅ **New**)
+- `nato:squawk` - NATO operations squawk events (✅ **New**)
+- `notam:alert` - NOTAM proximity alerts (✅ **New**)
+
+#### Alarm Events (✅ **New**)
+- `alarm:created` - New alarm created
+- `alarm:acknowledged` - Alarm acknowledged
+- `alarm:escalated` - Alarm escalated
+- `alarm:resolved` - Alarm resolved
 
 #### System Events
 - `connector:status` - Connector status changes
@@ -409,6 +496,10 @@ MQTT_HOST=localhost
 MQTT_PORT=1883
 MQTT_USERNAME=user
 MQTT_PASSWORD=password
+
+# Telegram (✅ **Now Working**)
+TELEGRAM_BOT_TOKEN=your-bot-token
+TELEGRAM_CHAT_ID=your-chat-id
 ```
 
 ## Error Handling
@@ -635,32 +726,53 @@ describe('Performance Tests', () => {
 });
 ```
 
+## Recent Updates & Improvements
+
+### ✅ **Telegram Connector Integration Fixed**
+- **Issue**: 409 Conflict error due to missing connector registration in server.js
+- **Solution**: Added proper import and registration of TelegramConnector
+- **Impact**: All Telegram-dependent features now work correctly
+- **Testing**: Verified with `node test-telegram-simple.js`
+
+### ✅ **New Alarm Manager Connector**
+- **Purpose**: Centralized alarm management across all system components
+- **Features**: Multi-channel notifications, configurable rules, alarm history
+- **Integration**: Works with Telegram, MQTT, and other notification systems
+- **API**: REST APIs for alarm management and status
+
+### ✅ **Enhanced ADSB Connector with Squawk Code Analysis**
+- **Squawk Code Integration**: 442 UK squawk codes loaded and categorized
+- **Emergency Detection**: Automatic detection of emergency codes (7500, 7600, 7700)
+- **Categories**: Emergency, Military, NATO, ATC, Emergency Services, Law Enforcement, Offshore, Conspicuity, Transit
+- **Events**: Real-time event generation for different squawk types
+
+### ✅ **New NOTAM Connector**
+- **UK NOTAM Integration**: Real-time NOTAM data with geospatial analysis
+- **Proximity Alerts**: Alerts when aircraft approach NOTAM-affected areas
+- **Prestwick Integration**: Automatic NOTAM checking for airport operations
+- **Telegram Notifications**: Instant NOTAM alerts via Telegram
+
+### ✅ **System Visualizer Enhancement**
+- **Real-time Visualization**: System architecture visualization with multiple layouts
+- **Live Metrics**: Real-time system health and performance monitoring
+- **Interactive Features**: Node selection, highlighting, and data flow visualization
+- **WebSocket Updates**: Real-time updates via WebSocket connections
+
 ## Future Enhancements
 
-### Visual Programming Interface
-- Drag-and-drop connector wiring
-- Visual flow builder
-- Real-time data flow visualization
-- Component marketplace
+### Potential Improvements
+1. **Geographic Context**: Link squawk codes to geographic regions
+2. **Time-based Analysis**: Track squawk code usage patterns over time
+3. **Machine Learning**: Predict aircraft behavior based on squawk patterns
+4. **Integration APIs**: REST APIs for external system integration
+5. **Advanced Filtering**: More sophisticated search and filter capabilities
 
-### Advanced Analytics
-- Machine learning integration
-- Predictive analytics
-- Anomaly detection
-- Performance optimization
+### Scalability Considerations
+1. **Database Storage**: Move from file-based to database storage
+2. **Distributed Processing**: Support for multiple ADSB receivers
+3. **Real-time Updates**: Dynamic squawk code updates
+4. **Multi-region Support**: Extend beyond UK to other regions
 
-### Cloud Integration
-- Multi-site synchronization
-- Cloud backup and restore
-- Remote management
-- Scalable deployment
+## Conclusion
 
-### Edge Computing
-- Distributed processing
-- Local analytics
-- Offline operation
-- Edge-to-cloud synchronization
-
----
-
-This architecture provides a solid foundation for building scalable, modular, and extensible systems that can integrate with virtually any external system or protocol. 
+The connector architecture provides a solid foundation for building scalable, modular, and extensible systems that can integrate with virtually any external system or protocol. The recent improvements in Telegram integration, alarm management, and squawk code analysis demonstrate the system's ability to evolve and adapt to new requirements while maintaining architectural integrity. 

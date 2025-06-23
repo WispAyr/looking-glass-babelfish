@@ -71,18 +71,20 @@ A **unified spatial intelligence platform** that:
 ### 🔌 **Multi-Protocol Connector Ecosystem**
 - **UniFi Protect**: Real-time video streaming, motion detection, smart detection, doorbell rings, ANPR
 - **MQTT**: IoT device communication, sensor data, automation triggers
-- **Telegram**: Real-time notifications, alerts, and two-way communication
+- **Telegram**: Real-time notifications, alerts, and two-way communication (✅ **Recently Fixed**)
 - **LLM Integration**: AI-powered automation, decision making, and natural language processing
 - **Hikvision**: IP camera integration with advanced analytics
 - **Ankke DVR**: Digital video recorder support and management
-- **ADSB**: Aircraft tracking and aviation monitoring
+- **ADSB**: Aircraft tracking and aviation monitoring with squawk code analysis
 - **APRS**: Amateur radio station tracking, weather data, and message monitoring with automatic map integration
 - **NOTAM**: UK NOTAM data integration with geospatial analysis, proximity alerts, and temporal analysis
+- **Alarm Manager**: Centralized alarm management with multi-channel notifications (✅ **New**)
 - **Map Connector**: Spatial configuration and real-time visualization
 - **Web GUI Connector**: Modern web interface with component system
 - **Speed Calculation**: ANPR-based vehicle speed monitoring
 - **GUI Designer**: Visual layout editor and component management
 - **Overwatch**: Central event processing and orchestration system
+- **System Visualizer**: Real-time system architecture visualization and monitoring
 
 ### 🗺️ **Advanced Spatial Intelligence**
 - **Real-Time Map System**: Interactive spatial visualization with drag-and-drop configuration
@@ -116,6 +118,7 @@ A **unified spatial intelligence platform** that:
 ### 🛩️ **Aviation & Radar System**
 - **Real-time Aircraft Tracking**: Display aircraft positions, trails, and information
 - **ADSB Integration**: Automatic Dependent Surveillance-Broadcast data processing
+- **Squawk Code Analysis**: UK aviation squawk code integration with 442 codes categorized (✅ **Enhanced**)
 - **Zone Management**: Define and monitor spatial zones for aircraft
 - **Advanced Filtering**: Filter aircraft by altitude, speed, distance, type, callsign, and squawk
 - **Radar Visualization**: Classic radar scope display with sweep animation
@@ -134,6 +137,16 @@ A **unified spatial intelligence platform** that:
 - **Station Filtering**: Filter stations by type, activity, and geographic area
 - **Weather Integration**: Weather data automatically linked to station positions
 - **Performance Monitoring**: Track API calls, station counts, and system performance
+
+### 🚨 **Alarm Management System** (✅ **New**)
+- **Centralized Alarm Management**: Unified alarm handling across all connectors
+- **Multi-Channel Notifications**: Telegram, MQTT, email, and custom notification channels
+- **Alarm Rules Engine**: Configurable rules for alarm generation and escalation
+- **Alarm History**: Comprehensive alarm logging and analysis
+- **Alarm Acknowledgment**: User acknowledgment and status tracking
+- **Alarm Categories**: Categorize alarms by severity, type, and source
+- **Real-time Dashboard**: Live alarm status and management interface
+- **Integration APIs**: REST APIs for alarm management and status
 
 ### 📊 **Unified Dashboard & Monitoring**
 - **Single Pane of Glass**: All zones, cameras, and analytics in one interface
@@ -207,6 +220,17 @@ A **unified spatial intelligence platform** that:
 - **Emergency Response**: Search and rescue coordination with real-time aircraft data
 - **Air Traffic Management**: Local airspace monitoring and traffic coordination
 - **NOTAM Integration**: Real-time NOTAM data with geospatial analysis and proximity alerts
+  - **Prestwick Airport Integration**: Automatic NOTAM checking for aircraft approaching, landing, and taking off
+  - **Geospatial Analysis**: Query NOTAMs by location, radius, category, and priority
+  - **Proximity Alerts**: Real-time alerts when aircraft approach NOTAM-affected areas
+  - **Telegram Notifications**: Instant NOTAM alerts via Telegram with formatted messages (✅ **Fixed**)
+  - **Temporal Analysis**: Track NOTAM validity periods and expiration
+  - **UK NOTAM Archive**: Integration with UK NOTAM archive for comprehensive coverage
+- **Squawk Code Monitoring**: Real-time monitoring of aviation squawk codes with emergency detection
+  - **Emergency Codes**: Automatic detection of 7500 (hijacking), 7600 (radio failure), 7700 (emergency)
+  - **Military Tracking**: Monitor military aircraft and operations
+  - **NATO Operations**: Track NATO operations and CAOC codes
+  - **ATC Integration**: Air traffic control code monitoring and analysis
 
 ### 🏭 **Industrial & Manufacturing**
 - **Factory Automation**: IoT sensor integration with production line monitoring
@@ -286,11 +310,24 @@ A **unified spatial intelligence platform** that:
    }
    ```
 
-2. **Configure map zones** for your deployment area
+2. **Configure Telegram notifications** (✅ **Now Working**):
+   ```json
+   {
+     "id": "telegram-bot-main",
+     "type": "telegram",
+     "name": "Telegram Bot",
+     "config": {
+       "token": "your-bot-token",
+       "defaultChatId": "your-chat-id"
+     }
+   }
+   ```
 
-3. **Set up automation rules** for your use case
+3. **Configure map zones** for your deployment area
 
-4. **Customize the dashboard** for your needs
+4. **Set up automation rules** for your use case
+
+5. **Customize the dashboard** for your needs
 
 ---
 
@@ -305,13 +342,15 @@ A **unified spatial intelligence platform** that:
 ### Connector Documentation
 - **[UniFi Protect](docs/connectors/unifi-protect.md)** - Video management integration
 - **[MQTT](docs/connectors/mqtt.md)** - IoT and messaging integration
-- **[Telegram](docs/connectors/telegram.md)** - Notification and communication
+- **[Telegram](docs/connectors/telegram.md)** - Notification and communication (✅ **Updated**)
 - **[ADSB](docs/connectors/adsb.md)** - Aircraft tracking and aviation
 - **[APRS](docs/connectors/aprs.md)** - Amateur radio and weather data
 - **[Hikvision](docs/connectors/hikvision.md)** - IP camera integration
 - **[Ankke DVR](docs/connectors/ankke-dvr.md)** - DVR system integration
 - **[LLM](docs/connectors/llm.md)** - AI and natural language processing
 - **[Overwatch](docs/connectors/overwatch.md)** - Event processing and orchestration
+- **[Alarm Manager](docs/connectors/alarm-manager.md)** - Centralized alarm management (✅ **New**)
+- **[NOTAM](docs/connectors/notam.md)** - Aviation NOTAM integration
 
 ### System Documentation
 - **[Analytics System](docs/analytics-system.md)** - Data analysis and reporting
@@ -320,6 +359,7 @@ A **unified spatial intelligence platform** that:
 - **[Real-time Map System](docs/realtime-map-system.md)** - Spatial visualization
 - **[Speed Calculation](docs/speed-calculation-system.md)** - Vehicle speed monitoring
 - **[Line Crossing Detection](docs/line-crossing-speed-detection.md)** - Boundary monitoring
+- **[Squawk Code Integration](docs/squawk-code-integration-summary.md)** - Aviation squawk code analysis (✅ **New**)
 
 ---
 
@@ -347,6 +387,8 @@ node test-connectors.js
 node test-unifi-protect.js
 node test-adsb-connector.js
 node test-speed-calculation-system.js
+node test-prestwick-notam-integration.js
+node test-telegram-simple.js  # ✅ Test Telegram integration
 ```
 
 ### Adding New Connectors
@@ -379,6 +421,33 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - **Documentation**: Check the docs folder for detailed guides
 - **Issues**: Report bugs and feature requests via GitHub issues
 - **Discussions**: Join community discussions for help and ideas
+
+---
+
+## 🔄 Recent Updates
+
+### ✅ **Telegram Connector Integration Fixed**
+- **Issue**: 409 Conflict error due to missing connector registration
+- **Solution**: Added TelegramConnector import and registration in server.js
+- **Result**: Telegram notifications now work correctly with all connectors
+
+### ✅ **New Alarm Manager Connector**
+- **Centralized alarm management** across all system components
+- **Multi-channel notifications** (Telegram, MQTT, email)
+- **Configurable alarm rules** and escalation
+- **Real-time alarm dashboard** and management interface
+
+### ✅ **Enhanced Squawk Code Integration**
+- **442 UK squawk codes** loaded and categorized
+- **Emergency code detection** (7500, 7600, 7700)
+- **Military and NATO tracking** capabilities
+- **Real-time event generation** for different squawk types
+
+### ✅ **System Visualizer Enhancement**
+- **Real-time system architecture** visualization
+- **Multiple layout algorithms** (Force Directed, Circular, Hierarchical, Grid)
+- **Live metrics and health monitoring**
+- **WebSocket-based real-time updates**
 
 ---
 

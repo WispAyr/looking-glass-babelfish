@@ -15,7 +15,7 @@ class NOTAMConnector extends BaseConnector {
     super(config);
     
     // NOTAM-specific configuration
-    this.notamUrl = this.config.notamUrl || 'https://github.com/Jonty/uk-notam-archive/blob/main/data/PIB.xml';
+    this.notamUrl = this.config.notamUrl || 'https://raw.githubusercontent.com/Jonty/uk-notam-archive/main/data/PIB.xml';
     this.pollInterval = this.config.pollInterval || 1200000; // 20 minutes default
     this.ukBounds = this.config.ukBounds || {
       north: 60.8604,
@@ -51,10 +51,25 @@ class NOTAMConnector extends BaseConnector {
     this.connectorRegistry = null;
     this.mapConnectors = new Map();
     
-    // XML parser
+    // XML parser - configured for lenient parsing
     this.xmlParser = new xml2js.Parser({
       explicitArray: false,
-      mergeAttrs: true
+      mergeAttrs: true,
+      strict: false,
+      ignoreAttrs: false,
+      attrNameProcessors: [xml2js.processors.stripPrefix],
+      tagNameProcessors: [xml2js.processors.stripPrefix],
+      valueProcessors: [xml2js.processors.parseBooleans, xml2js.processors.parseNumbers],
+      emptyTag: null,
+      explicitChildren: false,
+      childkey: 'children',
+      charsAsChildren: false,
+      includeWhiteChars: false,
+      async: false,
+      explicitRoot: true,
+      normalize: true,
+      normalizeTags: false,
+      trim: true
     });
   }
 
@@ -484,8 +499,21 @@ class NOTAMConnector extends BaseConnector {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
       
+      // Log the first 500 characters for debugging
+      this.logger.debug('Raw XML response (first 500 chars):', response.data.substring(0, 500));
+      
       // Parse XML
       const result = await this.xmlParser.parseStringPromise(response.data);
+      
+      // Debug: Log the structure
+      this.logger.debug('Parsed XML structure keys:', Object.keys(result));
+      if (result.PIB) {
+        this.logger.debug('PIB keys:', Object.keys(result.PIB));
+        if (result.PIB.NotamList) {
+          this.logger.debug('NotamList type:', Array.isArray(result.PIB.NotamList) ? 'array' : 'object');
+          this.logger.debug('NotamList keys:', Object.keys(result.PIB.NotamList));
+        }
+      }
       
       // Extract NOTAM data
       const notams = this.extractNOTAMs(result);
@@ -495,7 +523,8 @@ class NOTAMConnector extends BaseConnector {
       return notams;
       
     } catch (error) {
-      this.logger.error('Failed to fetch NOTAM data:', error);
+      this.logger.error('Failed to fetch NOTAM data:', error.message);
+      this.logger.error('Error details:', error.stack);
       throw error;
     }
   }
@@ -507,16 +536,47 @@ class NOTAMConnector extends BaseConnector {
     const notams = [];
     
     try {
-      // Navigate XML structure to find NOTAMs
-      // This structure may need adjustment based on actual XML format
-      const notamElements = this.findNOTAMElements(xmlData);
-      
-      for (const element of notamElements) {
-        const notam = this.parseNOTAMElement(element);
-        if (notam) {
-          notams.push(notam);
+      // More robust approach - search for NOTAM elements recursively
+      const findNotams = (obj) => {
+        if (typeof obj !== 'object' || obj === null) return;
+        
+        for (const [key, value] of Object.entries(obj)) {
+          // Look for NOTAM elements (case insensitive)
+          if (key.toLowerCase() === 'notam' || 
+              key.toLowerCase() === 'notamlist' ||
+              key.toLowerCase() === 'adsection' ||
+              key.toLowerCase() === 'firsection') {
+            this.logger.debug(`Found NOTAM-related element with key: ${key}`);
+            
+            if (key.toLowerCase() === 'notam') {
+              if (Array.isArray(value)) {
+                this.logger.debug(`Found ${value.length} NOTAM elements in array`);
+                for (const notamElement of value) {
+                  const notam = this.parseNOTAMElement(notamElement);
+                  if (notam) {
+                    notams.push(notam);
+                  }
+                }
+              } else if (typeof value === 'object') {
+                this.logger.debug('Found single NOTAM element');
+                const notam = this.parseNOTAMElement(value);
+                if (notam) {
+                  notams.push(notam);
+                }
+              }
+            }
+          }
+          
+          // Recursively search nested objects
+          if (typeof value === 'object' && value !== null) {
+            findNotams(value);
+          }
         }
-      }
+      };
+      
+      findNotams(xmlData);
+      
+      this.logger.debug(`Found ${notams.length} NOTAM elements in XML structure`);
       
     } catch (error) {
       this.logger.error('Error extracting NOTAMs from XML:', error);
@@ -527,45 +587,15 @@ class NOTAMConnector extends BaseConnector {
   }
 
   /**
-   * Find NOTAM elements in XML structure
-   */
-  findNOTAMElements(xmlData) {
-    const elements = [];
-    
-    // Recursively search for NOTAM elements
-    const searchForNOTAMs = (obj, path = '') => {
-      if (typeof obj === 'object' && obj !== null) {
-        for (const [key, value] of Object.entries(obj)) {
-          const currentPath = path ? `${path}.${key}` : key;
-          
-          // Look for NOTAM-related keys
-          if (key.toLowerCase().includes('notam') || 
-              key.toLowerCase().includes('pib') ||
-              key.toLowerCase().includes('aip')) {
-            if (Array.isArray(value)) {
-              elements.push(...value);
-            } else if (typeof value === 'object') {
-              elements.push(value);
-            }
-          }
-          
-          // Recursively search nested objects
-          if (typeof value === 'object' && value !== null) {
-            searchForNOTAMs(value, currentPath);
-          }
-        }
-      }
-    };
-    
-    searchForNOTAMs(xmlData);
-    return elements;
-  }
-
-  /**
    * Parse individual NOTAM element
    */
   parseNOTAMElement(element) {
     try {
+      // Log the first NOTAM element for debugging
+      if (!this._loggedFirstNotam) {
+        this.logger.debug('Sample NOTAM element:', JSON.stringify(element, null, 2));
+        this._loggedFirstNotam = true;
+      }
       // Extract basic NOTAM information
       const notam = {
         id: this.generateNOTAMId(element),
@@ -581,14 +611,8 @@ class NOTAMConnector extends BaseConnector {
         status: 'active',
         rawData: element
       };
-      
-      // Validate required fields
-      if (!notam.id || !notam.notamNumber) {
-        return null;
-      }
-      
+      // Do not skip NOTAMs if id or notamNumber is missing
       return notam;
-      
     } catch (error) {
       this.logger.error('Error parsing NOTAM element:', error);
       return null;
@@ -616,85 +640,159 @@ class NOTAMConnector extends BaseConnector {
    * Extract NOTAM number
    */
   extractNOTAMNumber(element) {
-    // Look for NOTAM number in various possible fields
-    const possibleFields = ['notamNumber', 'number', 'id', 'notam_id', 'aip_id'];
-    
-    for (const field of possibleFields) {
-      if (element[field]) {
-        return element[field].toString();
+    try {
+      // UK NOTAM structure: Series + Number + Year + Type
+      // e.g., L3206/25N
+      const series = element.Series || '';
+      const number = element.Number || '';
+      const year = element.Year || '';
+      const type = element.Type || '';
+      
+      if (series && number && year) {
+        return `${series}${number}/${year}${type}`;
       }
+      
+      // Fallback to other possible fields
+      const possibleFields = ['notamNumber', 'number', 'id', 'notam_id', 'aip_id'];
+      
+      for (const field of possibleFields) {
+        if (element[field]) {
+          return element[field].toString();
+        }
+      }
+      
+      return null;
+      
+    } catch (error) {
+      this.logger.error('Error extracting NOTAM number:', error);
+      return null;
     }
-    
-    return null;
   }
 
   /**
    * Extract title
    */
   extractTitle(element) {
-    const possibleFields = ['title', 'subject', 'name', 'summary'];
-    
-    for (const field of possibleFields) {
-      if (element[field]) {
-        return element[field].toString();
+    try {
+      // UK NOTAM structure: ITEMA contains aerodrome identifier
+      if (element.ITEMA) {
+        return `NOTAM for ${element.ITEMA}`;
       }
+      
+      // Fallback to other possible fields
+      const possibleFields = ['title', 'subject', 'name', 'summary'];
+      
+      for (const field of possibleFields) {
+        if (element[field]) {
+          return element[field].toString();
+        }
+      }
+      
+      return 'NOTAM';
+      
+    } catch (error) {
+      this.logger.error('Error extracting title:', error);
+      return 'NOTAM';
     }
-    
-    return 'NOTAM';
   }
 
   /**
    * Extract description
    */
   extractDescription(element) {
-    const possibleFields = ['description', 'content', 'text', 'message', 'details'];
-    
-    for (const field of possibleFields) {
-      if (element[field]) {
-        return element[field].toString();
+    try {
+      // UK NOTAM structure: ITEME contains the NOTAM description
+      if (element.ITEME) {
+        return element.ITEME.toString();
       }
+      
+      // Fallback to other possible fields
+      const possibleFields = ['description', 'content', 'text', 'message', 'details'];
+      
+      for (const field of possibleFields) {
+        if (element[field]) {
+          return element[field].toString();
+        }
+      }
+      
+      return '';
+      
+    } catch (error) {
+      this.logger.error('Error extracting description:', error);
+      return '';
     }
-    
-    return '';
   }
 
   /**
    * Extract start time
    */
   extractStartTime(element) {
-    const possibleFields = ['startTime', 'start', 'validFrom', 'from', 'begin'];
-    
-    for (const field of possibleFields) {
-      if (element[field]) {
-        const date = new Date(element[field]);
-        if (!isNaN(date.getTime())) {
-          return date;
+    try {
+      // UK NOTAM structure: STARTVALIDITY in format DDMMYYHHMM
+      if (element.STARTVALIDITY) {
+        const validity = element.STARTVALIDITY.toString();
+        if (validity.length === 10) {
+          const day = validity.substring(0, 2);
+          const month = validity.substring(2, 4);
+          const year = '20' + validity.substring(4, 6);
+          const hour = validity.substring(6, 8);
+          const minute = validity.substring(8, 10);
+          
+          return `${year}-${month}-${day}T${hour}:${minute}:00Z`;
         }
       }
+      
+      // Fallback to other possible fields
+      const possibleFields = ['startTime', 'start', 'validFrom', 'from', 'begin'];
+      
+      for (const field of possibleFields) {
+        if (element[field]) {
+          return element[field].toString();
+        }
+      }
+      
+      return null;
+      
+    } catch (error) {
+      this.logger.error('Error extracting start time:', error);
+      return null;
     }
-    
-    return new Date();
   }
 
   /**
    * Extract end time
    */
   extractEndTime(element) {
-    const possibleFields = ['endTime', 'end', 'validTo', 'to', 'until'];
-    
-    for (const field of possibleFields) {
-      if (element[field]) {
-        const date = new Date(element[field]);
-        if (!isNaN(date.getTime())) {
-          return date;
+    try {
+      // UK NOTAM structure: ENDVALIDITY in format DDMMYYHHMM
+      if (element.ENDVALIDITY) {
+        const validity = element.ENDVALIDITY.toString();
+        if (validity.length === 10) {
+          const day = validity.substring(0, 2);
+          const month = validity.substring(2, 4);
+          const year = '20' + validity.substring(4, 6);
+          const hour = validity.substring(6, 8);
+          const minute = validity.substring(8, 10);
+          
+          return `${year}-${month}-${day}T${hour}:${minute}:00Z`;
         }
       }
+      
+      // Fallback to other possible fields
+      const possibleFields = ['endTime', 'end', 'validTo', 'to', 'until'];
+      
+      for (const field of possibleFields) {
+        if (element[field]) {
+          return element[field].toString();
+        }
+      }
+      
+      return null;
+      
+    } catch (error) {
+      this.logger.error('Error extracting end time:', error);
+      return null;
     }
-    
-    // Default to 24 hours from now if no end time
-    const defaultEnd = new Date();
-    defaultEnd.setHours(defaultEnd.getHours() + 24);
-    return defaultEnd;
   }
 
   /**
@@ -743,58 +841,129 @@ class NOTAMConnector extends BaseConnector {
   }
 
   /**
-   * Extract position (lat/lon)
+   * Extract position
    */
   extractPosition(element) {
-    // Look for coordinate fields
-    const lat = this.extractLatitude(element);
-    const lon = this.extractLongitude(element);
-    
-    if (lat !== null && lon !== null) {
-      return { lat, lon };
+    try {
+      // UK NOTAM structure: Coordinates in format "DDMMN/SDDDMME/W"
+      if (element.Coordinates) {
+        const coords = element.Coordinates.toString();
+        const lat = this.extractLatitude(element);
+        const lon = this.extractLongitude(element);
+        
+        if (lat !== null && lon !== null) {
+          return { lat, lon };
+        }
+      }
+      
+      // Fallback to other possible fields
+      const possibleFields = ['position', 'coordinates', 'location', 'latlon'];
+      
+      for (const field of possibleFields) {
+        if (element[field]) {
+          return element[field];
+        }
+      }
+      
+      return null;
+      
+    } catch (error) {
+      this.logger.error('Error extracting position:', error);
+      return null;
     }
-    
-    // If no specific coordinates, use UK center
-    return {
-      lat: (this.ukBounds.north + this.ukBounds.south) / 2,
-      lon: (this.ukBounds.east + this.ukBounds.west) / 2
-    };
   }
 
   /**
    * Extract latitude
    */
   extractLatitude(element) {
-    const possibleFields = ['lat', 'latitude', 'lat_deg', 'lat_rad'];
-    
-    for (const field of possibleFields) {
-      if (element[field] !== undefined && element[field] !== null) {
-        const lat = parseFloat(element[field]);
-        if (!isNaN(lat) && lat >= -90 && lat <= 90) {
+    try {
+      // UK NOTAM structure: Coordinates in format "DDMMN/SDDDMME/W"
+      if (element.COORDINATES) {
+        const coords = element.COORDINATES.toString();
+        this.logger.debug(`Parsing coordinates: ${coords}`);
+        
+        // Extract latitude part (first part before longitude)
+        const latMatch = coords.match(/^(\d{2})(\d{2})([NS])/);
+        if (latMatch) {
+          const degrees = parseInt(latMatch[1]);
+          const minutes = parseInt(latMatch[2]);
+          const direction = latMatch[3];
+          
+          let lat = degrees + (minutes / 60);
+          if (direction === 'S') {
+            lat = -lat;
+          }
+          
+          this.logger.debug(`Parsed latitude: ${lat} from ${degrees}°${minutes}'${direction}`);
           return lat;
         }
       }
+      
+      // Fallback to other possible fields
+      const possibleFields = ['latitude', 'lat', 'y'];
+      
+      for (const field of possibleFields) {
+        if (element[field]) {
+          const lat = parseFloat(element[field]);
+          if (!isNaN(lat)) {
+            return lat;
+          }
+        }
+      }
+      
+      return null;
+      
+    } catch (error) {
+      this.logger.error('Error extracting latitude:', error);
+      return null;
     }
-    
-    return null;
   }
 
   /**
    * Extract longitude
    */
   extractLongitude(element) {
-    const possibleFields = ['lon', 'longitude', 'lng', 'lon_deg', 'lon_rad'];
-    
-    for (const field of possibleFields) {
-      if (element[field] !== undefined && element[field] !== null) {
-        const lon = parseFloat(element[field]);
-        if (!isNaN(lon) && lon >= -180 && lon <= 180) {
+    try {
+      // UK NOTAM structure: Coordinates in format "DDMMN/SDDDMME/W"
+      if (element.COORDINATES) {
+        const coords = element.COORDINATES.toString();
+        
+        // Extract longitude part (after latitude)
+        const lonMatch = coords.match(/(\d{3})(\d{2})([EW])/);
+        if (lonMatch) {
+          const degrees = parseInt(lonMatch[1]);
+          const minutes = parseInt(lonMatch[2]);
+          const direction = lonMatch[3];
+          
+          let lon = degrees + (minutes / 60);
+          if (direction === 'W') {
+            lon = -lon;
+          }
+          
+          this.logger.debug(`Parsed longitude: ${lon} from ${degrees}°${minutes}'${direction}`);
           return lon;
         }
       }
+      
+      // Fallback to other possible fields
+      const possibleFields = ['longitude', 'lon', 'lng', 'x'];
+      
+      for (const field of possibleFields) {
+        if (element[field]) {
+          const lon = parseFloat(element[field]);
+          if (!isNaN(lon)) {
+            return lon;
+          }
+        }
+      }
+      
+      return null;
+      
+    } catch (error) {
+      this.logger.error('Error extracting longitude:', error);
+      return null;
     }
-    
-    return null;
   }
 
   /**
@@ -1434,7 +1603,7 @@ class NOTAMConnector extends BaseConnector {
         notamUrl: {
           type: 'string',
           description: 'URL to NOTAM XML feed',
-          default: 'https://github.com/Jonty/uk-notam-archive/blob/main/data/PIB.xml'
+          default: 'https://raw.githubusercontent.com/Jonty/uk-notam-archive/main/data/PIB.xml'
         },
         pollInterval: {
           type: 'number',

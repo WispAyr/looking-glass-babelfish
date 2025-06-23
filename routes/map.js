@@ -440,32 +440,106 @@ router.get('/adsb/aircraft', async (req, res) => {
     }
 });
 
-// Get cameras for map
+// Get cameras for map using connector capabilities
 router.get('/cameras', async (req, res) => {
     try {
-        // Get cameras with location data from the camera management API
-        const cameraResponse = await fetch(`http://localhost:${process.env.PORT || 3000}/api/cameras/map`);
-        let cameras = [];
+        console.log('Map cameras endpoint called');
+        const connectorRegistry = req.app.locals.connectorRegistry;
         
-        if (cameraResponse.ok) {
-            const cameraData = await cameraResponse.json();
-            cameras = cameraData.data || [];
-        } else {
-            // Fallback to direct connector access if camera API is not available
-            const protectConnector = req.app.locals.connectorRegistry?.getConnector('unifi-protect-main');
-            if (protectConnector && protectConnector.isConnected) {
-                cameras = Array.from(protectConnector.cameras.values()).map(camera => ({
-                    id: camera.id,
-                    name: camera.name,
-                    lat: null,
-                    lng: null,
-                    hasLocation: false
-                }));
+        if (!connectorRegistry) {
+            console.log('No connector registry available');
+            return res.status(503).json({
+                success: false,
+                error: 'Connector registry not available'
+            });
+        }
+
+        console.log('Connector registry found, checking for UniFi connectors...');
+        const allCameras = [];
+        const connectorResults = [];
+
+        // Find all connectors with camera:management capability
+        for (const [connectorId, connector] of connectorRegistry.connectors.entries()) {
+            console.log(`Checking connector: ${connectorId}, type: ${connector.type}, connected: ${connector.isConnected}`);
+            if (connector.type === 'unifi-protect' && connector.isConnected) {
+                console.log(`Found connected UniFi connector: ${connectorId}`);
+                try {
+                    // Use the capability system to get cameras
+                    console.log(`Executing camera:management capability on ${connectorId}`);
+                    const result = await connector.executeCapability('camera:management', 'list', {});
+                    console.log(`Result from ${connectorId}:`, result.success, result.cameras ? result.cameras.length : 'no cameras');
+                    
+                    if (result.success && result.cameras) {
+                        // Add connector information to each camera
+                        const camerasWithConnector = result.cameras.map(camera => ({
+                            ...camera,
+                            connectorId,
+                            connectorName: connector.name || connectorId,
+                            // Add capability information for frontend
+                            capabilities: {
+                                hasStream: true,
+                                hasSnapshot: true,
+                                hasLocation: camera.hasLocation || false
+                            }
+                        }));
+                        
+                        allCameras.push(...camerasWithConnector);
+                        
+                        connectorResults.push({
+                            connectorId,
+                            connectorName: connector.name || connectorId,
+                            cameraCount: result.cameras.length,
+                            status: 'success'
+                        });
+                    } else if (result.data && result.data.cameras) {
+                        // Handle nested response structure
+                        const camerasWithConnector = result.data.cameras.map(camera => ({
+                            ...camera,
+                            connectorId,
+                            connectorName: connector.name || connectorId,
+                            capabilities: {
+                                hasStream: true,
+                                hasSnapshot: true,
+                                hasLocation: camera.hasLocation || false
+                            }
+                        }));
+                        
+                        allCameras.push(...camerasWithConnector);
+                        
+                        connectorResults.push({
+                            connectorId,
+                            connectorName: connector.name || connectorId,
+                            cameraCount: result.data.cameras.length,
+                            status: 'success'
+                        });
+                    } else {
+                        console.log(`No cameras found in ${connectorId}:`, result);
+                        connectorResults.push({
+                            connectorId,
+                            connectorName: connector.name || connectorId,
+                            cameraCount: 0,
+                            status: 'error',
+                            error: result.error || 'Failed to get cameras'
+                        });
+                    }
+                } catch (error) {
+                    console.error(`Error getting cameras from connector ${connectorId}:`, error);
+                    connectorResults.push({
+                        connectorId,
+                        connectorName: connector.name || connectorId,
+                        cameraCount: 0,
+                        status: 'error',
+                        error: error.message
+                    });
+                }
             }
         }
 
-        // Filter cameras that have location data
-        const camerasWithLocation = cameras.filter(camera => camera.hasLocation).map(camera => ({
+        console.log(`Total cameras found: ${allCameras.length}`);
+        console.log(`Connector results:`, connectorResults);
+
+        // Filter cameras that have location data for map display
+        const camerasWithLocation = allCameras.filter(camera => camera.hasLocation).map(camera => ({
             id: camera.id,
             name: camera.name || camera.locationName || `Camera ${camera.id}`,
             type: 'camera',
@@ -480,13 +554,22 @@ router.get('/cameras', async (req, res) => {
                 locationName: camera.locationName,
                 locationDescription: camera.locationDescription,
                 locationAddress: camera.locationAddress,
-                lastSeen: camera.lastSeen
+                lastSeen: camera.lastSeen,
+                connectorId: camera.connectorId,
+                connectorName: camera.connectorName,
+                capabilities: camera.capabilities
             }
         }));
 
+        console.log(`Cameras with location: ${camerasWithLocation.length}`);
+
         res.json({
             success: true,
-            cameras: camerasWithLocation
+            cameras: camerasWithLocation,
+            totalCameras: allCameras.length,
+            camerasWithLocation: camerasWithLocation.length,
+            connectors: connectorResults,
+            totalConnectors: connectorResults.length
         });
     } catch (error) {
         console.error('Error fetching cameras:', error);
@@ -1354,6 +1437,163 @@ router.get('/', (req, res) => {
 </html>`;
   
   res.send(html);
+});
+
+// Get camera stream URL using connector capabilities
+router.get('/cameras/:cameraId/stream', async (req, res) => {
+    try {
+        const { cameraId } = req.params;
+        const { connectorId, quality = 'high' } = req.query;
+        
+        const connectorRegistry = req.app.locals.connectorRegistry;
+        
+        if (!connectorRegistry) {
+            return res.status(503).json({
+                success: false,
+                error: 'Connector registry not available'
+            });
+        }
+
+        let targetConnector = null;
+
+        if (connectorId) {
+            // Use specific connector if provided
+            targetConnector = connectorRegistry.getConnector(connectorId);
+            if (!targetConnector || targetConnector.type !== 'unifi-protect') {
+                return res.status(404).json({
+                    success: false,
+                    error: `Connector ${connectorId} not found or not a UniFi Protect connector`
+                });
+            }
+        } else {
+            // Find the connector that has this camera
+            for (const [id, connector] of connectorRegistry.connectors.entries()) {
+                if (connector.type === 'unifi-protect' && connector.isConnected) {
+                    try {
+                        const result = await connector.executeCapability('camera:management', 'get', { cameraId });
+                        if (result.success && result.camera) {
+                            targetConnector = connector;
+                            break;
+                        }
+                    } catch (error) {
+                        // Continue to next connector
+                    }
+                }
+            }
+        }
+
+        if (!targetConnector) {
+            return res.status(404).json({
+                success: false,
+                error: 'Camera not found in any UniFi Protect connector'
+            });
+        }
+
+        // Get stream URL using capability system
+        const streamResult = await targetConnector.executeCapability('camera:video:stream', 'read', {
+            cameraId,
+            quality
+        });
+
+        if (!streamResult.success) {
+            return res.status(500).json({
+                success: false,
+                error: streamResult.error || 'Failed to get stream URL'
+            });
+        }
+
+        res.json({
+            success: true,
+            data: {
+                streamUrl: streamResult.streamUrl,
+                cameraId,
+                connectorId: targetConnector.id,
+                connectorName: targetConnector.name,
+                quality,
+                timestamp: new Date().toISOString()
+            }
+        });
+    } catch (error) {
+        console.error('Error getting camera stream:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// Get camera snapshot using connector capabilities
+router.get('/cameras/:cameraId/snapshot', async (req, res) => {
+    try {
+        const { cameraId } = req.params;
+        const { connectorId } = req.query;
+        
+        const connectorRegistry = req.app.locals.connectorRegistry;
+        
+        if (!connectorRegistry) {
+            return res.status(503).json({
+                success: false,
+                error: 'Connector registry not available'
+            });
+        }
+
+        let targetConnector = null;
+
+        if (connectorId) {
+            targetConnector = connectorRegistry.getConnector(connectorId);
+            if (!targetConnector || targetConnector.type !== 'unifi-protect') {
+                return res.status(404).json({
+                    success: false,
+                    error: 'Connector not found or not a UniFi Protect connector'
+                });
+            }
+        } else {
+            // Find first available UniFi Protect connector
+            for (const [id, connector] of connectorRegistry.connectors.entries()) {
+                if (connector.type === 'unifi-protect' && connector.isConnected) {
+                    targetConnector = connector;
+                    break;
+                }
+            }
+        }
+
+        if (!targetConnector) {
+            return res.status(404).json({
+                success: false,
+                error: 'No UniFi Protect connector available'
+            });
+        }
+
+        // Use the capability system to get snapshot
+        const result = await targetConnector.executeCapability('camera:snapshot', 'get', {
+            cameraId,
+            quality: 'high'
+        });
+
+        if (result.success) {
+            res.json({
+                success: true,
+                data: {
+                    snapshotUrl: result.snapshotUrl,
+                    connectorId: targetConnector.id,
+                    connectorName: targetConnector.name || targetConnector.id,
+                    timestamp: result.timestamp || Date.now(),
+                    cameraId
+                }
+            });
+        } else {
+            res.status(500).json({
+                success: false,
+                error: result.error || 'Failed to get snapshot'
+            });
+        }
+    } catch (error) {
+        console.error('Error getting camera snapshot:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
 });
 
 module.exports = router; 

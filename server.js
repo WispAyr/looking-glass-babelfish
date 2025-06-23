@@ -67,6 +67,10 @@ const APRSConnector = require('./connectors/types/APRSConnector');
 const RemotionConnector = require('./connectors/types/RemotionConnector');
 const OverwatchConnector = require('./connectors/types/OverwatchConnector');
 const PrestwickAirportConnector = require('./connectors/types/PrestwickAirportConnector');
+const SystemVisualizerConnector = require('./connectors/types/SystemVisualizerConnector');
+const TelegramConnector = require('./connectors/types/TelegramConnector');
+const AlarmManagerConnector = require('./connectors/types/AlarmManagerConnector');
+const NOTAMConnector = require('./connectors/types/NOTAMConnector');
 
 // Import analytics routes
 const analyticsRouter = require('./routes/analytics');
@@ -110,6 +114,21 @@ const AircraftDataService = require('./services/aircraftDataService');
 
 // Import squawk code service
 const SquawkCodeService = require('./services/squawkCodeService');
+
+// Import telegram route
+const telegramRouter = require('./routes/telegram');
+
+// Import alarm manager routes
+const alarmRouter = require('./routes/alarms');
+
+// Import UniFi Protect routes
+const unifiRouter = require('./routes/unifi');
+
+// Import display routes
+const displayRouter = require('./routes/display');
+
+// Import RTSP transcoding service
+const RTSPTranscodingService = require('./services/rtspTranscodingService');
 
 // Initialize logger
 const logger = winston.createLogger({
@@ -185,6 +204,9 @@ let aircraftDataService;
 
 // Squawk code service
 let squawkCodeService;
+
+// RTSP transcoding service
+let transcodingService;
 
 // Main application setup
 const app = express();
@@ -653,7 +675,8 @@ injectServices({
   get airspaceService() { return airspaceService; },
   get vectorOptimizationService() { return vectorOptimizationService; },
   get aircraftDataService() { return aircraftDataService; },
-  get squawkCodeService() { return squawkCodeService; }
+  get squawkCodeService() { return squawkCodeService; },
+  get transcodingService() { return transcodingService; }
 });
 
 // Connector event handling
@@ -889,6 +912,13 @@ async function startServer() {
 
     // Initialize connector registry
     connectorRegistry = new ConnectorRegistry(logger);
+    app.locals.connectorRegistry = connectorRegistry;
+
+    // Initialize RTSP transcoding service
+    transcodingService = new RTSPTranscodingService();
+    transcodingService.setConnectorRegistry(connectorRegistry);
+    app.locals.transcodingService = transcodingService;
+    logger.info('RTSP transcoding service initialized');
 
     // Register connector types
     connectorRegistry.registerType('unifi-protect', UnifiProtectConnector);
@@ -902,6 +932,9 @@ async function startServer() {
     connectorRegistry.registerType('remotion', RemotionConnector);
     connectorRegistry.registerType('overwatch', OverwatchConnector);
     connectorRegistry.registerType('prestwick-airport', PrestwickAirportConnector);
+    connectorRegistry.registerType('telegram', TelegramConnector);
+    connectorRegistry.registerType('alarm-manager', AlarmManagerConnector);
+    connectorRegistry.registerType('notam', NOTAMConnector);
 
     // Auto-discover and register connector types
     await connectorRegistry.autoDiscoverTypes();
@@ -927,16 +960,23 @@ async function startServer() {
     // Create speed calculation connector if it doesn't exist
     let speedCalculationConnectorInstance = connectorRegistry.getConnector('speed-calculation-main');
     if (!speedCalculationConnectorInstance) {
-      logger.info('Auto-creating Speed Calculation connector...');
-      const speedConfig = {
-        id: 'speed-calculation-main',
-        type: 'speed-calculation',
-        name: 'Main Speed Calculation',
-        description: 'Primary speed calculation service',
-        enabled: true,
-      };
-      await connectorRegistry.createConnector(speedConfig);
-      speedCalculationConnectorInstance = connectorRegistry.getConnector('speed-calculation-main');
+      // Only auto-create if not already configured in config file
+      const existingSpeedConnectors = connectorRegistry.getConnectors().filter(c => c.type === 'speed-calculation');
+      if (existingSpeedConnectors.length === 0) {
+        logger.info('Auto-creating Speed Calculation connector...');
+        const speedConfig = {
+          id: 'speed-calculation-main',
+          type: 'speed-calculation',
+          name: 'Main Speed Calculation',
+          description: 'Primary speed calculation service',
+          enabled: true,
+        };
+        await connectorRegistry.createConnector(speedConfig);
+        speedCalculationConnectorInstance = connectorRegistry.getConnector('speed-calculation-main');
+      } else {
+        speedCalculationConnectorInstance = existingSpeedConnectors[0];
+        logger.info('Using existing Speed Calculation connector from config');
+      }
     }
     speedCalculationConnector = speedCalculationConnectorInstance;
 
@@ -967,16 +1007,23 @@ async function startServer() {
     }
 
     if (!radarConnectorInstance) {
-      logger.info('Auto-creating Radar connector...');
-      const radarConfig = {
-          id: 'radar-main',
-          type: 'radar',
-          name: 'Main Radar',
-          description: 'Primary radar display service',
-          enabled: true,
-      };
-      await connectorRegistry.createConnector(radarConfig);
-      radarConnectorInstance = connectorRegistry.getConnector('radar-main');
+      // Only auto-create if not already configured in config file
+      const existingRadarConnectors = connectorRegistry.getConnectors().filter(c => c.type === 'radar');
+      if (existingRadarConnectors.length === 0) {
+        logger.info('Auto-creating Radar connector...');
+        const radarConfig = {
+            id: 'radar-main',
+            type: 'radar',
+            name: 'Main Radar',
+            description: 'Primary radar display service',
+            enabled: true,
+        };
+        await connectorRegistry.createConnector(radarConfig);
+        radarConnectorInstance = connectorRegistry.getConnector('radar-main');
+      } else {
+        radarConnectorInstance = existingRadarConnectors[0];
+        logger.info('Using existing Radar connector from config');
+      }
     }
 
     // Initialize radar connector with its dependencies
@@ -1006,22 +1053,29 @@ async function startServer() {
     // Auto-create Prestwick Airport connector
     let prestwickConnectorInstance = connectorRegistry.getConnector('prestwick-airport-main');
     if (!prestwickConnectorInstance) {
-      logger.info('Auto-creating Prestwick Airport connector...');
-      const prestwickConfig = {
-        id: 'prestwick-airport-main',
-        type: 'prestwick-airport',
-        name: 'Prestwick Airport',
-        description: 'Prestwick Airport (EGPK) aircraft operations tracking',
-        enabled: true,
-        config: {
-          prestwick: {
-            approachRadius: 50000, // 50km
-            runwayThreshold: 5000  // 5km
+      // Only auto-create if not already configured in config file
+      const existingPrestwickConnectors = connectorRegistry.getConnectors().filter(c => c.type === 'prestwick-airport');
+      if (existingPrestwickConnectors.length === 0) {
+        logger.info('Auto-creating Prestwick Airport connector...');
+        const prestwickConfig = {
+          id: 'prestwick-airport-main',
+          type: 'prestwick-airport',
+          name: 'Prestwick Airport',
+          description: 'Prestwick Airport (EGPK) aircraft operations tracking',
+          enabled: true,
+          config: {
+            prestwick: {
+              approachRadius: 50000, // 50km
+              runwayThreshold: 5000  // 5km
+            }
           }
-        }
-      };
-      await connectorRegistry.createConnector(prestwickConfig);
-      prestwickConnectorInstance = connectorRegistry.getConnector('prestwick-airport-main');
+        };
+        await connectorRegistry.createConnector(prestwickConfig);
+        prestwickConnectorInstance = connectorRegistry.getConnector('prestwick-airport-main');
+      } else {
+        prestwickConnectorInstance = existingPrestwickConnectors[0];
+        logger.info('Using existing Prestwick Airport connector from config');
+      }
     }
 
     // Initialize Prestwick Airport connector with its dependencies
@@ -1041,27 +1095,34 @@ async function startServer() {
     // Auto-create Remotion connector
     let remotionConnectorInstance = connectorRegistry.getConnector('remotion-main');
     if (!remotionConnectorInstance) {
-      logger.info('Auto-creating Remotion connector...');
-      const remotionConfig = {
-        id: 'remotion-main',
-        type: 'remotion',
-        name: 'Main Remotion',
-        description: 'Primary video rendering service for flight paths and timelines',
-        enabled: true,
-        config: {
-          outputDir: './renders',
-          templatesDir: './templates',
-          remotionProjectDir: './remotion-project',
-          defaultFps: 30,
-          defaultDuration: 15,
-          quality: 'high',
-          enableAudio: true,
-          enableSubtitles: true,
-          autoRenderEnabled: true
-        }
-      };
-      await connectorRegistry.createConnector(remotionConfig);
-      remotionConnectorInstance = connectorRegistry.getConnector('remotion-main');
+      // Only auto-create if not already configured in config file
+      const existingRemotionConnectors = connectorRegistry.getConnectors().filter(c => c.type === 'remotion');
+      if (existingRemotionConnectors.length === 0) {
+        logger.info('Auto-creating Remotion connector...');
+        const remotionConfig = {
+          id: 'remotion-main',
+          type: 'remotion',
+          name: 'Main Remotion',
+          description: 'Primary video rendering service for flight paths and timelines',
+          enabled: true,
+          config: {
+            outputDir: './renders',
+            templatesDir: './templates',
+            remotionProjectDir: './remotion-project',
+            defaultFps: 30,
+            defaultDuration: 15,
+            quality: 'high',
+            enableAudio: true,
+            enableSubtitles: true,
+            autoRenderEnabled: true
+          }
+        };
+        await connectorRegistry.createConnector(remotionConfig);
+        remotionConnectorInstance = connectorRegistry.getConnector('remotion-main');
+      } else {
+        remotionConnectorInstance = existingRemotionConnectors[0];
+        logger.info('Using existing Remotion connector from config');
+      }
     }
 
     // Initialize Remotion connector with its dependencies
@@ -1253,6 +1314,130 @@ async function startServer() {
     // Mount camera location management routes
     app.use('/api/cameras', require('./routes/cameras'));
 
+    // Mount telegram routes
+    app.use('/api/telegram', telegramRouter);
+
+    // Mount alarm manager routes
+    app.use('/alarms', alarmRouter);
+
+    // Mount UniFi Protect routes
+    app.use('/unifi', unifiRouter);
+
+    // Mount display routes
+    app.use('/display', displayRouter);
+
+    // Mount RTSP transcoding routes
+    app.get('/api/transcoding/status', async (req, res) => {
+      try {
+        const status = transcodingService.getStatus();
+        res.json({
+          success: true,
+          data: status
+        });
+      } catch (error) {
+        res.status(500).json({
+          success: false,
+          error: error.message
+        });
+      }
+    });
+
+    app.get('/api/transcoding/cameras', async (req, res) => {
+      try {
+        const cameras = await transcodingService.discoverCameras();
+        res.json({
+          success: true,
+          data: cameras,
+          count: cameras.length
+        });
+      } catch (error) {
+        res.status(500).json({
+          success: false,
+          error: error.message
+        });
+      }
+    });
+
+    app.post('/api/transcoding/start/:cameraId', async (req, res) => {
+      try {
+        const { cameraId } = req.params;
+        await transcodingService.startTranscoding(cameraId);
+        res.json({ 
+          success: true, 
+          message: `Started transcoding for ${cameraId}` 
+        });
+      } catch (error) {
+        res.status(500).json({
+          success: false,
+          error: error.message
+        });
+      }
+    });
+
+    app.post('/api/transcoding/stop/:cameraId', async (req, res) => {
+      try {
+        const { cameraId } = req.params;
+        transcodingService.stopTranscoding(cameraId);
+        res.json({ 
+          success: true, 
+          message: `Stopped transcoding for ${cameraId}` 
+        });
+      } catch (error) {
+        res.status(500).json({
+          success: false,
+          error: error.message
+        });
+      }
+    });
+
+    app.post('/api/transcoding/start-all', async (req, res) => {
+      try {
+        await transcodingService.startAll();
+        res.json({ 
+          success: true, 
+          message: 'Started all transcoding' 
+        });
+      } catch (error) {
+        res.status(500).json({
+          success: false,
+          error: error.message
+        });
+      }
+    });
+
+    app.post('/api/transcoding/stop-all', async (req, res) => {
+      try {
+        transcodingService.stopAll();
+        res.json({ 
+          success: true, 
+          message: 'Stopped all transcoding' 
+        });
+      } catch (error) {
+        res.status(500).json({
+          success: false,
+          error: error.message
+        });
+      }
+    });
+
+    app.post('/api/transcoding/refresh', async (req, res) => {
+      try {
+        await transcodingService.refreshCameras();
+        res.json({ 
+          success: true, 
+          message: 'Camera discovery refreshed' 
+        });
+      } catch (error) {
+        res.status(500).json({
+          success: false,
+          error: error.message
+        });
+      }
+    });
+
+    // Serve HLS streams
+    app.use('/streams', express.static(path.join(__dirname, 'public', 'streams')));
+
     // Serve Overwatch dashboard at /overwatch and /overwatch/
     app.get(['/overwatch', '/overwatch/'], (req, res) => {
       res.sendFile(path.join(__dirname, 'public', 'overwatch.html'));
@@ -1277,6 +1462,7 @@ async function startServer() {
     app.locals.mapIntegrationService = mapIntegrationService;
     app.locals.healthMonitor = healthMonitor;
     app.locals.flowBuilder = flowBuilder;
+    app.locals.logger = logger;
     
     // Initialize speed calculation routes
     new SpeedRoutes({
@@ -1336,6 +1522,10 @@ async function startServer() {
       logger.info(`🛩️ Radar API: http://${config.server.host}:${config.server.port}/radar`);
       logger.info(`📊 Flight History: http://${config.server.host}:${config.server.port}/history`);
       logger.info(`🔍 Overwatch API: http://${config.server.host}:${config.server.port}/overwatch`);
+      logger.info(`🚨 Alarm Manager: http://${config.server.host}:${config.server.port}/alarms`);
+      logger.info(`📺 Display Manager: http://${config.server.host}:${config.server.port}/display`);
+      logger.info(`📹 RTSP Transcoding: http://${config.server.host}:${config.server.port}/api/transcoding/status`);
+      logger.info(`🎥 Camera Streams: http://${config.server.host}:${config.server.port}/streams/`);
       
       if (mqttBroker) {
         logger.info(`📨 MQTT broker connected to localhost:1883`);
