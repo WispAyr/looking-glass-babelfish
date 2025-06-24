@@ -426,6 +426,35 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## 🔄 Recent Updates
 
+### ✅ **Alarm Action Execution Fixed**
+- **Issue**: Action execution failing with "Cannot read properties of undefined (reading 'type')"
+- **Solution**: 
+  - Fixed action handler registration in Flow Orchestrator
+  - Corrected parameter passing between Rule Engine and Action Framework
+  - Updated action handler signature to properly receive action parameter
+- **Result**: Alarm rules now execute actions successfully without errors
+
+### ✅ **Alarm Manager GUI Enhanced**
+- **Issue**: Basic alarm interface missing advanced features
+- **Solution**: 
+  - Added notification channels monitoring (Telegram, MQTT)
+  - Added recent events viewer with real-time updates
+  - Added Telegram command testing interface
+  - Added system status dashboard
+  - Enhanced rule management with advanced conditions
+  - Added test notification functionality
+- **Result**: Full-featured alarm management interface with all advanced capabilities
+
+### ✅ **Map Rate Limiting Improvements**
+- **Issue**: Map interface hitting 429 rate limits due to frequent polling
+- **Solution**: 
+  - Increased polling interval from 5 to 15 seconds
+  - Implemented exponential backoff for rate-limited requests
+  - Added proper error handling for 429 responses
+  - Increased map API rate limit from 300 to 600 requests/minute
+  - Staggered initial data requests to reduce server load
+- **Result**: Map interface now operates smoothly without rate limiting errors
+
 ### ✅ **Telegram Connector Integration Fixed**
 - **Issue**: 409 Conflict error due to missing connector registration
 - **Solution**: Added TelegramConnector import and registration in server.js
@@ -449,6 +478,60 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - **Live metrics and health monitoring**
 - **WebSocket-based real-time updates**
 
----
+## Current System Architecture
+
+### Alarm Center (Active)
+The **Alarm Center** is the primary automation system currently in use. It provides:
+- **Simple Rule-Based Automation**: Easy-to-understand rules for event processing
+- **Notification Management**: Telegram, MQTT, and GUI notifications
+- **Event Processing**: Real-time event handling with conditions and actions
+- **Escalation**: Multi-level alarm escalation
+- **Command Processing**: Telegram command handling
+- **Web Interface**: `/alarms` endpoint for management
+
+**Example Rule:**
+```javascript
+{
+  id: 'motion-notification-rule',
+  name: 'Motion Detection Notification',
+  conditions: {
+    eventType: 'motion',
+    source: 'unifi-protect-websocket'
+  },
+  actions: [
+    {
+      type: 'send_notification',
+      parameters: {
+        message: 'Motion detected on camera {{deviceId}}',
+        priority: 'medium',
+        channels: ['gui', 'telegram']
+      }
+    }
+  ]
+}
+```
+
+### Flow System (Temporarily Disabled)
+The **Flow System** has been temporarily disabled to reduce complexity and confusion. It provided:
+- **Visual Flow Builder**: Drag-and-drop workflow creation
+- **Complex Automation**: Multi-step processes with conditional branching
+- **Advanced Orchestration**: Complex connector interactions
+
+**Status**: The flow system code is preserved but disabled. It can be re-enabled if complex automation needs arise in the future.
+
+### Why This Decision?
+1. **Overlap**: Both systems could handle the same use cases
+2. **Complexity**: Flows added unnecessary complexity for current needs
+3. **Active Usage**: Rules are actively used, flows were barely used
+4. **Maintenance**: Two systems doing similar things created maintenance burden
+5. **Simplicity**: Rules are simpler and more straightforward
+
+### Migration Path
+If you need complex automation that rules can't handle:
+1. Re-enable the flow system by uncommenting the disabled code in `server.js`
+2. Use the visual flow builder at `/flows`
+3. Create complex multi-step workflows
+
+For most use cases, the Alarm Center rules system is sufficient and easier to manage.
 
 *Babelfish Looking Glass - Unified Spatial Intelligence Platform* 

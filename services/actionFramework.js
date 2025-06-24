@@ -77,6 +77,14 @@ class ActionFramework {
    * Execute an action
    */
   async executeAction(action, context) {
+    if (!action) {
+      throw new Error('Action is required but was undefined or null');
+    }
+    
+    if (!action.type) {
+      throw new Error('Action type is required but was undefined or null');
+    }
+    
     const handler = this.actions.get(action.type);
     if (!handler) {
       throw new Error(`Unknown action type: ${action.type}`);
@@ -118,10 +126,58 @@ class ActionFramework {
       throw new Error('MQTT topic is required');
     }
     
-    // Get MQTT connector
-    const mqttConnector = context.connectors?.get('mqtt');
+    // Get MQTT connector - try to find by type first, then by common IDs
+    let mqttConnector = null;
+    if (context.connectors) {
+      // Try to find MQTT connector by type
+      for (const [id, connector] of context.connectors) {
+        if (connector.type === 'mqtt' || connector.config?.type === 'mqtt') {
+          mqttConnector = connector;
+          break;
+        }
+      }
+      
+      // If not found by type, try common MQTT connector IDs
+      if (!mqttConnector) {
+        const commonMqttIds = ['mqtt', 'mqtt-broker-main', 'mqtt-main', 'mqtt-broker'];
+        for (const id of commonMqttIds) {
+          if (context.connectors.has(id)) {
+            mqttConnector = context.connectors.get(id);
+            break;
+          }
+        }
+      }
+    }
+    
+    // Graceful degradation - log warning but don't throw error
     if (!mqttConnector) {
-      throw new Error('MQTT connector not available');
+      this.logger.warn('MQTT connector not available - skipping MQTT publish action', {
+        topic,
+        action: action.type,
+        context: context.event?.source || 'unknown'
+      });
+      return {
+        success: false,
+        error: 'MQTT connector not available',
+        topic,
+        timestamp: new Date().toISOString()
+      };
+    }
+    
+    // Check if MQTT connector is connected
+    if (!mqttConnector.connected) {
+      this.logger.warn('MQTT connector not connected - skipping MQTT publish action', {
+        topic,
+        connectorId: mqttConnector.id,
+        action: action.type
+      });
+      return {
+        success: false,
+        error: 'MQTT connector not connected',
+        topic,
+        connectorId: mqttConnector.id,
+        timestamp: new Date().toISOString()
+      };
     }
     
     // Use payload if provided, otherwise fall back to message
@@ -131,15 +187,31 @@ class ActionFramework {
     this.logger.debug(`Publishing to MQTT topic: ${topic}`, {
       payload: finalPayload,
       qos,
-      retain
+      retain,
+      connectorId: mqttConnector.id
     });
     
-    return await mqttConnector.execute('mqtt:publish', 'publish', {
-      topic,
-      message: finalPayload,
-      qos,
-      retain
-    });
+    try {
+      return await mqttConnector.execute('mqtt:publish', 'publish', {
+        topic,
+        message: finalPayload,
+        qos,
+        retain
+      });
+    } catch (error) {
+      this.logger.error('Failed to publish MQTT message', {
+        topic,
+        error: error.message,
+        connectorId: mqttConnector.id
+      });
+      return {
+        success: false,
+        error: error.message,
+        topic,
+        connectorId: mqttConnector.id,
+        timestamp: new Date().toISOString()
+      };
+    }
   }
   
   /**
@@ -152,15 +224,79 @@ class ActionFramework {
       throw new Error('MQTT topic is required');
     }
     
-    const mqttConnector = context.connectors?.get('mqtt');
-    if (!mqttConnector) {
-      throw new Error('MQTT connector not available');
+    // Get MQTT connector - try to find by type first, then by common IDs
+    let mqttConnector = null;
+    if (context.connectors) {
+      // Try to find MQTT connector by type
+      for (const [id, connector] of context.connectors) {
+        if (connector.type === 'mqtt' || connector.config?.type === 'mqtt') {
+          mqttConnector = connector;
+          break;
+        }
+      }
+      
+      // If not found by type, try common MQTT connector IDs
+      if (!mqttConnector) {
+        const commonMqttIds = ['mqtt', 'mqtt-broker-main', 'mqtt-main', 'mqtt-broker'];
+        for (const id of commonMqttIds) {
+          if (context.connectors.has(id)) {
+            mqttConnector = context.connectors.get(id);
+            break;
+          }
+        }
+      }
     }
     
-    return await mqttConnector.execute('mqtt:subscribe', 'subscribe', {
-      topic,
-      qos
-    });
+    // Graceful degradation - log warning but don't throw error
+    if (!mqttConnector) {
+      this.logger.warn('MQTT connector not available - skipping MQTT subscribe action', {
+        topic,
+        action: action.type,
+        context: context.event?.source || 'unknown'
+      });
+      return {
+        success: false,
+        error: 'MQTT connector not available',
+        topic,
+        timestamp: new Date().toISOString()
+      };
+    }
+    
+    // Check if MQTT connector is connected
+    if (!mqttConnector.connected) {
+      this.logger.warn('MQTT connector not connected - skipping MQTT subscribe action', {
+        topic,
+        connectorId: mqttConnector.id,
+        action: action.type
+      });
+      return {
+        success: false,
+        error: 'MQTT connector not connected',
+        topic,
+        connectorId: mqttConnector.id,
+        timestamp: new Date().toISOString()
+      };
+    }
+    
+    try {
+      return await mqttConnector.execute('mqtt:subscribe', 'subscribe', {
+        topic,
+        qos
+      });
+    } catch (error) {
+      this.logger.error('Failed to subscribe to MQTT topic', {
+        topic,
+        error: error.message,
+        connectorId: mqttConnector.id
+      });
+      return {
+        success: false,
+        error: error.message,
+        topic,
+        connectorId: mqttConnector.id,
+        timestamp: new Date().toISOString()
+      };
+    }
   }
   
   /**

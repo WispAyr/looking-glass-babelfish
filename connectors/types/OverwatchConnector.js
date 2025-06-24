@@ -869,30 +869,49 @@ class OverwatchConnector extends BaseConnector {
   }
   
   /**
-   * Perform system health check
+   * Perform health check
    */
-  performHealthCheck() {
-    const health = {
-      timestamp: new Date().toISOString(),
-      connectors: {},
-      system: {
-        memory: process.memoryUsage(),
-        uptime: process.uptime(),
-        eventHistorySize: this.eventHistory.length
-      },
-      performance: this.performanceMetrics
-    };
-    
-    // Check connector health
-    this.connectedConnectors.forEach((connector, connectorId) => {
-      health.connectors[connectorId] = {
-        status: connector.status,
-        lastActivity: connector.stats.lastActivity,
-        errors: connector.stats.errors
+  async performHealthCheck() {
+    try {
+      const health = {
+        timestamp: new Date().toISOString(),
+        connectors: {},
+        system: {
+          memory: process.memoryUsage(),
+          uptime: process.uptime(),
+          eventHistorySize: this.eventHistory.length
+        },
+        performance: this.performanceMetrics
       };
-    });
-    
-    this.processSystemEvent('health:check', health);
+      
+      // Check connector health
+      this.connectedConnectors.forEach((connector, connectorId) => {
+        health.connectors[connectorId] = {
+          status: connector.status,
+          lastActivity: connector.stats?.lastActivity,
+          errors: connector.stats?.errors || 0
+        };
+      });
+      
+      this.logger.info('[OverwatchConnector] performHealthCheck called', { health });
+      
+      this.processSystemEvent('health:check', health);
+      
+      const result = {
+        healthy: true,
+        details: health,
+        timestamp: new Date().toISOString()
+      };
+      this.logger.info('[OverwatchConnector] performHealthCheck returning', { result });
+      return result;
+    } catch (error) {
+      this.logger.error('[OverwatchConnector] performHealthCheck error', { error });
+      return {
+        healthy: false,
+        error: error.message,
+        timestamp: new Date().toISOString()
+      };
+    }
   }
   
   /**
@@ -948,6 +967,30 @@ class OverwatchConnector extends BaseConnector {
         return await this.disableFlow(parameters.id);
       default:
         throw new Error(`Unknown flow operation: ${operation}`);
+    }
+  }
+  
+  /**
+   * Execute rule operations
+   */
+  async executeRuleOperation(operation, parameters) {
+    switch (operation) {
+      case 'list':
+        return Array.from(this.rules.values());
+      case 'get':
+        return this.rules.get(parameters.id);
+      case 'create':
+        return await this.createRule(parameters);
+      case 'update':
+        return await this.updateRule(parameters.id, parameters);
+      case 'delete':
+        return await this.deleteRule(parameters.id);
+      case 'enable':
+        return await this.enableRule(parameters.id);
+      case 'disable':
+        return await this.disableRule(parameters.id);
+      default:
+        throw new Error(`Unknown rule operation: ${operation}`);
     }
   }
   
@@ -1235,6 +1278,49 @@ class OverwatchConnector extends BaseConnector {
    */
   removeWebSocketConnection(ws) {
     this.webSocketConnections.delete(ws);
+  }
+  
+  // Rule operation helper methods
+  async createRule(ruleData) {
+    const ruleId = ruleData.id || `rule-${Date.now()}`;
+    const rule = {
+      ...ruleData,
+      id: ruleId,
+      createdAt: new Date().toISOString(),
+      enabled: true
+    };
+    
+    this.rules.set(ruleId, rule);
+    return rule;
+  }
+  
+  async updateRule(ruleId, updates) {
+    const rule = this.rules.get(ruleId);
+    if (!rule) {
+      throw new Error(`Rule not found: ${ruleId}`);
+    }
+    
+    const updatedRule = { ...rule, ...updates, updatedAt: new Date().toISOString() };
+    this.rules.set(ruleId, updatedRule);
+    return updatedRule;
+  }
+  
+  async deleteRule(ruleId) {
+    const rule = this.rules.get(ruleId);
+    if (!rule) {
+      throw new Error(`Rule not found: ${ruleId}`);
+    }
+    
+    this.rules.delete(ruleId);
+    return { success: true, message: `Rule ${ruleId} deleted` };
+  }
+  
+  async enableRule(ruleId) {
+    return await this.updateRule(ruleId, { enabled: true });
+  }
+  
+  async disableRule(ruleId) {
+    return await this.updateRule(ruleId, { enabled: false });
   }
 }
 

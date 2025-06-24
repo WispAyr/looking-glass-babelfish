@@ -58,16 +58,40 @@ class RTSPTranscodingService {
       cameras.push(...ankkeCameras);
     }
     
+    // Validate camera objects and ensure they have required properties
+    const validCameras = cameras.filter(camera => {
+      if (!camera || typeof camera !== 'object') {
+        console.warn('Invalid camera object:', camera);
+        return false;
+      }
+      
+      if (!camera.id || !camera.name || !camera.hlsPath) {
+        console.warn('Camera missing required properties:', {
+          id: camera.id,
+          name: camera.name,
+          hlsPath: camera.hlsPath
+        });
+        return false;
+      }
+      
+      if (typeof camera.hlsPath !== 'string') {
+        console.warn(`Camera ${camera.id} has invalid hlsPath type:`, typeof camera.hlsPath, camera.hlsPath);
+        return false;
+      }
+      
+      return true;
+    });
+    
     // Update cache
     this.cameraCache.clear();
-    cameras.forEach(camera => {
+    validCameras.forEach(camera => {
       this.cameraCache.set(camera.id, camera);
     });
     
     this.lastDiscovery = now;
-    console.log(`✅ Discovered ${cameras.length} cameras total`);
+    console.log(`✅ Discovered ${validCameras.length} valid cameras out of ${cameras.length} total`);
     
-    return cameras;
+    return validCameras;
   }
   
   async discoverUnifiCameras() {
@@ -79,28 +103,47 @@ class RTSPTranscodingService {
           console.log(`🔍 Discovering cameras from UniFi Protect connector: ${connectorId}`);
           const result = await connector.executeCapability('camera:management', 'list', {});
           
+          console.log(`📊 UniFi result for ${connectorId}:`, {
+            success: result.success,
+            hasCameras: !!result.cameras,
+            cameraCount: result.cameras?.length || 0
+          });
+          
           if (result.success && result.cameras) {
-            const unifiCameras = result.cameras.map(camera => ({
-              id: `unifi-${camera.id}`,
-              name: camera.name || `UniFi Camera ${camera.id}`,
-              connectorId: connectorId,
-              connectorType: 'unifi-protect',
-              cameraId: camera.id,
-              streamFormat: 'rtsps',
-              quality: this.config.connectors.unifiProtect.quality,
-              hlsPath: `/streams/unifi-${camera.id}.m3u8`,
-              segmentDuration: this.config.segmentDuration,
-              enabled: true,
-              metadata: {
-                type: camera.type,
-                model: camera.model,
-                hasLocation: camera.hasLocation,
-                isMotionDetected: camera.isMotionDetected
-              }
-            }));
+            const unifiCameras = result.cameras.map(camera => {
+              const cameraObj = {
+                id: `unifi-${camera.id}`,
+                name: camera.name || `UniFi Camera ${camera.id}`,
+                connectorId: connectorId,
+                connectorType: 'unifi-protect',
+                cameraId: camera.id,
+                streamFormat: 'rtsps',
+                quality: this.config.connectors.unifiProtect.quality,
+                hlsPath: `/streams/unifi-${camera.id}.m3u8`,
+                segmentDuration: this.config.segmentDuration,
+                enabled: true,
+                metadata: {
+                  type: camera.type,
+                  model: camera.model,
+                  hasLocation: camera.hasLocation,
+                  isMotionDetected: camera.isMotionDetected
+                }
+              };
+              
+              console.log(`📷 Created camera object for ${camera.id}:`, {
+                id: cameraObj.id,
+                name: cameraObj.name,
+                hlsPath: cameraObj.hlsPath,
+                hlsPathType: typeof cameraObj.hlsPath
+              });
+              
+              return cameraObj;
+            });
             
             cameras.push(...unifiCameras);
             console.log(`✅ Found ${unifiCameras.length} UniFi cameras from ${connectorId}`);
+          } else {
+            console.warn(`⚠️ UniFi connector ${connectorId} returned invalid result:`, result);
           }
         } catch (error) {
           console.error(`❌ Failed to discover UniFi cameras from ${connectorId}:`, error.message);

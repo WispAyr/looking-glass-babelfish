@@ -36,6 +36,10 @@ class ConnectorRegistry extends EventEmitter {
    * Initialize the registry by loading configuration
    */
   async initialize() {
+    // First auto-discover connector types so they're available when loading configuration
+    await this.autoDiscoverTypes();
+    
+    // Then load configuration which will create connectors
     await this.loadConfiguration();
   }
   
@@ -523,7 +527,8 @@ class ConnectorRegistry extends EventEmitter {
               'AnkkeDvr': 'ankke-dvr',
               'GuiDesigner': 'gui-designer',
               'Hikvision': 'hikvision',
-              'SpeedDetectionGui': 'speed-detection-gui'
+              'SpeedDetectionGui': 'speed-detection-gui',
+              'PrestwickAirport': 'prestwick-airport'
             };
             
             if (typeMappings[type]) {

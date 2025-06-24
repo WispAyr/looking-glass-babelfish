@@ -893,6 +893,124 @@ class SpeedDetectionGuiConnector extends BaseConnector {
       }
     };
   }
+
+  /**
+   * Get capability definitions (static method)
+   */
+  static getCapabilityDefinitions() {
+    return [
+      {
+        id: 'speed-detection-setup',
+        name: 'Speed Detection Setup',
+        description: 'Configure and manage speed detection systems',
+        category: 'speed-detection',
+        operations: ['create', 'update', 'delete', 'list', 'get', 'start', 'stop'],
+        dataTypes: ['speed-detection-system'],
+        events: ['system:created', 'system:updated', 'system:deleted', 'system:started', 'system:stopped'],
+        requiresConnection: false
+      },
+      {
+        id: 'camera-selection',
+        name: 'Camera Selection',
+        description: 'Discover and select cameras for speed detection',
+        category: 'camera',
+        operations: ['discover', 'list', 'get', 'test'],
+        dataTypes: ['camera'],
+        events: ['camera:discovered', 'camera:selected', 'camera:tested'],
+        requiresConnection: false
+      },
+      {
+        id: 'map-integration',
+        name: 'Map Integration',
+        description: 'Integrate with maps for line crossing configuration',
+        category: 'map',
+        operations: ['getLocation', 'setLocation', 'calculateDistance'],
+        dataTypes: ['location', 'line'],
+        events: ['location:set', 'distance:calculated'],
+        requiresConnection: false
+      },
+      {
+        id: 'line-crossing-configuration',
+        name: 'Line Crossing Configuration',
+        description: 'Configure line crossings for speed detection',
+        category: 'line-crossing',
+        operations: ['create', 'update', 'delete', 'list', 'test'],
+        dataTypes: ['line-crossing'],
+        events: ['line:created', 'line:updated', 'line:deleted', 'line:tested'],
+        requiresConnection: false
+      },
+      {
+        id: 'speed-calculation-monitoring',
+        name: 'Speed Calculation Monitoring',
+        description: 'Monitor speed calculations and alerts',
+        category: 'monitoring',
+        operations: ['getCalculations', 'getAlerts', 'getStats'],
+        dataTypes: ['speed-calculation', 'speed-alert', 'speed-stats'],
+        events: ['calculation:completed', 'alert:triggered', 'stats:updated'],
+        requiresConnection: false
+      },
+      {
+        id: 'multi-system-management',
+        name: 'Multi-System Management',
+        description: 'Manage multiple speed detection systems',
+        category: 'management',
+        operations: ['list', 'get', 'start', 'stop'],
+        dataTypes: ['system-list', 'system-status'],
+        events: ['system:status-changed'],
+        requiresConnection: false
+      }
+    ];
+  }
+
+  /**
+   * Validate configuration (static method)
+   */
+  static validateConfig(config) {
+    const errors = [];
+    
+    if (!config.id) {
+      errors.push('ID is required');
+    }
+    
+    if (config.webInterface && config.webInterface.port) {
+      const port = parseInt(config.webInterface.port);
+      if (isNaN(port) || port < 1 || port > 65535) {
+        errors.push('Web interface port must be a valid port number (1-65535)');
+      }
+    }
+    
+    if (config.speedDetection && config.speedDetection.maxSystems) {
+      const maxSystems = parseInt(config.speedDetection.maxSystems);
+      if (isNaN(maxSystems) || maxSystems < 1 || maxSystems > 100) {
+        errors.push('Max systems must be a number between 1 and 100');
+      }
+    }
+    
+    return {
+      valid: errors.length === 0,
+      errors
+    };
+  }
+
+  /**
+   * Get connector metadata (static method)
+   */
+  static getMetadata() {
+    return {
+      type: 'speed-detection-gui',
+      version: '1.0.0',
+      description: 'Web-based interface for setting up and managing line crossing speed detection systems',
+      author: 'Looking Glass Platform',
+      capabilities: [
+        'speed-detection-setup',
+        'camera-selection',
+        'map-integration',
+        'line-crossing-configuration',
+        'speed-calculation-monitoring',
+        'multi-system-management'
+      ]
+    };
+  }
 }
 
 module.exports = SpeedDetectionGuiConnector; 

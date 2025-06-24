@@ -28,9 +28,10 @@ async function startServer() {
     // Wait a moment for ports to be fully released
     await new Promise(resolve => setTimeout(resolve, 1000));
     
-    console.log('🚀 Starting server...');
+    console.log('🚀 Starting main server...');
+    console.log('📊 System Visualizer will be started automatically by the main server');
     
-    // Start the server
+    // Start the main server
     const { spawn } = require('child_process');
     const server = spawn('node', ['server.js'], {
       stdio: 'inherit',

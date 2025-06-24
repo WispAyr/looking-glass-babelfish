@@ -37,10 +37,27 @@ class SecurityMiddleware {
   }
 
   /**
-   * Get rate limiter middleware
+   * Get general rate limiter
    */
   getRateLimiter() {
-    return rateLimit(this.config.rateLimit);
+    return rateLimit({
+      windowMs: 15 * 60 * 1000, // 15 minutes
+      max: 1000, // limit each IP to 1000 requests per windowMs
+      message: 'Too many requests, please try again later.',
+      standardHeaders: true,
+      legacyHeaders: false,
+      skip: (req, res) => {
+        // Skip WebSocket upgrade requests
+        if (req.headers.upgrade && req.headers.upgrade.toLowerCase() === 'websocket') {
+          return true;
+        }
+        // Skip WebSocket routes
+        if (req.path && req.path.startsWith('/alarms/ws/')) {
+          return true;
+        }
+        return false;
+      }
+    });
   }
 
   /**
@@ -49,8 +66,38 @@ class SecurityMiddleware {
   getMapRateLimiter() {
     return rateLimit({
       windowMs: 1 * 60 * 1000, // 1 minute
-      max: 300, // limit each IP to 300 requests per minute for map data
+      max: 600, // limit each IP to 600 requests per minute for map data (increased from 300)
       message: 'Too many map requests, please slow down.',
+      standardHeaders: true,
+      legacyHeaders: false,
+      skipSuccessfulRequests: true, // Don't count successful requests
+      skipFailedRequests: false
+    });
+  }
+
+  /**
+   * Get lenient rate limiter for alarms endpoints
+   */
+  getAlarmsRateLimiter() {
+    return rateLimit({
+      windowMs: 1 * 60 * 1000, // 1 minute
+      max: 300, // limit each IP to 300 requests per minute for alarms
+      message: 'Too many alarm requests, please slow down.',
+      standardHeaders: true,
+      legacyHeaders: false,
+      skipSuccessfulRequests: true, // Don't count successful requests
+      skipFailedRequests: false
+    });
+  }
+
+  /**
+   * Get lenient rate limiter for overwatch endpoints
+   */
+  getOverwatchRateLimiter() {
+    return rateLimit({
+      windowMs: 1 * 60 * 1000, // 1 minute
+      max: 500, // limit each IP to 500 requests per minute for overwatch
+      message: 'Too many overwatch requests, please slow down.',
       standardHeaders: true,
       legacyHeaders: false,
       skipSuccessfulRequests: true, // Don't count successful requests

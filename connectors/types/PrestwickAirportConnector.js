@@ -1,5 +1,6 @@
 const BaseConnector = require('../BaseConnector');
 const PrestwickAirportService = require('../../services/prestwickAirportService');
+const AircraftDataService = require('../../services/aircraftDataService');
 
 /**
  * Prestwick Airport Connector
@@ -10,10 +11,10 @@ class PrestwickAirportConnector extends BaseConnector {
     super(config);
     
     this.prestwickService = new PrestwickAirportService(config.prestwick || {});
+    this.aircraftDataService = new AircraftDataService(config.aircraftData || {});
     this.adsbConnector = null;
     this.eventBus = null;
     this.connectorRegistry = null;
-    this.telegramConnector = null;
     this.notamConnector = null;
     
     // Track processed events
@@ -31,20 +32,11 @@ class PrestwickAirportConnector extends BaseConnector {
       totalLandings: 0,
       totalTakeoffs: 0,
       totalDepartures: 0,
+      totalEnRoute: 0,
       notamQueries: 0,
       notamAlerts: 0,
+      aircraftEnhanced: 0,
       lastActivity: new Date().toISOString()
-    };
-    
-    // Telegram notification settings
-    this.telegramConfig = {
-      enabled: true,
-      chatId: config.telegram?.chatId || -1001242323336,
-      notifyApproaches: true,
-      notifyLandings: true,
-      notifyTakeoffs: true,
-      notifyDepartures: true,
-      notifyNotams: true
     };
 
     // NOTAM integration settings
@@ -56,6 +48,12 @@ class PrestwickAirportConnector extends BaseConnector {
       checkOnTakeoff: true,
       priorityThreshold: 'medium' // Only alert on medium+ priority NOTAMs
     };
+
+    // Distance tracking
+    this.aircraftDistances = new Map();
+    
+    // Initialize dependencies
+    this.initializeDependencies();
   }
 
   static getMetadata() {
@@ -131,20 +129,6 @@ class PrestwickAirportConnector extends BaseConnector {
         }
       },
       {
-        id: 'telegram:notifications',
-        name: 'Telegram Notifications',
-        description: 'Send Telegram notifications for aircraft events',
-        category: 'notifications',
-        operations: ['configure_notifications', 'get_notification_config', 'test_notification'],
-        dataTypes: ['notification:config', 'notification:status'],
-        events: ['notification:sent', 'notification:failed'],
-        parameters: {
-          enabled: { type: 'boolean', required: false },
-          chatId: { type: 'string', required: false },
-          eventTypes: { type: 'array', required: false }
-        }
-      },
-      {
         id: 'notam:integration',
         name: 'NOTAM Integration',
         description: 'Query and monitor NOTAMs related to Prestwick Airport',
@@ -184,33 +168,115 @@ class PrestwickAirportConnector extends BaseConnector {
     try {
       this.logger.info('Connecting Prestwick Airport Connector');
       
-      // Set up event listeners for the Prestwick service
+      // Check dependencies first
+      const dependencyCheck = await this.checkDependencies();
+      
+      if (!dependencyCheck.available) {
+        this.logger.warn('Some dependencies are not available', {
+          missing: dependencyCheck.missing,
+          errors: dependencyCheck.errors
+        });
+        
+        // Handle critical dependency failures
+        for (const connectorId of dependencyCheck.missing) {
+          const dependency = this.dependencies.get(connectorId);
+          if (dependency && dependency.critical) {
+            await this.handleDependencyFailure(connectorId, new Error('Critical dependency not available'));
+          }
+        }
+      }
+      
+      // Connect to dependencies
+      await this.connectToDependencies();
+      
+      // Set up event listeners
       this.setupPrestwickEventListeners();
-      
-      // Try to connect to ADSB connector (primary data source)
-      await this.connectToADSBConnector();
-      
-      // Set up ADSB ground event listeners after connecting to ADSB
       this.setupADSBGroundEventListeners();
       
-      // Try to connect to NOTAM connector
-      await this.connectToNotamConnector();
+      // Set up ADSB event listener if available
+      if (this.adsbConnector) {
+        // Listen for aircraft updates from ADSB
+        this.adsbConnector.on('aircraft:appeared', (event) => {
+          this.logger.debug('Received aircraft:appeared event directly from ADSB connector', { event });
+          this.handleADSBEvent(event);
+        });
+        
+        // Listen for aircraft movement events
+        this.adsbConnector.on('aircraft:moved', (event) => {
+          this.logger.debug('Received aircraft:moved event directly from ADSB connector', { event });
+          this.handleADSBEvent(event);
+        });
+        
+        // Listen for aircraft update events
+        this.adsbConnector.on('aircraft:updated', (event) => {
+          this.logger.debug('Received aircraft:updated event directly from ADSB connector', { event });
+          this.handleADSBEvent(event);
+        });
+        
+        // Listen for aircraft disappearance events
+        this.adsbConnector.on('aircraft:disappeared', (event) => {
+          this.logger.debug('Received aircraft:disappeared event directly from ADSB connector', { event });
+          this.handleADSBEvent(event);
+        });
+        
+        // Listen for emergency events
+        this.adsbConnector.on('aircraft:emergency', (event) => {
+          this.logger.debug('Received aircraft:emergency event directly from ADSB connector', { event });
+          this.handleADSBEvent(event);
+        });
+        
+        this.logger.info('ADSB event listeners configured');
+      } else {
+        this.logger.warn('ADSB connector not available - no aircraft data will be processed');
+      }
       
-      this.logger.info('Prestwick Airport Connector connected successfully');
+      // Set up event bus listeners for ADSB events
+      if (this.eventBus) {
+        // Listen for aircraft events from ADSB through event bus
+        this.eventBus.on('aircraft:appeared', (event) => {
+          if (event.source === 'adsb-main') {
+            this.logger.debug('Received aircraft:appeared event from event bus', { event });
+            this.handleADSBEvent(event);
+          }
+        });
+        
+        this.eventBus.on('aircraft:updated', (event) => {
+          if (event.source === 'adsb-main') {
+            this.logger.debug('Received aircraft:updated event from event bus', { event });
+            this.handleADSBEvent(event);
+          }
+        });
+        
+        this.eventBus.on('aircraft:emergency', (event) => {
+          if (event.source === 'adsb-main') {
+            this.logger.debug('Received aircraft:emergency event from event bus', { event });
+            this.handleADSBEvent(event);
+          }
+        });
+        
+        this.logger.info('Event bus listeners configured for ADSB events');
+      }
       
       // Send startup notification
       await this.sendStartupNotification();
       
+      // Start NOTAM monitoring for Prestwick airspace
+      this.prestwickService.startNotamMonitoring();
+      
+      this.logger.info('Prestwick Airport Connector connected successfully');
       return true;
     } catch (error) {
       this.logger.error('Failed to connect Prestwick Airport Connector', { error: error.message });
-      return false;
+      throw error;
     }
   }
 
   async performDisconnect() {
     try {
       this.logger.info('Disconnecting Prestwick Airport Connector');
+      
+      // Stop NOTAM monitoring
+      this.prestwickService.stopNotamMonitoring();
       
       // Remove event listeners
       this.removePrestwickEventListeners();
@@ -232,73 +298,29 @@ class PrestwickAirportConnector extends BaseConnector {
   }
 
   /**
-   * Connect to ADSB connector to receive aircraft data
+   * Connect to dependencies using the dependency management system
    */
-  async connectToADSBConnector() {
-    if (!this.connectorRegistry) {
-      this.logger.warn('Connector registry not available');
-      return;
-    }
-
-    try {
-      const adsbConnector = this.connectorRegistry.getConnector('adsb-main');
-      if (adsbConnector) {
-        this.adsbConnector = adsbConnector;
-        this.logger.info('Connected to ADSB connector');
-      } else {
-        this.logger.warn('ADSB connector not found');
+  async connectToDependencies() {
+    // Connect to ADSB connector (critical dependency)
+    if (this.isDependencyAvailable('adsb-main')) {
+      try {
+        this.adsbConnector = this.getDependency('adsb-main');
+        this.logger.info('Connected to ADSB connector via dependency management');
+      } catch (error) {
+        await this.handleDependencyFailure('adsb-main', error);
       }
-    } catch (error) {
-      this.logger.error('Failed to connect to ADSB connector', { error: error.message });
     }
-  }
-
-  /**
-   * Connect to NOTAM connector to query NOTAM data
-   */
-  async connectToNotamConnector() {
-    if (!this.connectorRegistry) {
-      this.logger.warn('Connector registry not available');
-      return;
-    }
-
-    try {
-      const notamConnector = this.connectorRegistry.getConnector('notam-main');
-      if (notamConnector) {
-        this.notamConnector = notamConnector;
-        // Pass NOTAM connector to the Prestwick service
-        this.prestwickService.setNotamConnector(notamConnector);
-        this.logger.info('Connected to NOTAM connector');
-      } else {
-        this.logger.warn('NOTAM connector not found');
+    
+    // Connect to NOTAM connector (optional dependency)
+    if (this.isDependencyAvailable('notam-main')) {
+      try {
+        this.notamConnector = this.getDependency('notam-main');
+        this.prestwickService.setNotamConnector(this.notamConnector);
+        this.logger.info('Connected to NOTAM connector via dependency management');
+      } catch (error) {
+        await this.handleDependencyFailure('notam-main', error);
       }
-    } catch (error) {
-      this.logger.error('Failed to connect to NOTAM connector', { error: error.message });
     }
-  }
-
-  /**
-   * Ensure Telegram connector is connected (lazy connection)
-   */
-  async ensureTelegramConnection() {
-    if (this.telegramConnector) {
-      return; // Already connected
-    }
-
-    if (!this.connectorRegistry) {
-      this.logger.warn('Connector registry not available for Telegram connection');
-      return;
-    }
-
-    // Try to find Telegram connector
-    const telegramConnector = this.connectorRegistry.getConnector('telegram-bot-main');
-    if (!telegramConnector) {
-      this.logger.warn('Telegram connector not found, notifications will be disabled');
-      return;
-    }
-
-    this.telegramConnector = telegramConnector;
-    this.logger.info('Connected to Telegram connector (lazy connection)');
   }
 
   /**
@@ -325,9 +347,19 @@ class PrestwickAirportConnector extends BaseConnector {
       this.handlePrestwickEvent(event);
     });
 
+    // Listen for en_route events
+    this.prestwickService.on('en_route', (event) => {
+      this.handlePrestwickEvent(event);
+    });
+
     // Listen for NOTAM alert events
     this.prestwickService.on('notam:alert', (event) => {
       this.handleNotamAlertEvent(event);
+    });
+
+    // Listen for new NOTAM events
+    this.prestwickService.on('notam:new', (event) => {
+      this.handleNewNotamEvent(event);
     });
   }
 
@@ -374,39 +406,210 @@ class PrestwickAirportConnector extends BaseConnector {
       landing: [],
       takeoff: [],
       departure: [],
-      'notam:alert': []
+      'notam:alert': [],
+      'notam:new': []
     };
+  }
+
+  /**
+   * Enhance aircraft data with database information
+   */
+  async enhanceAircraftData(aircraftData) {
+    try {
+      if (!aircraftData.icao24) {
+        return aircraftData;
+      }
+
+      // Get enhanced aircraft information from database
+      const enhancedData = await this.aircraftDataService.getAircraftRegistration(aircraftData.icao24);
+      
+      if (enhancedData) {
+        this.stats.aircraftEnhanced++;
+        this.logger.debug('Enhanced aircraft data', { 
+          icao24: aircraftData.icao24, 
+          registration: enhancedData.registration,
+          type: enhancedData.type 
+        });
+        
+        return {
+          ...aircraftData,
+          registration: aircraftData.registration || enhancedData.registration,
+          icaoTypeCode: enhancedData.icaoTypeCode,
+          type: enhancedData.type,
+          manufacturer: enhancedData.manufacturer,
+          operatorFlagCode: enhancedData.operatorFlagCode,
+          serialNo: enhancedData.serialNo,
+          yearBuilt: enhancedData.yearBuilt,
+          owner: enhancedData.owner,
+          country: enhancedData.country,
+          enhanced: true
+        };
+      }
+      
+      return aircraftData;
+    } catch (error) {
+      this.logger.error('Error enhancing aircraft data', { 
+        icao24: aircraftData.icao24, 
+        error: error.message 
+      });
+      return aircraftData;
+    }
+  }
+
+  /**
+   * Emit airspace events for EGPK
+   */
+  emitAirspaceEvent(aircraftData, eventType, metadata = {}) {
+    if (!this.eventBus) {
+      return;
+    }
+
+    const airspaceEvent = {
+      source: 'prestwick-airport',
+      type: `airspace:${eventType}`,
+      data: {
+        icao24: aircraftData.icao24,
+        callsign: aircraftData.callsign,
+        registration: aircraftData.registration,
+        type: aircraftData.type,
+        manufacturer: aircraftData.manufacturer,
+        altitude: aircraftData.altitude,
+        speed: aircraftData.speed,
+        heading: aircraftData.heading,
+        squawk: aircraftData.squawk,
+        latitude: aircraftData.latitude,
+        longitude: aircraftData.longitude,
+        distance: metadata.distance,
+        runway: metadata.runway,
+        airspace: {
+          code: 'EGPK',
+          name: 'Glasgow Prestwick Airport',
+          type: 'CTR', // Control Zone
+          radius: this.prestwickService.config.approachRadius / 1000, // km
+          center: {
+            latitude: this.prestwickService.config.latitude,
+            longitude: this.prestwickService.config.longitude
+          }
+        },
+        enhanced: aircraftData.enhanced || false
+      },
+      timestamp: new Date().toISOString()
+    };
+
+    this.eventBus.emit(`airspace:${eventType}`, airspaceEvent);
+    
+    this.logger.info(`Airspace event emitted: ${eventType}`, {
+      icao24: aircraftData.icao24,
+      callsign: aircraftData.callsign,
+      distance: metadata.distance
+    });
+  }
+
+  /**
+   * Check and emit airspace boundary events
+   */
+  checkAirspaceBoundary(aircraftData, previousDistance) {
+    const currentDistance = this.prestwickService.calculateDistance(
+      aircraftData.latitude,
+      aircraftData.longitude,
+      this.prestwickService.config.latitude,
+      this.prestwickService.config.longitude
+    );
+
+    const airspaceRadius = this.prestwickService.config.approachRadius;
+    
+    // Aircraft entering airspace
+    if (previousDistance > airspaceRadius && currentDistance <= airspaceRadius) {
+      this.emitAirspaceEvent(aircraftData, 'entered', { 
+        distance: currentDistance,
+        previousDistance 
+      });
+    }
+    
+    // Aircraft exiting airspace
+    if (previousDistance <= airspaceRadius && currentDistance > airspaceRadius) {
+      this.emitAirspaceEvent(aircraftData, 'exited', { 
+        distance: currentDistance,
+        previousDistance 
+      });
+    }
+    
+    // Aircraft in approach zone (within 10km)
+    if (currentDistance <= 10000 && currentDistance > 5000) {
+      this.emitAirspaceEvent(aircraftData, 'approach_zone', { 
+        distance: currentDistance 
+      });
+    }
+    
+    // Aircraft in terminal area (within 5km)
+    if (currentDistance <= 5000) {
+      this.emitAirspaceEvent(aircraftData, 'terminal_area', { 
+        distance: currentDistance 
+      });
+    }
   }
 
   /**
    * Handle ADSB events and process them through Prestwick service
    */
-  handleADSBEvent(event) {
+  async handleADSBEvent(event) {
     try {
-      const data = event.data || event;
+      this.logger.debug('Processing ADSB event in Prestwick connector', { eventType: event.type, event });
       
-      // Extract aircraft data
-      const aircraftData = {
-        icao24: data.icao24,
-        callsign: data.callsign,
-        registration: data.registration,
-        latitude: data.latitude,
-        longitude: data.longitude,
-        altitude: data.altitude,
-        speed: data.speed,
-        heading: data.heading,
-        squawk: data.squawk,
-        timestamp: data.timestamp || event.timestamp
+      let aircraftData;
+      
+      // Handle different event types
+      if (event.aircraft) {
+        // Event has aircraft property (e.g., aircraft:moved)
+        aircraftData = event.aircraft;
+      } else if (event.icao24 || event.hex) {
+        // Direct aircraft data
+        aircraftData = event;
+      } else {
+        this.logger.warn('Unknown ADSB event format', { event });
+        return;
+      }
+      
+      // Extract aircraft data with fallbacks
+      const processedData = {
+        icao24: aircraftData.icao24 || aircraftData.hex,
+        callsign: aircraftData.callsign || aircraftData.flight,
+        registration: aircraftData.registration,
+        latitude: aircraftData.latitude || aircraftData.lat,
+        longitude: aircraftData.longitude || aircraftData.lon,
+        altitude: aircraftData.altitude || aircraftData.alt_baro,
+        speed: aircraftData.speed || aircraftData.gs,
+        heading: aircraftData.heading || aircraftData.track,
+        squawk: aircraftData.squawk,
+        timestamp: aircraftData.timestamp || event.timestamp || new Date().toISOString()
       };
+
+      this.logger.debug('Processed aircraft data', { processedData });
+
+      // Enhance aircraft data with database information
+      const enhancedData = await this.enhanceAircraftData(processedData);
+
+      // Check airspace boundaries
+      const previousDistance = this.aircraftDistances.get(enhancedData.icao24);
+      this.checkAirspaceBoundary(enhancedData, previousDistance);
+      
+      // Update distance tracking
+      const currentDistance = this.prestwickService.calculateDistance(
+        enhancedData.latitude,
+        enhancedData.longitude,
+        this.prestwickService.config.latitude,
+        this.prestwickService.config.longitude
+      );
+      this.aircraftDistances.set(enhancedData.icao24, currentDistance);
 
       // Check if this is the first data received
       if (!this.firstDataReceived) {
         this.firstDataReceived = true;
-        this.sendFirstDataNotification(aircraftData);
+        this.sendFirstDataNotification(enhancedData);
       }
 
       // Process through Prestwick service
-      const result = this.prestwickService.processAircraftUpdate(aircraftData);
+      const result = this.prestwickService.processAircraftUpdate(enhancedData);
       
       if (result) {
         this.stats.totalAircraftProcessed++;
@@ -418,9 +621,18 @@ class PrestwickAirportConnector extends BaseConnector {
         this.stats.totalLandings = prestwickStats.totalLandings;
         this.stats.totalTakeoffs = prestwickStats.totalTakeoffs;
         this.stats.totalDepartures = prestwickStats.totalDepartures;
+        
+        this.logger.debug('Processed aircraft update', {
+          icao24: enhancedData.icao24,
+          callsign: enhancedData.callsign,
+          registration: enhancedData.registration,
+          type: enhancedData.type,
+          distance: currentDistance,
+          result: result
+        });
       }
     } catch (error) {
-      this.logger.error('Error handling ADSB event', { error: error.message });
+      this.logger.error('Error handling ADSB event', { error: error.message, event });
     }
   }
 
@@ -438,7 +650,7 @@ class PrestwickAirportConnector extends BaseConnector {
     
     this.logger.info(`Processing NOTAM alert for ${notamAlert.notamNumber}`);
     
-    // Send Telegram notification
+    // Send notification event
     await this.sendNotamTelegramNotification(notamAlert);
     
     // Update statistics
@@ -452,6 +664,37 @@ class PrestwickAirportConnector extends BaseConnector {
         type: 'notam:alert',
         data: notamAlert,
         aircraftData: data,
+        timestamp: new Date().toISOString()
+      });
+    }
+  }
+
+  /**
+   * Handle new NOTAM events
+   */
+  async handleNewNotamEvent(event) {
+    const { data } = event;
+    
+    if (!data) {
+      this.logger.warn('No NOTAM data in event');
+      return;
+    }
+    
+    this.logger.info(`New NOTAM detected: ${data.notamNumber}`);
+    
+    // Send notification event
+    await this.sendNewNotamTelegramNotification(data);
+    
+    // Update statistics
+    this.stats.notamQueries++;
+    this.stats.lastActivity = new Date().toISOString();
+    
+    // Emit event to event bus
+    if (this.eventBus) {
+      this.eventBus.emit('prestwick:notam:new', {
+        source: 'prestwick-airport',
+        type: 'notam:new',
+        data: data,
         timestamp: new Date().toISOString()
       });
     }
@@ -475,7 +718,7 @@ class PrestwickAirportConnector extends BaseConnector {
         if (notamAlerts.length > 0) {
           this.logger.info(`Found ${notamAlerts.length} NOTAM alerts for ${type} operation`);
           
-          // Send NOTAM alerts via Telegram
+          // Send NOTAM alerts via notification events
           for (const alert of notamAlerts) {
             await this.sendNotamTelegramNotification(alert);
           }
@@ -513,6 +756,10 @@ class PrestwickAirportConnector extends BaseConnector {
         this.stats.totalDepartures++;
         this.sendTelegramNotification('departure', data);
         break;
+      case 'en_route':
+        this.stats.totalEnRoute++;
+        this.sendTelegramNotification('en_route', data);
+        break;
     }
     
     // Emit event to event bus
@@ -544,7 +791,7 @@ class PrestwickAirportConnector extends BaseConnector {
       confidence: metadata.confidence
     });
 
-    // Send Telegram notification
+    // Send notification event for ground movement events
     await this.sendGroundMovementTelegramNotification(aircraft, metadata);
 
     // Emit event
@@ -587,7 +834,7 @@ class PrestwickAirportConnector extends BaseConnector {
       confidence: metadata.confidence
     });
 
-    // Send Telegram notification
+    // Send notification event for taxi events
     await this.sendTaxiTelegramNotification(aircraft, metadata);
 
     // Emit event
@@ -630,7 +877,7 @@ class PrestwickAirportConnector extends BaseConnector {
       confidence: metadata.confidence
     });
 
-    // Send Telegram notification
+    // Send notification event for parking events
     await this.sendParkingTelegramNotification(aircraft, metadata);
 
     // Emit event
@@ -673,7 +920,7 @@ class PrestwickAirportConnector extends BaseConnector {
       confidence: metadata.confidence
     });
 
-    // Send Telegram notification
+    // Send notification event for helicopter events
     await this.sendHelicopterTelegramNotification(aircraft, metadata);
 
     // Emit event
@@ -717,19 +964,9 @@ class PrestwickAirportConnector extends BaseConnector {
   }
 
   /**
-   * Send Telegram notification for aircraft events
+   * Send notification event for aircraft events
    */
   async sendTelegramNotification(eventType, aircraftData) {
-    if (!this.telegramConfig.enabled) {
-      return;
-    }
-
-    // Check if this event type should be notified
-    const notifyKey = `notify${eventType.charAt(0).toUpperCase() + eventType.slice(1)}s`;
-    if (!this.telegramConfig[notifyKey]) {
-      return;
-    }
-
     try {
       const notificationData = {
         type: `aircraft:${eventType}`,
@@ -747,7 +984,7 @@ class PrestwickAirportConnector extends BaseConnector {
         timestamp: new Date().toISOString()
       };
 
-      // Emit notification event instead of direct Telegram call
+      // Emit notification event to alarm center
       if (this.eventBus) {
         this.eventBus.emit('alarm:notification', notificationData);
       }
@@ -762,147 +999,7 @@ class PrestwickAirportConnector extends BaseConnector {
   }
 
   /**
-   * Send Telegram notification for ground movement events
-   */
-  async sendGroundMovementTelegramNotification(aircraft, metadata) {
-    if (!this.telegramConfig.enabled) {
-      return;
-    }
-
-    try {
-      // Lazy connection to Telegram connector
-      await this.ensureTelegramConnection();
-      
-      if (!this.telegramConnector) {
-        this.logger.debug('Telegram connector not available, skipping ground movement notification');
-        return;
-      }
-
-      const message = this.formatGroundMovementTelegramMessage(aircraft, metadata);
-      
-      // Use capability-based pattern to send message
-      const result = await this.telegramConnector.execute('telegram:send', 'text', {
-        chatId: this.telegramConfig.chatId,
-        text: message,
-        parseMode: 'HTML'
-      });
-      
-      this.logger.info('Ground movement notification sent to Telegram', {
-        icao24: aircraft.icao24,
-        callsign: aircraft.callsign
-      });
-    } catch (error) {
-      this.logger.error('Failed to send ground movement notification:', error.message);
-    }
-  }
-
-  /**
-   * Send Telegram notification for taxi events
-   */
-  async sendTaxiTelegramNotification(aircraft, metadata) {
-    if (!this.telegramConfig.enabled) {
-      return;
-    }
-
-    try {
-      // Lazy connection to Telegram connector
-      await this.ensureTelegramConnection();
-      
-      if (!this.telegramConnector) {
-        this.logger.debug('Telegram connector not available, skipping taxi notification');
-        return;
-      }
-
-      const message = this.formatTaxiTelegramMessage(aircraft, metadata);
-      
-      // Use capability-based pattern to send message
-      const result = await this.telegramConnector.execute('telegram:send', 'text', {
-        chatId: this.telegramConfig.chatId,
-        text: message,
-        parseMode: 'HTML'
-      });
-      
-      this.logger.info('Taxi notification sent to Telegram', {
-        icao24: aircraft.icao24,
-        callsign: aircraft.callsign
-      });
-    } catch (error) {
-      this.logger.error('Failed to send taxi notification:', error.message);
-    }
-  }
-
-  /**
-   * Send Telegram notification for parking events
-   */
-  async sendParkingTelegramNotification(aircraft, metadata) {
-    if (!this.telegramConfig.enabled) {
-      return;
-    }
-
-    try {
-      // Lazy connection to Telegram connector
-      await this.ensureTelegramConnection();
-      
-      if (!this.telegramConnector) {
-        this.logger.debug('Telegram connector not available, skipping parking notification');
-        return;
-      }
-
-      const message = this.formatParkingTelegramMessage(aircraft, metadata);
-      
-      // Use capability-based pattern to send message
-      const result = await this.telegramConnector.execute('telegram:send', 'text', {
-        chatId: this.telegramConfig.chatId,
-        text: message,
-        parseMode: 'HTML'
-      });
-      
-      this.logger.info('Parking notification sent to Telegram', {
-        icao24: aircraft.icao24,
-        callsign: aircraft.callsign
-      });
-    } catch (error) {
-      this.logger.error('Failed to send parking notification:', error.message);
-    }
-  }
-
-  /**
-   * Send Telegram notification for helicopter events
-   */
-  async sendHelicopterTelegramNotification(aircraft, metadata) {
-    if (!this.telegramConfig.enabled) {
-      return;
-    }
-
-    try {
-      // Lazy connection to Telegram connector
-      await this.ensureTelegramConnection();
-      
-      if (!this.telegramConnector) {
-        this.logger.debug('Telegram connector not available, skipping helicopter notification');
-        return;
-      }
-
-      const message = this.formatHelicopterTelegramMessage(aircraft, metadata);
-      
-      // Use capability-based pattern to send message
-      const result = await this.telegramConnector.execute('telegram:send', 'text', {
-        chatId: this.telegramConfig.chatId,
-        text: message,
-        parseMode: 'HTML'
-      });
-      
-      this.logger.info('Helicopter notification sent to Telegram', {
-        icao24: aircraft.icao24,
-        callsign: aircraft.callsign
-      });
-    } catch (error) {
-      this.logger.error('Failed to send helicopter notification:', error.message);
-    }
-  }
-
-  /**
-   * Format message for Telegram notification
+   * Format message for notification event
    */
   formatTelegramMessage(eventType, aircraftData) {
     const { icao24, callsign, registration, altitude, speed, heading, runway } = aircraftData;
@@ -911,14 +1008,16 @@ class PrestwickAirportConnector extends BaseConnector {
       approach: '🛬',
       landing: '✈️',
       takeoff: '🛫',
-      departure: '🛩️'
+      departure: '🛩️',
+      en_route: '✈️'
     };
     
     const eventText = {
       approach: 'Approaching',
       landing: 'Landing',
       takeoff: 'Taking off',
-      departure: 'Departing'
+      departure: 'Departing',
+      en_route: 'En Route'
     };
     
     const emoji = eventEmoji[eventType] || '✈️';
@@ -957,6 +1056,171 @@ class PrestwickAirportConnector extends BaseConnector {
     message += `\nTime: <i>${new Date().toLocaleString('en-GB', { timeZone: 'Europe/London' })}</i>`;
     
     return message;
+  }
+
+  /**
+   * Send notification event for ground movement events
+   */
+  async sendGroundMovementTelegramNotification(aircraft, metadata) {
+    try {
+      const notificationData = {
+        type: 'ground:movement',
+        source: 'prestwick-airport',
+        priority: 'medium',
+        message: this.formatGroundMovementTelegramMessage(aircraft, metadata),
+        data: {
+          icao24: aircraft.icao24,
+          callsign: aircraft.callsign,
+          registration: aircraft.registration,
+          movementType: metadata.movementType,
+          confidence: metadata.confidence,
+          location: metadata.location,
+          airport: {
+            code: this.prestwickService.config.airportCode,
+            name: this.prestwickService.config.airportName
+          }
+        },
+        timestamp: new Date().toISOString()
+      };
+
+      // Emit notification event to alarm center
+      if (this.eventBus) {
+        this.eventBus.emit('alarm:notification', notificationData);
+      }
+      
+      this.logger.info('Ground movement notification event emitted', {
+        icao24: aircraft.icao24,
+        callsign: aircraft.callsign
+      });
+    } catch (error) {
+      this.logger.error('Failed to emit ground movement notification:', error.message);
+    }
+  }
+
+  /**
+   * Format message for taxi Telegram notification
+   */
+  formatTaxiTelegramMessage(aircraft, metadata) {
+    const { icao24, callsign, registration } = aircraft;
+    const { taxiPhase, confidence, location } = metadata;
+    
+    const phaseEmoji = {
+      runway_approach: '🛫',
+      taxiway: '🚗',
+      apron: '🅿️'
+    };
+    
+    const phaseText = {
+      runway_approach: 'Approaching Runway',
+      taxiway: 'On Taxiway',
+      apron: 'On Apron'
+    };
+    
+    const emoji = phaseEmoji[taxiPhase] || '🚗';
+    const phase = phaseText[taxiPhase] || taxiPhase;
+    
+    let message = `${emoji} <b>Taxiing at Prestwick Airport (EGPK)</b>\n\n`;
+    
+    if (callsign) {
+      message += `Flight: <b>${callsign}</b>\n`;
+    }
+    
+    if (registration) {
+      message += `Registration: <b>${registration}</b>\n`;
+    }
+    
+    if (icao24) {
+      message += `ICAO24: <code>${icao24}</code>\n`;
+    }
+    
+    if (location && location.altitude) {
+      message += `Altitude: <b>${Math.round(location.altitude)}ft</b>\n`;
+    }
+    
+    message += `Phase: <b>${phase}</b>\n`;
+    message += `Confidence: <b>${Math.round(confidence * 100)}%</b>\n`;
+    
+    message += `\nTime: <i>${new Date().toLocaleString('en-GB', { timeZone: 'Europe/London' })}</i>`;
+    
+    return message;
+  }
+
+  /**
+   * Send notification event for parking events
+   */
+  async sendParkingTelegramNotification(aircraft, metadata) {
+    try {
+      const notificationData = {
+        type: 'parking:status',
+        source: 'prestwick-airport',
+        priority: 'medium',
+        message: this.formatParkingTelegramMessage(aircraft, metadata),
+        data: {
+          icao24: aircraft.icao24,
+          callsign: aircraft.callsign,
+          registration: aircraft.registration,
+          parkingArea: metadata.parkingArea,
+          confidence: metadata.confidence,
+          location: metadata.location,
+          airport: {
+            code: this.prestwickService.config.airportCode,
+            name: this.prestwickService.config.airportName
+          }
+        },
+        timestamp: new Date().toISOString()
+      };
+
+      // Emit notification event to alarm center
+      if (this.eventBus) {
+        this.eventBus.emit('alarm:notification', notificationData);
+      }
+      
+      this.logger.info('Parking notification event emitted', {
+        icao24: aircraft.icao24,
+        callsign: aircraft.callsign
+      });
+    } catch (error) {
+      this.logger.error('Failed to emit parking notification:', error.message);
+    }
+  }
+
+  /**
+   * Send notification event for helicopter events
+   */
+  async sendHelicopterTelegramNotification(aircraft, metadata) {
+    try {
+      const notificationData = {
+        type: 'helicopter:action',
+        source: 'prestwick-airport',
+        priority: 'medium',
+        message: this.formatHelicopterTelegramMessage(aircraft, metadata),
+        data: {
+          icao24: aircraft.icao24,
+          callsign: aircraft.callsign,
+          registration: aircraft.registration,
+          action: metadata.action,
+          confidence: metadata.confidence,
+          location: metadata.location,
+          airport: {
+            code: this.prestwickService.config.airportCode,
+            name: this.prestwickService.config.airportName
+          }
+        },
+        timestamp: new Date().toISOString()
+      };
+
+      // Emit notification event to alarm center
+      if (this.eventBus) {
+        this.eventBus.emit('alarm:notification', notificationData);
+      }
+      
+      this.logger.info('Helicopter notification event emitted', {
+        icao24: aircraft.icao24,
+        callsign: aircraft.callsign
+      });
+    } catch (error) {
+      this.logger.error('Failed to emit helicopter notification:', error.message);
+    }
   }
 
   /**
@@ -1002,54 +1266,6 @@ class PrestwickAirportConnector extends BaseConnector {
     }
     
     message += `Movement Type: <b>${movementType}</b>\n`;
-    message += `Confidence: <b>${Math.round(confidence * 100)}%</b>\n`;
-    
-    message += `\nTime: <i>${new Date().toLocaleString('en-GB', { timeZone: 'Europe/London' })}</i>`;
-    
-    return message;
-  }
-
-  /**
-   * Format message for taxi Telegram notification
-   */
-  formatTaxiTelegramMessage(aircraft, metadata) {
-    const { icao24, callsign, registration } = aircraft;
-    const { taxiPhase, confidence, location } = metadata;
-    
-    const phaseEmoji = {
-      runway_approach: '🛫',
-      taxiway: '🚗',
-      apron: '🅿️'
-    };
-    
-    const phaseText = {
-      runway_approach: 'Approaching Runway',
-      taxiway: 'On Taxiway',
-      apron: 'On Apron'
-    };
-    
-    const emoji = phaseEmoji[taxiPhase] || '🚗';
-    const phase = phaseText[taxiPhase] || taxiPhase;
-    
-    let message = `${emoji} <b>Taxiing at Prestwick Airport (EGPK)</b>\n\n`;
-    
-    if (callsign) {
-      message += `Flight: <b>${callsign}</b>\n`;
-    }
-    
-    if (registration) {
-      message += `Registration: <b>${registration}</b>\n`;
-    }
-    
-    if (icao24) {
-      message += `ICAO24: <code>${icao24}</code>\n`;
-    }
-    
-    if (location && location.altitude) {
-      message += `Altitude: <b>${Math.round(location.altitude)}ft</b>\n`;
-    }
-    
-    message += `Phase: <b>${phase}</b>\n`;
     message += `Confidence: <b>${Math.round(confidence * 100)}%</b>\n`;
     
     message += `\nTime: <i>${new Date().toLocaleString('en-GB', { timeZone: 'Europe/London' })}</i>`;
@@ -1160,14 +1376,9 @@ class PrestwickAirportConnector extends BaseConnector {
   }
 
   /**
-   * Send Telegram notification for NOTAM alert
+   * Send notification event for NOTAM alert
    */
   async sendNotamTelegramNotification(notamAlert) {
-    if (!this.telegramConfig.enabled || !this.telegramConfig.notifyNotams) {
-      this.logger.debug('Telegram NOTAM notifications disabled');
-      return;
-    }
-
     try {
       const notificationData = {
         type: 'notam:alert',
@@ -1184,7 +1395,7 @@ class PrestwickAirportConnector extends BaseConnector {
         timestamp: new Date().toISOString()
       };
 
-      // Emit notification event instead of direct Telegram call
+      // Emit notification event to alarm center
       if (this.eventBus) {
         this.eventBus.emit('alarm:notification', notificationData);
       }
@@ -1256,6 +1467,110 @@ class PrestwickAirportConnector extends BaseConnector {
   }
 
   /**
+   * Send notification event for new NOTAM
+   */
+  async sendNewNotamTelegramNotification(notamData) {
+    try {
+      const notificationData = {
+        type: 'notam:new',
+        source: 'prestwick-airport',
+        priority: 'high',
+        message: this.formatNewNotamTelegramMessage(notamData),
+        data: {
+          notamData,
+          airport: {
+            code: this.prestwickService.config.airportCode,
+            name: this.prestwickService.config.airportName
+          }
+        },
+        timestamp: new Date().toISOString()
+      };
+
+      // Emit notification event to alarm center
+      if (this.eventBus) {
+        this.eventBus.emit('alarm:notification', notificationData);
+      }
+
+      this.logger.info(`New NOTAM notification event emitted for ${notamData.notamNumber}`);
+      
+    } catch (error) {
+      this.logger.error(`Failed to emit new NOTAM notification:`, error.message);
+    }
+  }
+
+  /**
+   * Format new NOTAM message for Telegram notification
+   */
+  formatNewNotamTelegramMessage(notamData) {
+    const { notamNumber, title, description, priority, category, distance, startTime, endTime } = notamData;
+    
+    const priorityEmoji = {
+      high: '🔴',
+      medium: '🟡',
+      low: '🟢'
+    };
+    
+    const categoryEmoji = {
+      runway: '🛫',
+      approach: '🛬',
+      landing: '✈️',
+      takeoff: '🛫',
+      airport: '🏢',
+      navigation: '🧭',
+      airspace: '🌐'
+    };
+    
+    const emoji = priorityEmoji[priority] || '⚠️';
+    const categoryIcon = categoryEmoji[category] || '✈️';
+    
+    let message = `${emoji} <b>NEW NOTAM - Prestwick Airport (EGPK)</b>\n\n`;
+    
+    if (notamNumber) {
+      message += `NOTAM: <b>${notamNumber}</b>\n`;
+    }
+    
+    if (title) {
+      message += `Title: <b>${title}</b>\n`;
+    }
+    
+    if (category) {
+      message += `Category: <b>${category.toUpperCase()}</b> ${categoryIcon}\n`;
+    }
+    
+    if (priority) {
+      message += `Priority: <b>${priority.toUpperCase()}</b>\n`;
+    }
+    
+    if (distance) {
+      message += `Distance: <b>${Math.round(distance)}km</b> from EGPK\n`;
+    }
+    
+    if (startTime) {
+      const startDate = new Date(startTime).toLocaleString('en-GB', { timeZone: 'Europe/London' });
+      message += `Start: <b>${startDate}</b>\n`;
+    }
+    
+    if (endTime) {
+      const endDate = new Date(endTime).toLocaleString('en-GB', { timeZone: 'Europe/London' });
+      message += `End: <b>${endDate}</b>\n`;
+    }
+    
+    if (description) {
+      // Truncate description if too long
+      const maxLength = 300;
+      const truncatedDesc = description.length > maxLength 
+        ? description.substring(0, maxLength) + '...'
+        : description;
+      message += `\nDescription: <i>${truncatedDesc}</i>\n`;
+    }
+    
+    message += `\n📍 <b>Affects Prestwick Airport Operations</b>\n`;
+    message += `⏰ Detected: <i>${new Date().toLocaleString('en-GB', { timeZone: 'Europe/London' })}</i>`;
+    
+    return message;
+  }
+
+  /**
    * Execute capability operations
    */
   async executeCapability(capabilityId, operation, parameters = {}) {
@@ -1269,8 +1584,6 @@ class PrestwickAirportConnector extends BaseConnector {
           return this.executeRunwayDetectionOperation(operation, parameters);
         case 'events:aircraft':
           return this.executeAircraftEventsOperation(operation, parameters);
-        case 'telegram:notifications':
-          return this.executeTelegramNotificationsOperation(operation, parameters);
         case 'notam:integration':
           return this.executeNotamIntegrationOperation(operation, parameters);
         default:
@@ -1355,49 +1668,6 @@ class PrestwickAirportConnector extends BaseConnector {
   }
 
   /**
-   * Execute Telegram notifications operations
-   */
-  executeTelegramNotificationsOperation(operation, parameters) {
-    switch (operation) {
-      case 'configure_notifications':
-        const { enabled, chatId, eventTypes } = parameters;
-        this.telegramConfig.enabled = enabled !== undefined ? enabled : this.telegramConfig.enabled;
-        this.telegramConfig.chatId = chatId || this.telegramConfig.chatId;
-        
-        if (eventTypes) {
-          this.telegramConfig.notifyApproaches = eventTypes.includes('approach');
-          this.telegramConfig.notifyLandings = eventTypes.includes('landing');
-          this.telegramConfig.notifyTakeoffs = eventTypes.includes('takeoff');
-          this.telegramConfig.notifyDepartures = eventTypes.includes('departure');
-        }
-        
-        return { 
-          success: true, 
-          config: this.telegramConfig 
-        };
-        
-      case 'get_notification_config':
-        return this.telegramConfig;
-        
-      case 'test_notification':
-        const testData = {
-          icao24: 'TEST123',
-          callsign: 'TESTFLIGHT',
-          registration: 'G-TEST',
-          altitude: 3000,
-          speed: 150,
-          heading: 120,
-          runway: '12'
-        };
-        this.sendTelegramNotification('approach', testData);
-        return { success: true, message: 'Test notification sent' };
-        
-      default:
-        throw new Error(`Unknown Telegram notifications operation: ${operation}`);
-    }
-  }
-
-  /**
    * Execute NOTAM integration operations
    */
   executeNotamIntegrationOperation(operation, parameters) {
@@ -1431,7 +1701,7 @@ class PrestwickAirportConnector extends BaseConnector {
         
         // Try to reconnect to NOTAM connector if enabled
         if (this.notamConfig.enabled && !this.notamConnector) {
-          this.connectToNotamConnector();
+          this.connectToDependencies();
         }
         
         return { 
@@ -1455,8 +1725,7 @@ class PrestwickAirportConnector extends BaseConnector {
       eventBusConnected: !!this.eventBus,
       stats: this.stats,
       prestwickStats: this.prestwickService.getStats(),
-      notamConfig: this.notamConfig,
-      telegramConfig: this.telegramConfig
+      notamConfig: this.notamConfig
     };
   }
 
@@ -1484,60 +1753,39 @@ class PrestwickAirportConnector extends BaseConnector {
   }
 
   /**
-   * Send startup notification to Telegram
+   * Send startup notification event
    */
   async sendStartupNotification() {
-    if (!this.telegramConfig.enabled || this.startupNotificationSent) {
+    if (this.startupNotificationSent) {
       return;
     }
 
     try {
-      // Try to get Telegram connector from registry
-      if (this.connectorRegistry) {
-        this.telegramConnector = this.connectorRegistry.getConnector('telegram-bot-main');
-      }
+      const notificationData = {
+        type: 'startup',
+        source: 'prestwick-airport',
+        priority: 'low',
+        message: this.formatStartupNotificationMessage(),
+        data: {
+          airportCode: 'EGPK',
+          airportName: 'Prestwick Airport',
+          connections: {
+            adsb: !!this.adsbConnector,
+            notam: !!this.notamConnector
+          }
+        },
+        timestamp: new Date().toISOString()
+      };
 
-      if (this.telegramConnector && this.telegramConnector.isConnected) {
-        const message = this.formatStartupNotificationMessage();
-        
-        await this.telegramConnector.execute('telegram:send', 'text', {
-          chatId: this.telegramConfig.chatId,
-          text: message,
-          parseMode: 'HTML'
-        });
-        
-        this.startupNotificationSent = true;
-        this.logger.info('Startup notification sent to Telegram');
-      } else {
-        // Fallback to event bus
-        const notificationData = {
-          type: 'startup',
-          source: 'prestwick-airport',
-          priority: 'low',
-          message: this.formatStartupNotificationMessage(),
-          data: {
-            airportCode: 'EGPK',
-            airportName: 'Prestwick Airport',
-            notifications: {
-              approaches: this.telegramConfig.notifyApproaches,
-              landings: this.telegramConfig.notifyLandings,
-              takeoffs: this.telegramConfig.notifyTakeoffs,
-              departures: this.telegramConfig.notifyDepartures,
-              notams: this.telegramConfig.notifyNotams
-            }
-          },
-          timestamp: new Date().toISOString()
-        };
-
-        if (this.eventBus) {
-          this.eventBus.emit('alarm:notification', notificationData);
-        }
-        
-        this.startupNotificationSent = true;
-        this.logger.info('Startup notification event emitted');
+      // Emit notification event to alarm center
+      if (this.eventBus) {
+        this.eventBus.emit('alarm:notification', notificationData);
       }
+      
+      this.startupNotificationSent = true;
+      this.logger.info('Startup notification event emitted');
     } catch (error) {
-      this.logger.error('Failed to send startup notification:', error.message);
+      this.logger.error('Failed to emit startup notification:', error.message);
     }
   }
 
@@ -1553,16 +1801,15 @@ class PrestwickAirportConnector extends BaseConnector {
     message += `Approach Radius: <b>${config.approachRadius}km</b>\n\n`;
     
     message += `📡 <b>Monitoring:</b>\n`;
-    if (this.telegramConfig.notifyApproaches) message += `• Aircraft Approaches\n`;
-    if (this.telegramConfig.notifyLandings) message += `• Aircraft Landings\n`;
-    if (this.telegramConfig.notifyTakeoffs) message += `• Aircraft Takeoffs\n`;
-    if (this.telegramConfig.notifyDepartures) message += `• Aircraft Departures\n`;
-    if (this.telegramConfig.notifyNotams) message += `• NOTAM Alerts\n`;
+    message += `• Aircraft Approaches\n`;
+    message += `• Aircraft Landings\n`;
+    message += `• Aircraft Takeoffs\n`;
+    message += `• Aircraft Departures\n`;
+    message += `• NOTAM Alerts\n`;
     
     message += `\n🔗 <b>Connections:</b>\n`;
     message += `• ADSB: ${this.adsbConnector ? '✅ Connected' : '❌ Disconnected'}\n`;
     message += `• NOTAM: ${this.notamConnector ? '✅ Connected' : '❌ Disconnected'}\n`;
-    message += `• Telegram: ${this.telegramConnector ? '✅ Connected' : '❌ Disconnected'}\n`;
     
     message += `\n⏰ Started: <i>${new Date().toLocaleString('en-GB', { timeZone: 'Europe/London' })}</i>`;
     
@@ -1570,54 +1817,33 @@ class PrestwickAirportConnector extends BaseConnector {
   }
 
   /**
-   * Send first data notification to Telegram
+   * Send first data notification event
    */
   async sendFirstDataNotification(aircraftData) {
-    if (!this.telegramConfig.enabled) {
-      return;
-    }
-
     try {
-      // Try to get Telegram connector from registry if not already set
-      if (!this.telegramConnector && this.connectorRegistry) {
-        this.telegramConnector = this.connectorRegistry.getConnector('telegram-bot-main');
-      }
+      const notificationData = {
+        type: 'first_data',
+        source: 'prestwick-airport',
+        priority: 'low',
+        message: this.formatFirstDataNotificationMessage(aircraftData),
+        data: {
+          aircraft: aircraftData,
+          airport: {
+            code: this.prestwickService.config.airportCode,
+            name: this.prestwickService.config.airportName
+          }
+        },
+        timestamp: new Date().toISOString()
+      };
 
-      if (this.telegramConnector && this.telegramConnector.isConnected) {
-        const message = this.formatFirstDataNotificationMessage(aircraftData);
-        
-        await this.telegramConnector.execute('telegram:send', 'text', {
-          chatId: this.telegramConfig.chatId,
-          text: message,
-          parseMode: 'HTML'
-        });
-        
-        this.logger.info('First data notification sent to Telegram');
-      } else {
-        // Fallback to event bus
-        const notificationData = {
-          type: 'first_data',
-          source: 'prestwick-airport',
-          priority: 'low',
-          message: this.formatFirstDataNotificationMessage(aircraftData),
-          data: {
-            aircraft: aircraftData,
-            airport: {
-              code: this.prestwickService.config.airportCode,
-              name: this.prestwickService.config.airportName
-            }
-          },
-          timestamp: new Date().toISOString()
-        };
-
-        if (this.eventBus) {
-          this.eventBus.emit('alarm:notification', notificationData);
-        }
-        
-        this.logger.info('First data notification event emitted');
+      // Emit notification event to alarm center
+      if (this.eventBus) {
+        this.eventBus.emit('alarm:notification', notificationData);
       }
+      
+      this.logger.info('First data notification event emitted');
     } catch (error) {
-      this.logger.error('Failed to send first data notification:', error.message);
+      this.logger.error('Failed to emit first data notification:', error.message);
     }
   }
 
@@ -1660,6 +1886,51 @@ class PrestwickAirportConnector extends BaseConnector {
     message += `\nTime: <i>${new Date().toLocaleString('en-GB', { timeZone: 'Europe/London' })}</i>`;
     
     return message;
+  }
+
+  /**
+   * Initialize dependencies for Prestwick Airport Connector
+   */
+  initializeDependencies() {
+    // Declare critical dependency on ADSB connector
+    this.declareDependency('adsb-main', {
+      required: true,
+      critical: true,
+      description: 'ADSB connector for aircraft data',
+      capabilities: ['aircraft:tracking'],
+      fallback: 'degraded_mode'
+    });
+    
+    // Declare optional dependency on NOTAM connector
+    this.declareDependency('notam-main', {
+      required: false,
+      critical: false,
+      description: 'NOTAM connector for airspace information',
+      capabilities: ['notam:query'],
+      fallback: 'notam_disabled'
+    });
+  }
+  
+  /**
+   * Execute fallback for dependency failure
+   */
+  async executeFallback(connectorId, fallback) {
+    this.logger.info(`Executing fallback for ${connectorId}: ${fallback}`);
+    
+    switch (fallback) {
+      case 'degraded_mode':
+        this.logger.warn('Entering degraded mode - limited functionality available');
+        this.notamConfig.enabled = false;
+        break;
+        
+      case 'notam_disabled':
+        this.logger.warn('NOTAM integration disabled due to connector unavailability');
+        this.notamConfig.enabled = false;
+        break;
+        
+      default:
+        this.logger.warn(`Unknown fallback: ${fallback}`);
+    }
   }
 }
 

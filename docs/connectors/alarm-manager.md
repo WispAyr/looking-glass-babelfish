@@ -2,583 +2,234 @@
 
 ## Overview
 
-The Alarm Manager Connector provides centralized alarm management across all system components, offering multi-channel notifications, configurable alarm rules, and comprehensive alarm tracking. It serves as the central hub for all alarm-related activities in the Babelfish Looking Glass platform.
+The Alarm Manager Connector is a comprehensive rule-based alarm system that processes events from all connectors and triggers appropriate actions based on configurable rules. It manages 27 pre-configured rules covering security, aviation, system monitoring, and analytics.
 
 ## Features
 
-### 🚨 **Centralized Alarm Management**
-- **Unified Alarm Handling**: Single point of control for all system alarms
-- **Multi-Source Integration**: Collects alarms from all connectors and services
-- **Alarm Categorization**: Organize alarms by severity, type, and source
-- **Alarm History**: Comprehensive logging and analysis of all alarm activities
+### Rule Management
+- **27 Pre-configured Rules**: Comprehensive set of rules for various system events
+- **Visual Rule Editor**: Modern web interface for creating and editing rules
+- **Rule Testing**: Test rules with sample events to verify behavior
+- **Import/Export**: Backup and restore rule configurations
+- **Real-time Updates**: Live rule status and statistics
 
-### 📢 **Multi-Channel Notifications**
-- **Telegram Integration**: Instant notifications via Telegram bot
-- **MQTT Publishing**: Real-time alarm broadcasts to MQTT topics
-- **Email Notifications**: Configurable email alerts
-- **Custom Channels**: Extensible notification system for custom integrations
-- **Notification Templates**: Predefined message templates for different alarm types
+### Event Processing
+- **Multi-source Events**: Processes events from UniFi Protect, ADSB, speed calculation, and more
+- **Condition Matching**: Flexible event type and source filtering
+- **Action Execution**: Send notifications, publish MQTT messages, log events
+- **Template Interpolation**: Dynamic message generation with event data
 
-### ⚙️ **Configurable Alarm Rules**
-- **Rule Engine**: Flexible rule-based alarm generation
-- **Conditional Logic**: Complex conditions for alarm triggering
-- **Escalation Rules**: Automatic escalation based on time and severity
-- **Suppression Rules**: Prevent alarm flooding with intelligent suppression
-- **Time-Based Rules**: Schedule-based alarm activation
+### Notification Channels
+- **Telegram**: Real-time notifications via Telegram bot
+- **MQTT**: Publish events to MQTT topics
+- **Web GUI**: Display notifications in web interface
+- **Logging**: Structured logging of all events
 
-### 📊 **Alarm Management Interface**
-- **Real-time Dashboard**: Live alarm status and management
-- **Alarm Acknowledgment**: User acknowledgment and status tracking
-- **Alarm Resolution**: Mark alarms as resolved with notes
-- **Alarm Assignment**: Assign alarms to specific users or teams
-- **Alarm Search**: Advanced search and filtering capabilities
+## Web Interface
+
+Access the alarm manager at `/alarms` to get a comprehensive view of all rules and their status.
+
+### Features
+- **Dashboard**: Overview of rule statistics and system status
+- **Rule Grid**: Visual display of all rules with filtering and search
+- **Rule Editor**: Modal-based editor for creating and modifying rules
+- **Real-time Testing**: Test rules with custom event data
+- **Bulk Operations**: Import/export rule sets
+
+### Filtering Options
+- **Category**: Security, Aviation, System, Analytics, MQTT, General
+- **Connector Type**: UniFi Protect, ADSB, Speed Calculation, System, General
+- **Status**: Enabled/Disabled rules
+- **Search**: Text search across rule names, descriptions, and IDs
+
+## Rule Structure
+
+Each rule follows this structure:
+
+```javascript
+{
+  id: "unique-rule-id",
+  name: "Human Readable Name",
+  description: "Rule description",
+  conditions: {
+    eventType: "event-type",
+    source: "connector-source",
+    severity: "low|medium|high"
+  },
+  actions: [
+    {
+      type: "send_notification|mqtt_publish|log_event",
+      parameters: {
+        // Action-specific parameters
+      }
+    }
+  ],
+  metadata: {
+    category: "security|aviation|system|analytics|mqtt|general",
+    connectorType: "unifi-protect|adsb|speed-calculation|system|general",
+    version: "1.0.0",
+    createdAt: "2025-06-23T00:00:00.000Z"
+  },
+  enabled: true
+}
+```
+
+## Pre-configured Rules
+
+### Security Rules (6 rules)
+- Motion detection alerts
+- Smart detection zone monitoring
+- Intrusion detection
+- Camera status monitoring
+
+### Aviation Rules (6 rules)
+- Aircraft emergency alerts
+- ADSB status monitoring
+- Aircraft tracking events
+- Aviation system health
+
+### System Rules (3 rules)
+- System health monitoring
+- Connector status alerts
+- Error event handling
+
+### Analytics Rules (2 rules)
+- Speed violation detection
+- Performance monitoring
+
+### MQTT Rules (1 rule)
+- Camera events to MQTT routing
+
+### General Rules (9 rules)
+- Default notifications
+- Logging rules
+- Monitoring rules
+
+## API Endpoints
+
+### Rule Management
+- `GET /alarms/api` - List all rules (with filtering)
+- `GET /alarms/api/:id` - Get specific rule
+- `POST /alarms/api` - Create new rule
+- `PUT /alarms/api/:id` - Update rule
+- `DELETE /alarms/api/:id` - Delete rule
+
+### Rule Operations
+- `POST /alarms/api/toggle` - Enable/disable rule
+- `POST /alarms/api/test` - Test rule with event data
+- `POST /alarms/api/import` - Import rules from JSON
+- `GET /alarms/api/export` - Export all rules to JSON
+
+### Statistics
+- `GET /alarms/api/stats` - Get rule statistics
+- `GET /alarms/api/history` - Get alarm history
 
 ## Configuration
 
-### Basic Configuration
+The Alarm Manager Connector is configured in `config/connectors.json`:
+
 ```json
 {
   "id": "alarm-manager-main",
   "type": "alarm-manager",
   "name": "Main Alarm Manager",
-  "description": "Centralized alarm management system",
   "config": {
-    "enabled": true,
-    "notificationChannels": {
-      "telegram": {
-        "enabled": true,
-        "connectorId": "telegram-bot-main",
-        "chatId": "-1001242323336"
-      },
-      "mqtt": {
-        "enabled": true,
-        "topic": "alarms/notifications",
-        "qos": 1
-      },
-      "email": {
-        "enabled": false,
-        "smtp": {
-          "host": "smtp.gmail.com",
-          "port": 587,
-          "secure": false
-        },
-        "from": "alarms@yourdomain.com",
-        "to": ["admin@yourdomain.com"]
-      }
-    },
-    "alarmRules": {
-      "motion": {
-        "enabled": true,
-        "severity": "medium",
-        "suppression": {
-          "enabled": true,
-          "window": 300000,
-          "maxAlarms": 5
-        }
-      },
-      "emergency": {
-        "enabled": true,
-        "severity": "critical",
-        "escalation": {
-          "enabled": true,
-          "delay": 60000,
-          "escalateTo": "high"
-        }
-      }
-    },
-    "retention": {
-      "alarmHistory": 30,
-      "acknowledgmentHistory": 90,
-      "resolutionHistory": 365
-    }
-  },
-  "capabilities": {
-    "enabled": [
-      "alarm:management",
-      "alarm:notifications",
-      "alarm:acknowledgment",
-      "alarm:rules"
-    ],
-    "disabled": []
+    "defaultChatId": "your-telegram-chat-id"
   }
 }
 ```
 
-### Advanced Configuration
-```json
-{
-  "config": {
-    "escalationPolicies": {
-      "critical": {
-        "levels": [
-          {
-            "delay": 0,
-            "channels": ["telegram", "mqtt"],
-            "message": "Critical alarm: {alarm.description}"
-          },
-          {
-            "delay": 300000,
-            "channels": ["telegram", "mqtt", "email"],
-            "message": "CRITICAL ALARM ESCALATION: {alarm.description}"
-          }
-        ]
-      },
-      "high": {
-        "levels": [
-          {
-            "delay": 0,
-            "channels": ["telegram"],
-            "message": "High priority alarm: {alarm.description}"
-          }
-        ]
-      }
-    },
-    "suppressionRules": {
-      "motion": {
-        "window": 300000,
-        "maxAlarms": 5,
-        "groupBy": "source"
-      },
-      "system": {
-        "window": 60000,
-        "maxAlarms": 3,
-        "groupBy": "type"
-      }
-    }
-  }
-}
-```
+## Event Types
 
-## Capabilities
+The connector listens for these event types:
+- `motion` - Motion detection events
+- `smartDetectZone` - Smart detection zone events
+- `smartDetectLine` - Smart detection line events
+- `aircraft:detected` - Aircraft detection events
+- `aircraft:emergency` - Emergency aircraft events
+- `adsb:status` - ADSB system status
+- `speed:violation` - Speed violation events
+- `system:health` - System health events
+- `connector:status` - Connector status changes
+- And many more...
 
-### Alarm Management
+## Usage Examples
+
+### Creating a New Rule
 ```javascript
-// Create a new alarm
-const alarm = await alarmManager.execute('alarm:management', 'create', {
-  type: 'motion',
-  severity: 'medium',
-  source: 'camera-1',
-  description: 'Motion detected in restricted area',
-  data: {
-    cameraId: 'camera-1',
-    confidence: 0.85,
-    location: { lat: 55.5074, lon: -4.5933 }
-  }
-});
-
-// Get alarm by ID
-const alarm = await alarmManager.execute('alarm:management', 'get', {
-  alarmId: 'alarm-123'
-});
-
-// List alarms with filters
-const alarms = await alarmManager.execute('alarm:management', 'list', {
-  severity: ['critical', 'high'],
-  status: 'active',
-  source: 'camera-1',
-  limit: 50
-});
-```
-
-### Alarm Notifications
-```javascript
-// Send notification for alarm
-await alarmManager.execute('alarm:notifications', 'send', {
-  alarmId: 'alarm-123',
-  channels: ['telegram', 'mqtt'],
-  message: 'Custom notification message'
-});
-
-// Configure notification channels
-await alarmManager.execute('alarm:notifications', 'configure', {
-  channel: 'telegram',
-  enabled: true,
-  settings: {
-    chatId: '-1001242323336',
-    parseMode: 'HTML'
-  }
-});
-```
-
-### Alarm Acknowledgment
-```javascript
-// Acknowledge an alarm
-await alarmManager.execute('alarm:acknowledgment', 'acknowledge', {
-  alarmId: 'alarm-123',
-  userId: 'user-456',
-  notes: 'Investigating the issue'
-});
-
-// Resolve an alarm
-await alarmManager.execute('alarm:acknowledgment', 'resolve', {
-  alarmId: 'alarm-123',
-  userId: 'user-456',
-  resolution: 'Issue resolved - false alarm',
-  notes: 'Motion was caused by wildlife'
-});
-```
-
-### Alarm Rules
-```javascript
-// Create a new alarm rule
-await alarmManager.execute('alarm:rules', 'create', {
-  name: 'emergency-squawk',
-  enabled: true,
+const rule = {
+  name: "Custom Motion Alert",
+  description: "Alert for motion on specific camera",
   conditions: {
-    eventType: 'emergency:squawk',
-    severity: 'critical'
+    eventType: "motion",
+    source: "unifi-protect-websocket"
   },
-  actions: {
-    createAlarm: true,
-    notifyChannels: ['telegram', 'mqtt'],
-    escalation: {
-      enabled: true,
-      delay: 30000
-    }
-  }
-});
-
-// List alarm rules
-const rules = await alarmManager.execute('alarm:rules', 'list', {
-  enabled: true
-});
-```
-
-## Event Integration
-
-### Subscribing to Events
-```javascript
-// Subscribe to motion events
-alarmManager.eventBus.subscribe('motion', (event) => {
-  alarmManager.processMotionEvent(event);
-});
-
-// Subscribe to emergency squawk events
-alarmManager.eventBus.subscribe('emergency:squawk', (event) => {
-  alarmManager.processEmergencySquawkEvent(event);
-});
-
-// Subscribe to system health events
-alarmManager.eventBus.subscribe('system:health', (event) => {
-  alarmManager.processSystemHealthEvent(event);
-});
-```
-
-### Event Processing
-```javascript
-async processMotionEvent(event) {
-  // Check if alarm should be created
-  const shouldCreateAlarm = await this.evaluateAlarmRule('motion', event);
-  
-  if (shouldCreateAlarm) {
-    const alarm = await this.createAlarm({
-      type: 'motion',
-      severity: 'medium',
-      source: event.source,
-      description: `Motion detected on ${event.data.device}`,
-      data: event.data
-    });
-    
-    // Send notifications
-    await this.sendNotifications(alarm);
-  }
-}
-
-async processEmergencySquawkEvent(event) {
-  const alarm = await this.createAlarm({
-    type: 'emergency:squawk',
-    severity: 'critical',
-    source: event.source,
-    description: `Emergency squawk code: ${event.data.squawk}`,
-    data: event.data
-  });
-  
-  // Immediate notification for emergency
-  await this.sendNotifications(alarm, ['telegram', 'mqtt']);
-}
-```
-
-## API Endpoints
-
-### Alarm Management
-```http
-# Create alarm
-POST /alarms
-{
-  "type": "motion",
-  "severity": "medium",
-  "source": "camera-1",
-  "description": "Motion detected",
-  "data": { ... }
-}
-
-# Get alarm
-GET /alarms/{alarmId}
-
-# List alarms
-GET /alarms?severity=critical&status=active&limit=50
-
-# Update alarm
-PUT /alarms/{alarmId}
-{
-  "status": "acknowledged",
-  "notes": "Investigating"
-}
-
-# Delete alarm
-DELETE /alarms/{alarmId}
-```
-
-### Alarm Acknowledgment
-```http
-# Acknowledge alarm
-POST /alarms/{alarmId}/acknowledge
-{
-  "userId": "user-456",
-  "notes": "Investigating the issue"
-}
-
-# Resolve alarm
-POST /alarms/{alarmId}/resolve
-{
-  "userId": "user-456",
-  "resolution": "Issue resolved",
-  "notes": "False alarm"
-}
-```
-
-### Alarm Rules
-```http
-# Create rule
-POST /alarms/rules
-{
-  "name": "emergency-squawk",
-  "enabled": true,
-  "conditions": { ... },
-  "actions": { ... }
-}
-
-# List rules
-GET /alarms/rules
-
-# Update rule
-PUT /alarms/rules/{ruleId}
-{
-  "enabled": false
-}
-
-# Delete rule
-DELETE /alarms/rules/{ruleId}
-```
-
-## Integration Examples
-
-### UniFi Protect Integration
-```javascript
-// In UniFi Protect connector
-this.eventBus.subscribe('motion', (event) => {
-  // Create alarm for motion events
-  this.alarmManager.execute('alarm:management', 'create', {
-    type: 'motion',
-    severity: 'medium',
-    source: event.device,
-    description: `Motion detected on camera ${event.device}`,
-    data: event
-  });
-});
-```
-
-### ADSB Integration
-```javascript
-// In ADSB connector
-this.eventBus.subscribe('emergency:squawk', (event) => {
-  // Create critical alarm for emergency squawk codes
-  this.alarmManager.execute('alarm:management', 'create', {
-    type: 'emergency:squawk',
-    severity: 'critical',
-    source: event.aircraft,
-    description: `Emergency squawk code ${event.squawk} from ${event.aircraft}`,
-    data: event
-  });
-});
-```
-
-### Prestwick Airport Integration
-```javascript
-// In Prestwick Airport connector
-this.eventBus.subscribe('aircraft:approach', (event) => {
-  // Create alarm for aircraft approaching
-  this.alarmManager.execute('alarm:management', 'create', {
-    type: 'aircraft:approach',
-    severity: 'low',
-    source: event.aircraft,
-    description: `Aircraft ${event.callsign} approaching EGPK`,
-    data: event
-  });
-});
-```
-
-## Testing
-
-### Unit Tests
-```javascript
-describe('Alarm Manager Connector', () => {
-  let alarmManager;
-  
-  beforeEach(() => {
-    alarmManager = new AlarmManagerConnector({
-      enabled: true,
-      notificationChannels: {
-        telegram: { enabled: true }
+  actions: [
+    {
+      type: "send_notification",
+      parameters: {
+        message: "Motion detected on camera {{deviceId}}",
+        priority: "medium",
+        channels: ["telegram", "gui"]
       }
-    });
-  });
-  
-  test('should create alarm', async () => {
-    const alarm = await alarmManager.execute('alarm:management', 'create', {
-      type: 'test',
-      severity: 'medium',
-      description: 'Test alarm'
-    });
-    
-    expect(alarm.id).toBeDefined();
-    expect(alarm.status).toBe('active');
-  });
-  
-  test('should send notifications', async () => {
-    const alarm = await alarmManager.execute('alarm:management', 'create', {
-      type: 'test',
-      severity: 'critical',
-      description: 'Test alarm'
-    });
-    
-    await alarmManager.execute('alarm:notifications', 'send', {
-      alarmId: alarm.id,
-      channels: ['telegram']
-    });
-    
-    // Verify notification was sent
-  });
-});
+    }
+  ],
+  metadata: {
+    category: "security",
+    connectorType: "unifi-protect"
+  },
+  enabled: true
+};
+
+await alarmManager.execute('alarm:management', 'create', rule);
 ```
 
-### Integration Tests
+### Testing a Rule
 ```javascript
-describe('Alarm Manager Integration', () => {
-  test('should process motion events', async () => {
-    const alarmManager = new AlarmManagerConnector(config);
-    const unifiConnector = new UniFiProtectConnector(config);
-    
-    await alarmManager.connect();
-    await unifiConnector.connect();
-    
-    // Simulate motion event
-    unifiConnector.eventBus.publishEvent('motion', {
-      device: 'camera-1',
-      confidence: 0.85
-    });
-    
-    // Verify alarm was created
-    const alarms = await alarmManager.execute('alarm:management', 'list', {
-      type: 'motion'
-    });
-    
-    expect(alarms.length).toBeGreaterThan(0);
-  });
+const testResult = await alarmManager.execute('alarm:management', 'test', {
+  ruleId: 'rule-id',
+  eventData: {
+    type: 'motion',
+    source: 'unifi-protect-websocket',
+    data: { deviceId: 'camera-1' }
+  }
 });
+
+console.log('Would match:', testResult.wouldMatch);
 ```
 
-## Performance Considerations
-
-### Alarm Suppression
-- **Time-based suppression**: Prevent alarm flooding within time windows
-- **Source-based grouping**: Group alarms by source to reduce duplicates
-- **Type-based suppression**: Suppress alarms of the same type
-- **Configurable thresholds**: Adjust suppression parameters per alarm type
-
-### Notification Optimization
-- **Batch notifications**: Group multiple alarms in single notifications
-- **Channel prioritization**: Send to high-priority channels first
-- **Retry logic**: Automatic retry for failed notifications
-- **Rate limiting**: Prevent notification spam
-
-### Database Optimization
-- **Indexed queries**: Fast alarm retrieval and filtering
-- **Partitioned storage**: Separate active and historical alarms
-- **Cleanup jobs**: Automatic cleanup of old alarm data
-- **Compression**: Compress historical alarm data
-
-## Security
-
-### Access Control
-- **User-based acknowledgment**: Track who acknowledged alarms
-- **Role-based permissions**: Different access levels for alarm management
-- **Audit logging**: Complete audit trail of alarm activities
-- **API authentication**: Secure API access with authentication
-
-### Data Protection
-- **Encrypted storage**: Encrypt sensitive alarm data
-- **Secure notifications**: Secure transmission of alarm notifications
-- **Data retention**: Configurable data retention policies
-- **Privacy compliance**: GDPR and privacy regulation compliance
+### Getting Statistics
+```javascript
+const stats = await alarmManager.execute('alarm:management', 'stats');
+console.log('Total rules:', stats.total);
+console.log('Enabled rules:', stats.enabled);
+console.log('By category:', stats.byCategory);
+```
 
 ## Troubleshooting
 
 ### Common Issues
 
-#### Alarms Not Being Created
-- Check alarm rules configuration
-- Verify event subscriptions
-- Check connector connectivity
-- Review alarm suppression settings
+1. **Rules not loading**: Check that `config/defaultRules.js` exists and exports an array
+2. **Notifications not sending**: Verify Telegram and MQTT connectors are configured
+3. **Events not matching**: Check event type and source in rule conditions
+4. **GUI not updating**: Ensure WebSocket connections are working
 
-#### Notifications Not Sending
-- Verify notification channel configuration
-- Check connector dependencies (Telegram, MQTT)
-- Review notification templates
-- Check rate limiting settings
+### Debug Mode
 
-#### Performance Issues
-- Review alarm suppression rules
-- Check database performance
-- Monitor notification queue
-- Review cleanup job schedules
+Enable debug logging to see detailed event processing:
 
-### Debug Commands
 ```javascript
-// Enable debug logging
-alarmManager.setLogLevel('debug');
-
-// Check alarm manager status
-const status = await alarmManager.execute('alarm:management', 'status');
-
-// Test notification channels
-await alarmManager.execute('alarm:notifications', 'test', {
-  channel: 'telegram',
-  message: 'Test notification'
-});
-
-// List active alarms
-const activeAlarms = await alarmManager.execute('alarm:management', 'list', {
-  status: 'active'
-});
+// In your application startup
+process.env.DEBUG = 'alarm-manager:*';
 ```
 
 ## Future Enhancements
 
-### Planned Features
-1. **Advanced Analytics**: Alarm trend analysis and reporting
-2. **Machine Learning**: Predictive alarm analysis
-3. **Mobile App**: Mobile alarm management interface
-4. **Webhook Integration**: Custom webhook notifications
-5. **Alarm Correlation**: Intelligent alarm correlation and grouping
-
-### Scalability Improvements
-1. **Distributed Architecture**: Multi-node alarm management
-2. **Database Clustering**: High-availability database setup
-3. **Message Queuing**: Asynchronous alarm processing
-4. **Load Balancing**: Distribute alarm processing load
-
----
+- **Visual Flow Builder**: Drag-and-drop rule creation
+- **Advanced Conditions**: Time-based, geographic, and complex logic
+- **Rule Templates**: Pre-built rule templates for common scenarios
+- **Performance Analytics**: Rule execution metrics and optimization
+- **Mobile App**: Native mobile notifications and management
 
 The Alarm Manager Connector provides a robust foundation for centralized alarm management, enabling organizations to effectively monitor, respond to, and track all system events through a unified interface. 

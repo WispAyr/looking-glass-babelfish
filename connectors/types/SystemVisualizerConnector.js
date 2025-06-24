@@ -167,9 +167,12 @@ class SystemVisualizerConnector extends BaseConnector {
     if (!this.config.enableWebSocket) return;
 
     const WebSocket = require('ws');
-    this.websocket = new WebSocket.Server({ server: this.server });
+    this.websocket = new WebSocket.Server({ 
+      server: this.server,
+      path: '/ws' // Use /ws path for WebSocket connections
+    });
 
-    this.websocket.on('connection', (ws) => {
+    this.websocket.on('connection', (ws, req) => {
       this.logger.info('Client connected to System Visualizer WebSocket');
       
       // Send initial data
@@ -181,6 +184,14 @@ class SystemVisualizerConnector extends BaseConnector {
       ws.on('close', () => {
         this.logger.info('Client disconnected from System Visualizer WebSocket');
       });
+
+      ws.on('error', (error) => {
+        this.logger.error('WebSocket error:', error);
+      });
+    });
+
+    this.websocket.on('error', (error) => {
+      this.logger.error('WebSocket server error:', error);
     });
   }
 
@@ -530,7 +541,7 @@ class SystemVisualizerConnector extends BaseConnector {
         this.updateSystemData();
         return { success: true, message: 'System data updated' };
       case 'subscribe':
-        return { success: true, url: `ws://localhost:${this.config.port}` };
+        return { success: true, url: `ws://localhost:${this.config.port}/ws` };
       default:
         throw new Error(`Unknown operation: ${operation}`);
     }

@@ -133,6 +133,29 @@
           "priorityThreshold": "medium"
         }
       },
+      "dependencies": {
+        "adsb-main": {
+          "required": true,
+          "critical": true,
+          "capabilities": ["aircraft:tracking"],
+          "description": "ADSB connector for aircraft data",
+          "fallback": "degraded_mode"
+        },
+        "notam-main": {
+          "required": false,
+          "critical": false,
+          "capabilities": ["notam:query", "notam:monitoring"],
+          "description": "NOTAM connector for airspace alerts",
+          "fallback": "skip_notam_checks"
+        },
+        "telegram-bot-main": {
+          "required": false,
+          "critical": false,
+          "capabilities": ["telegram:send"],
+          "description": "Telegram connector for notifications",
+          "fallback": "skip_notifications"
+        }
+      },
       "capabilities": {
         "enabled": [
           "aircraft:tracking",
@@ -514,7 +537,7 @@
       "name": "UK NOTAM Data",
       "description": "UK NOTAM data integration with geospatial analysis and proximity alerts",
       "config": {
-        "notamUrl": "https://github.com/Jonty/uk-notam-archive/blob/main/data/PIB.xml",
+        "notamUrl": "https://raw.githubusercontent.com/Jonty/uk-notam-archive/main/data/PIB.xml",
         "pollInterval": 1200000,
         "ukBounds": {
           "north": 60.8604,
@@ -540,7 +563,7 @@
       "name": "System Architecture Visualizer",
       "description": "Real-time visualization of system connectors and data flow",
       "config": {
-        "port": 3001,
+        "port": 3003,
         "updateInterval": 1000,
         "enableWebSocket": true,
         "enableDataFlow": true,
@@ -627,6 +650,24 @@
                 "channels": ["telegram"],
                 "message": "✈️ <b>Aircraft Approaching</b>\n\nCallsign: {{event.data.callsign}}\nType: {{event.data.aircraftType}}\nDistance: {{event.data.distance}}nm\nAltitude: {{event.data.altitude}}ft\n\nTime: {{event.timestamp}}",
                 "priority": "medium"
+              }
+            ]
+          },
+          {
+            "id": "adsb-aircraft-detection",
+            "name": "ADSB Aircraft Detection",
+            "description": "Process ADSB aircraft events for Prestwick operations",
+            "priority": "low",
+            "conditions": {
+              "eventType": ["aircraft:appeared", "aircraft:updated", "aircraft:disappeared"],
+              "source": "adsb-main"
+            },
+            "actions": [
+              {
+                "type": "notification",
+                "channels": ["gui"],
+                "message": "🛩️ <b>ADSB Aircraft Event</b>\n\nEvent: {{event.type}}\nAircraft: {{event.data.aircraft.callsign}}\nICAO24: {{event.data.aircraft.icao24}}\nLocation: {{event.data.aircraft.lat}}, {{event.data.aircraft.lon}}\nAltitude: {{event.data.aircraft.altitude}}ft\n\nTime: {{event.timestamp}}",
+                "priority": "low"
               }
             ]
           }

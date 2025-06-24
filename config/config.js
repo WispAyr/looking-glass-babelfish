@@ -144,7 +144,7 @@ const config = {
 
   // Flow System Configuration
   flow: {
-    enabled: process.env.FLOW_ENABLED !== 'false',
+    enabled: false, // TEMPORARILY DISABLED - use alarm center instead
     eventBus: {
       maxEvents: parseInt(process.env.EVENT_BUS_MAX_EVENTS) || 1000,
       processingInterval: parseInt(process.env.EVENT_BUS_PROCESSING_INTERVAL) || 100

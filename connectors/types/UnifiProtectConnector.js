@@ -542,13 +542,82 @@ class UnifiProtectConnector extends BaseConnector {
    * List all cameras
    */
   async listCameras(parameters = {}) {
-    // Use the correct UniFi Protect API endpoint
-    const response = await this.makeRequest('GET', '/proxy/protect/integration/v1/cameras');
-    
-    if (response && Array.isArray(response)) {
-      return response;
-    } else {
-      return [];
+    try {
+      // Use the correct UniFi Protect API endpoint
+      const response = await this.makeRequest('GET', '/proxy/protect/integration/v1/cameras');
+      
+      // Handle both array and object responses from UniFi Protect API
+      let camerasArray = [];
+      
+      if (response) {
+        if (Array.isArray(response)) {
+          camerasArray = response;
+        } else if (response.data && Array.isArray(response.data)) {
+          camerasArray = response.data;
+        } else if (typeof response === 'object') {
+          // Convert object to array if needed
+          camerasArray = Object.values(response);
+        }
+      }
+      
+      if (camerasArray.length > 0) {
+        // Transform cameras to include location data if available
+        const cameras = camerasArray.map(camera => ({
+          id: camera.id,
+          name: camera.name,
+          type: camera.type,
+          model: camera.model,
+          mac: camera.mac,
+          host: camera.host,
+          connectionHost: camera.connectionHost,
+          isConnected: camera.isConnected,
+          isRecording: camera.isRecording,
+          isMotionDetected: camera.isMotionDetected,
+          isLowBattery: camera.isLowBattery,
+          isWireless: camera.isWireless,
+          isUpdating: camera.isUpdating,
+          isRebooting: camera.isRebooting,
+          isAdopting: camera.isAdopting,
+          isAdopted: camera.isAdopted,
+          isAdoptedByOther: camera.isAdoptedByOther,
+          isProvisioned: camera.isProvisioned,
+          // Location data (if available)
+          hasLocation: camera.location && camera.location.latitude && camera.location.longitude,
+          location: camera.location || null,
+          // Additional metadata
+          firmwareVersion: camera.firmwareVersion,
+          hardwareRevision: camera.hardwareRevision,
+          uptime: camera.uptime,
+          lastSeen: camera.lastSeen,
+          lastMotion: camera.lastMotion,
+          lastRecording: camera.lastRecording,
+          // Map-specific properties
+          lat: camera.location?.latitude || null,
+          lon: camera.location?.longitude || null,
+          x: camera.location?.x || null,
+          y: camera.location?.y || null
+        }));
+
+        return {
+          success: true,
+          cameras: cameras,
+          total: cameras.length
+        };
+      } else {
+        return {
+          success: true,
+          cameras: [],
+          total: 0
+        };
+      }
+    } catch (error) {
+      this.logger.error('Error listing cameras:', error.message);
+      return {
+        success: false,
+        cameras: [],
+        total: 0,
+        error: error.message
+      };
     }
   }
   
@@ -562,8 +631,66 @@ class UnifiProtectConnector extends BaseConnector {
       throw new Error('Camera ID is required');
     }
     
-    const response = await this.makeRequest('GET', `/proxy/protect/integration/v1/cameras/${cameraId}`);
-    return response;
+    try {
+      const response = await this.makeRequest('GET', `/proxy/protect/integration/v1/cameras/${cameraId}`);
+      
+      if (response) {
+        // Transform camera data to include location and map-specific properties
+        const camera = {
+          id: response.id,
+          name: response.name,
+          type: response.type,
+          model: response.model,
+          mac: response.mac,
+          host: response.host,
+          connectionHost: response.connectionHost,
+          isConnected: response.isConnected,
+          isRecording: response.isRecording,
+          isMotionDetected: response.isMotionDetected,
+          isLowBattery: response.isLowBattery,
+          isWireless: response.isWireless,
+          isUpdating: response.isUpdating,
+          isRebooting: response.isRebooting,
+          isAdopting: response.isAdopting,
+          isAdopted: response.isAdopted,
+          isAdoptedByOther: response.isAdoptedByOther,
+          isProvisioned: response.isProvisioned,
+          // Location data (if available)
+          hasLocation: response.location && response.location.latitude && response.location.longitude,
+          location: response.location || null,
+          // Additional metadata
+          firmwareVersion: response.firmwareVersion,
+          hardwareRevision: response.hardwareRevision,
+          uptime: response.uptime,
+          lastSeen: response.lastSeen,
+          lastMotion: response.lastMotion,
+          lastRecording: response.lastRecording,
+          // Map-specific properties
+          lat: response.location?.latitude || null,
+          lon: response.location?.longitude || null,
+          x: response.location?.x || null,
+          y: response.location?.y || null
+        };
+
+        return {
+          success: true,
+          camera: camera
+        };
+      } else {
+        return {
+          success: false,
+          camera: null,
+          error: 'Camera not found'
+        };
+      }
+    } catch (error) {
+      this.logger.error(`Error getting camera ${cameraId}:`, error.message);
+      return {
+        success: false,
+        camera: null,
+        error: error.message
+      };
+    }
   }
   
   /**

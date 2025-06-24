@@ -22,21 +22,19 @@ const { router: apiRouter, injectServices } = require('./routes/api');
 const EventBus = require('./services/eventBus');
 const RuleEngine = require('./services/ruleEngine');
 const ActionFramework = require('./services/actionFramework');
-const FlowOrchestrator = require('./services/flowOrchestrator');
+// const FlowOrchestrator = require('./services/flowOrchestrator'); // TEMPORARILY DISABLED
+const AnalyticsEngine = require('./services/analyticsEngine');
+const DashboardService = require('./services/dashboardService');
+const LayoutManager = require('./services/layoutManager');
+const GuiEditor = require('./services/guiEditor');
+const MapIntegrationService = require('./services/mapIntegrationService');
+const HealthMonitor = require('./services/healthMonitor');
 
 // Import entity management system
 const EntityManager = require('./services/entityManager');
 
 // Import new analytics and monitoring services
 const ZoneManager = require('./services/zoneManager');
-const AnalyticsEngine = require('./services/analyticsEngine');
-const DashboardService = require('./services/dashboardService');
-
-// Import layout and GUI services
-const LayoutManager = require('./services/layoutManager');
-const GuiEditor = require('./services/guiEditor');
-
-// Import speed calculation system
 const SpeedCalculationService = require('./services/speedCalculationService');
 
 // Import airport vector service
@@ -81,9 +79,6 @@ const { router: speedRouter, SpeedRoutes } = require('./routes/speed');
 // Import radar routes
 const { router: radarRouter, injectServices: injectRadarServices } = require('./routes/radar');
 
-// Import map integration service
-const MapIntegrationService = require('./services/mapIntegrationService');
-
 // Import map routes
 const mapRouter = require('./routes/map');
 
@@ -103,11 +98,7 @@ const { router: historyRouter, injectServices: injectHistoryServices } = require
 const { router: prestwickRouter, injectServices: injectPrestwickServices } = require('./routes/prestwick');
 
 // Import new health monitoring and security services
-const HealthMonitor = require('./services/healthMonitor');
 const SecurityMiddleware = require('./middleware/security');
-
-// Import Flow Builder
-const FlowBuilder = require('./services/flowBuilder');
 
 // Import aircraft data service
 const AircraftDataService = require('./services/aircraftDataService');
@@ -150,72 +141,63 @@ const logger = winston.createLogger({
   ]
 });
 
-// Define services and managers in a broader scope
-let entityManager;
-let connectorRegistry;
-let cache;
-let eventProcessor;
-let mqttBroker;
+// Global variables for services
 let eventBus;
 let ruleEngine;
 let actionFramework;
-let flowOrchestrator;
-
-// New analytics and monitoring services
-let zoneManager;
+// let flowOrchestrator; // TEMPORARILY DISABLED
 let analyticsEngine;
 let dashboardService;
-
-// Layout and GUI services
 let layoutManager;
 let guiEditor;
-
-// Speed calculation system
-let speedCalculationService;
-let speedCalculationConnector;
-
-// Radar system
-let radarConnector;
-
-// Airport vector service
-let airportVectorService;
-
-// Coastline vector service
-let coastlineVectorService;
-
-// Airspace service
-let airspaceService;
-
-// Vector optimization service
-let vectorOptimizationService;
-
-// Map integration service
 let mapIntegrationService;
-
-// New health monitoring and security services
 let healthMonitor;
-let securityMiddleware;
+let cache;
+let mqttBroker;
 
-// Flow Builder
-let flowBuilder;
+// Global variables for entity management
+let entityManager;
+let eventProcessor;
 
-// Aircraft data service
+// Global variables for analytics and monitoring
+let zoneManager;
+let speedCalculationService;
+
+// Global variables for layout and GUI
+// let flowBuilder; // TEMPORARILY DISABLED
+
+// Global variables for connectors and services
+let connectorRegistry;
+let speedCalculationConnector;
+let radarConnector;
+let airportVectorService;
+let coastlineVectorService;
+let airspaceService;
+let vectorOptimizationService;
 let aircraftDataService;
-
-// Squawk code service
 let squawkCodeService;
-
-// RTSP transcoding service
 let transcodingService;
 
 // Main application setup
 const app = express();
 const server = http.createServer(app);
+
 const io = new Server(server, {
   cors: {
     origin: config.server.cors.origin,
     credentials: config.server.cors.credentials
+  },
+  path: '/socket.io/',
+  allowEIO3: true,
+  transports: ['websocket', 'polling']
+});
+
+// Add middleware to Socket.IO to exclude alarms WebSocket path
+io.use((socket, next) => {
+  if (socket.request.url && socket.request.url.includes('/alarms/ws/alerts')) {
+    return next(new Error('Path not allowed'));
   }
+  next();
 });
 
 // Initialize security middleware
@@ -223,7 +205,21 @@ securityMiddleware = new SecurityMiddleware(config.security);
 
 // Middleware
 app.use(securityMiddleware.getHelmetConfig());
-app.use(compression());
+app.use(compression({
+  filter: (req, res) => {
+    // Don't compress WebSocket upgrade requests
+    if (req.headers.upgrade && req.headers.upgrade.toLowerCase() === 'websocket') {
+      console.log('Disabling compression for WebSocket upgrade request');
+      return false;
+    }
+    // Don't compress WebSocket routes
+    if (req.path && req.path.startsWith('/alarms/ws/')) {
+      console.log('Disabling compression for WebSocket route:', req.path);
+      return false;
+    }
+    return compression.filter(req, res);
+  }
+}));
 app.use(cors(securityMiddleware.getCorsConfig()));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -234,6 +230,96 @@ app.use(morgan('combined', { stream: { write: message => logger.info(message.tri
 app.use(securityMiddleware.getRateLimiter());
 app.use(securityMiddleware.requestLogger());
 
+// WebSocket setup for real-time alerts
+
+// Create WebSocket server
+let wss = null;
+
+// Initialize WebSocket server after HTTP server is created
+function initializeWebSocketServer(server) {
+  console.log('Initializing WebSocket server...');
+  console.log('HTTP server:', server ? 'exists' : 'missing');
+  
+  try {
+    wss = new WebSocket.Server({ 
+      server: server,
+      path: '/alarms/ws/alerts'
+    });
+    
+    console.log('WebSocket server created successfully');
+    console.log('WebSocket server initialized on /alarms/ws/alerts');
+    
+    wss.on('connection', (ws, req) => {
+      console.log('WebSocket client connected to alerts endpoint');
+      console.log('Request path:', req.url);
+      console.log('Request headers:', {
+        upgrade: req.headers.upgrade,
+        connection: req.headers.connection,
+        'sec-websocket-key': req.headers['sec-websocket-key'] ? 'present' : 'missing'
+      });
+      
+      // Store the WebSocket connection
+      if (!app.locals.alertWebSockets) {
+        app.locals.alertWebSockets = new Set();
+      }
+      app.locals.alertWebSockets.add(ws);
+      
+      // Send welcome message
+      const welcomeMessage = JSON.stringify({
+        type: 'connected',
+        message: 'Connected to real-time alerts',
+        timestamp: new Date().toISOString()
+      });
+      
+      ws.send(welcomeMessage, (error) => {
+        if (error) {
+          console.error('Error sending welcome message:', error);
+          app.locals.alertWebSockets.delete(ws);
+        } else {
+          console.log('Welcome message sent successfully');
+        }
+      });
+      
+      // Handle incoming messages
+      ws.on('message', (message) => {
+        try {
+          const data = JSON.parse(message.toString());
+          console.log('Received WebSocket message:', data);
+          
+          // Send acknowledgment
+          ws.send(JSON.stringify({
+            type: 'ack',
+            message: 'Message received',
+            timestamp: new Date().toISOString()
+          }));
+        } catch (error) {
+          console.error('Error parsing WebSocket message:', error);
+        }
+      });
+      
+      // Handle WebSocket close
+      ws.on('close', (code, reason) => {
+        console.log(`WebSocket client disconnected from alerts endpoint: ${code} - ${reason}`);
+        app.locals.alertWebSockets.delete(ws);
+      });
+      
+      // Handle WebSocket errors
+      ws.on('error', (error) => {
+        console.error('WebSocket error:', error);
+        app.locals.alertWebSockets.delete(ws);
+      });
+    });
+    
+    wss.on('error', (error) => {
+      console.error('WebSocket server error:', error);
+    });
+    
+    console.log('WebSocket server setup complete');
+  } catch (error) {
+    console.error('Error initializing WebSocket server:', error);
+  }
+}
+
 // Broadcast function for real-time updates
 function broadcastToClients(event, data) {
   if (io) {
@@ -242,6 +328,125 @@ function broadcastToClients(event, data) {
       timestamp: new Date().toISOString()
     });
   }
+}
+
+// Broadcast alert to all connected WebSocket clients
+function broadcastAlert(alertData) {
+  console.log('[broadcastAlert] Broadcasting alert:', {
+    type: alertData.type,
+    title: alertData.title,
+    source: alertData.source,
+    timestamp: new Date().toISOString()
+  });
+  
+  const webSockets = app?.locals?.alertWebSockets;
+  
+  if (webSockets && webSockets.size > 0) {
+    const message = JSON.stringify({
+      type: 'alert',
+      ...alertData,
+      timestamp: new Date().toISOString()
+    });
+    
+    console.log(`[broadcastAlert] Sending to ${webSockets.size} connected clients`);
+    
+    const disconnectedSockets = [];
+    
+    webSockets.forEach(ws => {
+      if (ws.readyState === 1) { // WebSocket.OPEN
+        try {
+          ws.send(message, (error) => {
+            if (error) {
+              console.error('Error sending alert to WebSocket:', error);
+              disconnectedSockets.push(ws);
+            }
+          });
+        } catch (error) {
+          console.error('Error sending alert to WebSocket:', error);
+          disconnectedSockets.push(ws);
+        }
+      } else {
+        disconnectedSockets.push(ws);
+      }
+    });
+    
+    // Clean up disconnected sockets
+    disconnectedSockets.forEach(ws => {
+      webSockets.delete(ws);
+    });
+    
+    if (disconnectedSockets.length > 0) {
+      console.log(`[broadcastAlert] Cleaned up ${disconnectedSockets.length} disconnected sockets`);
+    }
+  } else {
+    console.log('[broadcastAlert] No WebSocket clients connected');
+  }
+}
+
+// Broadcast to all connected WebSocket clients
+function broadcastToWebSocketClients(data) {
+  const webSockets = app?.locals?.alertWebSockets;
+  
+  if (webSockets && webSockets.size > 0) {
+    const message = JSON.stringify({
+      ...data,
+      timestamp: new Date().toISOString()
+    });
+    
+    const disconnectedSockets = [];
+    
+    webSockets.forEach(ws => {
+      if (ws.readyState === 1) { // WebSocket.OPEN
+        try {
+          ws.send(message, (error) => {
+            if (error) {
+              console.error('Error sending message to WebSocket:', error);
+              disconnectedSockets.push(ws);
+            }
+          });
+        } catch (error) {
+          console.error('Error sending message to WebSocket:', error);
+          disconnectedSockets.push(ws);
+        }
+      } else {
+        disconnectedSockets.push(ws);
+      }
+    });
+    
+    // Clean up disconnected sockets
+    disconnectedSockets.forEach(ws => {
+      webSockets.delete(ws);
+    });
+  }
+}
+
+// Broadcast connector status updates
+function broadcastConnectorStatus(connectorId, status) {
+  broadcastToWebSocketClients({
+    type: 'connector-status',
+    connectorId,
+    status,
+    timestamp: new Date().toISOString()
+  });
+}
+
+// Broadcast rule updates
+function broadcastRuleUpdate(action, rule) {
+  broadcastToWebSocketClients({
+    type: 'rule-update',
+    action, // 'created', 'updated', 'deleted', 'enabled', 'disabled'
+    rule,
+    timestamp: new Date().toISOString()
+  });
+}
+
+// Broadcast system status updates
+function broadcastSystemStatus(status) {
+  broadcastToWebSocketClients({
+    type: 'system-status',
+    status,
+    timestamp: new Date().toISOString()
+  });
 }
 
 // Handle connector events (including WebSocket events)
@@ -652,33 +857,6 @@ io.on('connection', (socket) => {
   });
 });
 
-// Inject services into API router
-injectServices({
-  get eventProcessor() { return eventProcessor; },
-  get mqttBroker() { return mqttBroker; },
-  get cache() { return cache; },
-  get connectorRegistry() { return connectorRegistry; },
-  get entityManager() { return entityManager; },
-  get zoneManager() { return zoneManager; },
-  get analyticsEngine() { return analyticsEngine; },
-  get dashboardService() { return dashboardService; },
-  get ruleEngine() { return ruleEngine; },
-  get flowOrchestrator() { return flowOrchestrator; },
-  get mapIntegrationService() { return mapIntegrationService; },
-  get layoutManager() { return layoutManager; },
-  get guiEditor() { return guiEditor; },
-  get speedCalculationService() { return speedCalculationService; },
-  get speedCalculationConnector() { return speedCalculationConnector; },
-  get radarConnector() { return radarConnector; },
-  get airportVectorService() { return airportVectorService; },
-  get coastlineVectorService() { return coastlineVectorService; },
-  get airspaceService() { return airspaceService; },
-  get vectorOptimizationService() { return vectorOptimizationService; },
-  get aircraftDataService() { return aircraftDataService; },
-  get squawkCodeService() { return squawkCodeService; },
-  get transcodingService() { return transcodingService; }
-});
-
 // Connector event handling
 function setupConnectorEventHandlers() {
   if (!connectorRegistry) return;
@@ -848,13 +1026,6 @@ async function startServer() {
     }
     logger.info('Starting Babelfish Looking Glass server...');
 
-    // Initialize Flow Builder
-    flowBuilder = new FlowBuilder({
-      flowsDir: path.join(process.cwd(), 'config', 'flows'),
-      autoSave: true,
-      maxFlows: 100
-    });
-
     // Initialize core services
     cache = new Cache(config.cache || {}, logger);
     eventProcessor = new EventProcessor(config.events || {}, logger);
@@ -862,7 +1033,7 @@ async function startServer() {
     eventBus = new EventBus(config.eventBus || {}, logger);
     ruleEngine = new RuleEngine(config.rules || {}, logger);
     actionFramework = new ActionFramework(config.actions || {}, logger);
-    flowOrchestrator = new FlowOrchestrator(config.flows || {}, logger);
+    // flowOrchestrator = new FlowOrchestrator(config.flows || {}, logger); // TEMPORARILY DISABLED
 
     // Initialize entity manager
     entityManager = new EntityManager(config.entities || {}, logger);
@@ -935,9 +1106,6 @@ async function startServer() {
     connectorRegistry.registerType('telegram', TelegramConnector);
     connectorRegistry.registerType('alarm-manager', AlarmManagerConnector);
     connectorRegistry.registerType('notam', NOTAMConnector);
-
-    // Auto-discover and register connector types
-    await connectorRegistry.autoDiscoverTypes();
 
     // Initialize services BEFORE connectors
     await cache.initialize();
@@ -1143,7 +1311,8 @@ async function startServer() {
     await autoRegisterGuiAndMapConnectors();
 
     // Set entity manager reference for connectors that support it
-    connectorRegistry.getConnectors().forEach(connector => {
+    const connectors = connectorRegistry.getConnectors();
+    connectors.forEach(connector => {
       if (connector.setEntityManager) {
         connector.setEntityManager(entityManager);
       }
@@ -1156,6 +1325,46 @@ async function startServer() {
         connector.setConnectorRegistry(connectorRegistry);
       }
     });
+    
+    // Get Alarm Manager connector first
+    let alarmManagerConnector = connectorRegistry.getConnector('alarm-manager-main');
+    
+    // Set RuleEngine reference for AlarmManagerConnector
+    if (alarmManagerConnector && ruleEngine) {
+      if (alarmManagerConnector.setRuleEngine) {
+        alarmManagerConnector.setRuleEngine(ruleEngine);
+        logger.info('RuleEngine reference set for AlarmManagerConnector');
+      }
+    }
+    
+    // Now set AlarmManager reference for connectors that support it
+    if (alarmManagerConnector) {
+      connectors.forEach(connector => {
+        if (connector.setAlarmManager) {
+          connector.setAlarmManager(alarmManagerConnector);
+        }
+      });
+    }
+    
+    // Connect all connectors
+    const connectionResults = await connectorRegistry.connectAll();
+    logger.info(`Connected ${connectionResults.filter(r => r.status === 'connected').length} connectors`);
+    
+    // Wire up Alarm Manager with Telegram connector for notifications AFTER connectors are connected
+    const telegramConnector = connectorRegistry.getConnector('telegram-bot-main');
+    
+    if (alarmManagerConnector && telegramConnector) {
+      // Set up notification channels using the correct method
+      await alarmManagerConnector.setupNotificationChannels();
+      logger.info('Alarm Manager notification channels configured');
+    } else {
+      if (!alarmManagerConnector) {
+        logger.warn('Alarm Manager connector not found - notifications may not work');
+      }
+      if (!telegramConnector) {
+        logger.warn('Telegram connector not found - notifications may not work');
+      }
+    }
     
     if (mqttBroker) {
       await mqttBroker.initialize();
@@ -1175,27 +1384,6 @@ async function startServer() {
     // Initialize layout manager
     await layoutManager.initialize();
     
-    // Initialize flow system
-    if (flowOrchestrator) {
-      // Create connectors map for flow orchestrator
-      const connectorsMap = new Map();
-      const connectors = connectorRegistry.getConnectors();
-      for (const connector of connectors) {
-        connectorsMap.set(connector.id, connector);
-      }
-      
-      await flowOrchestrator.initialize({
-        eventBus,
-        ruleEngine,
-        actionFramework,
-        connectors: connectorsMap,
-        cache,
-        mqttBroker
-      });
-      
-      logger.info('Flow system initialized and ready');
-    }
-    
     // Load default rules
     if (ruleEngine) {
       // Handle new defaultRules structure (object) vs old structure (array)
@@ -1204,35 +1392,34 @@ async function startServer() {
       logger.info(`Loaded ${rulesArray.length} default rules`);
     }
     
-    // Connect all connectors
-    const connectionResults = await connectorRegistry.connectAll();
-    logger.info(`Connected ${connectionResults.filter(r => r.status === 'connected').length} connectors`);
-    
     // Start event processing
     eventProcessor.start();
     
     // Set up API routes
     injectServices({
-      eventProcessor,
-      mqttBroker,
-      cache,
-      connectorRegistry,
-      entityManager,
-      zoneManager,
-      analyticsEngine,
-      dashboardService,
-      ruleEngine,
-      flowOrchestrator,
-      mapIntegrationService,
-      layoutManager,
-      guiEditor,
-      speedCalculationService,
-      speedCalculationConnector,
-      radarConnector,
-      airspaceService,
-      vectorOptimizationService,
-      aircraftDataService,
-      squawkCodeService
+      get eventProcessor() { return eventProcessor; },
+      get mqttBroker() { return mqttBroker; },
+      get cache() { return cache; },
+      get connectorRegistry() { return connectorRegistry; },
+      get entityManager() { return entityManager; },
+      get zoneManager() { return zoneManager; },
+      get analyticsEngine() { return analyticsEngine; },
+      get dashboardService() { return dashboardService; },
+      get ruleEngine() { return ruleEngine; },
+      get flowOrchestrator() { return null; },
+      get mapIntegrationService() { return mapIntegrationService; },
+      get layoutManager() { return layoutManager; },
+      get guiEditor() { return guiEditor; },
+      get speedCalculationService() { return speedCalculationService; },
+      get speedCalculationConnector() { return speedCalculationConnector; },
+      get radarConnector() { return radarConnector; },
+      get airportVectorService() { return airportVectorService; },
+      get coastlineVectorService() { return coastlineVectorService; },
+      get airspaceService() { return airspaceService; },
+      get vectorOptimizationService() { return vectorOptimizationService; },
+      get aircraftDataService() { return aircraftDataService; },
+      get squawkCodeService() { return squawkCodeService; },
+      get transcodingService() { return transcodingService; }
     });
     
     // Set up GUI routes
@@ -1304,9 +1491,9 @@ async function startServer() {
     // Mount radar routes
     app.use('/radar', radarRouter);
     
-    // Mount flow routes
-    app.use('/api/flows', require('./routes/flows'));
-    app.use('/flows', require('./routes/flows-gui'));
+    // Mount flow routes - TEMPORARILY DISABLED
+    // app.use('/api/flows', require('./routes/flows'));
+    // app.use('/flows', require('./routes/flows-gui'));
 
     // Mount Overwatch routes
     app.use('/overwatch', overwatchRouter);
@@ -1318,8 +1505,33 @@ async function startServer() {
     app.use('/api/telegram', telegramRouter);
 
     // Mount alarm manager routes
-    app.use('/alarms', alarmRouter);
+    app.use('/alarms', securityMiddleware.getAlarmsRateLimiter(), alarmRouter);
 
+    // Test endpoint for sending alerts
+    app.post('/api/alerts/test', (req, res) => {
+      try {
+        const { type = 'info', title = 'Test Alert', message = 'This is a test alert' } = req.body;
+        
+        broadcastAlert({
+          type,
+          title,
+          message,
+          priority: type === 'emergency' ? 'high' : type === 'warning' ? 'medium' : 'low',
+          source: 'test'
+        });
+        
+        res.json({
+          success: true,
+          message: 'Test alert sent successfully'
+        });
+      } catch (error) {
+        res.status(500).json({
+          success: false,
+          error: error.message
+        });
+      }
+    });
+    
     // Mount UniFi Protect routes
     app.use('/unifi', unifiRouter);
 
@@ -1453,7 +1665,7 @@ async function startServer() {
     app.locals.eventBus = eventBus;
     app.locals.ruleEngine = ruleEngine;
     app.locals.actionFramework = actionFramework;
-    app.locals.flowOrchestrator = flowOrchestrator;
+    app.locals.flowOrchestrator = null; // TEMPORARILY DISABLED
     app.locals.entityManager = entityManager;
     app.locals.analyticsEngine = analyticsEngine;
     app.locals.dashboardService = dashboardService;
@@ -1461,8 +1673,11 @@ async function startServer() {
     app.locals.guiEditor = guiEditor;
     app.locals.mapIntegrationService = mapIntegrationService;
     app.locals.healthMonitor = healthMonitor;
-    app.locals.flowBuilder = flowBuilder;
     app.locals.logger = logger;
+    app.locals.broadcastAlert = broadcastAlert;
+    app.locals.broadcastConnectorStatus = broadcastConnectorStatus;
+    app.locals.broadcastRuleUpdate = broadcastRuleUpdate;
+    app.locals.broadcastSystemStatus = broadcastSystemStatus;
     
     // Initialize speed calculation routes
     new SpeedRoutes({
@@ -1481,34 +1696,35 @@ async function startServer() {
     // Add error handling middleware
     app.use(securityMiddleware.errorHandler());
     
-    // Initialize Flow Builder
-    await flowBuilder.initialize();
+    // Initialize Flow Builder - TEMPORARILY DISABLED
+    // await flowBuilder.initialize();
 
-    // Connect EventBus with Flow Builder
-    eventBus.flowBuilder = flowBuilder;
-    global.flowBuilder = flowBuilder;
+    // Connect EventBus with Flow Builder - TEMPORARILY DISABLED
+    // eventBus.flowBuilder = flowBuilder;
+    // global.flowBuilder = flowBuilder;
     global.actionFramework = actionFramework;
     global.eventBus = eventBus;
     global.connectorRegistry = connectorRegistry;
+    global.broadcastAlert = broadcastAlert;
 
-    // Set up event listeners for flow execution
-    flowBuilder.on('action:execute', async (data) => {
-      const { actionType, parameters, nodeId, flowId } = data;
-      
-      try {
-        // Execute the action using the action framework
-        const actionFramework = app.locals.actionFramework;
-        if (actionFramework) {
-          const result = await actionFramework.executeAction(actionType, parameters);
-          console.log(`Flow ${flowId} executed action ${actionType}:`, result);
-        }
-      } catch (error) {
-        console.error(`Error executing flow action ${actionType}:`, error);
-      }
-    });
+    // Set up event listeners for flow execution - TEMPORARILY DISABLED
+    // flowBuilder.on('action:execute', async (data) => {
+    //   const { actionType, parameters, nodeId, flowId } = data;
+    //   
+    //   try {
+    //     // Execute the action using the action framework
+    //     const actionFramework = app.locals.actionFramework;
+    //     if (actionFramework) {
+    //       const result = await actionFramework.executeAction(actionType, parameters);
+    //       console.log(`Flow ${flowId} executed action ${actionType}:`, result);
+    //     }
+    //   } catch (error) {
+    //     console.error(`Error executing flow action ${actionType}:`, error);
+    //   }
+    // });
     
     // Start server
-    server.listen(config.server.port, config.server.host, () => {
+    const server = app.listen(config.server.port, config.server.host, () => {
       logger.info(`🚀 Babelfish Looking Glass server running on http://${config.server.host}:${config.server.port}`);
       logger.info(`📡 WebSocket available at ws://${config.server.host}:${config.server.port}`);
       logger.info(`🔍 Health check: http://${config.server.host}:${config.server.port}/health`);
@@ -1530,6 +1746,9 @@ async function startServer() {
       if (mqttBroker) {
         logger.info(`📨 MQTT broker connected to localhost:1883`);
       }
+      
+      // Initialize WebSocket server after HTTP server is created
+      initializeWebSocketServer(server);
       
       // Set up Overwatch WebSocket for event streaming
       setupEventStreamWebSocket(server);

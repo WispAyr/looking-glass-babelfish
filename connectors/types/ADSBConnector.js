@@ -2166,6 +2166,9 @@ class ADSBConnector extends BaseConnector {
       
       this.emit('aircraft:moved', { aircraft: newAircraft, changes: changes });
       
+      // Also emit aircraft:updated event for consistency
+      this.emit('aircraft:updated', { aircraft: newAircraft, changes: changes });
+      
       // Publish significant changes to event bus for rule processing
       if (this.eventBus && (changes.position || changes.altitude || changes.speed)) {
         this.eventBus.publishEvent({
@@ -2863,30 +2866,30 @@ class ADSBConnector extends BaseConnector {
   getStats() {
     return {
       ...this.stats,
-      performance: this.performance,
+      performance: this.performance || {},
       aircraft: {
-        current: this.aircraft.size,
-        appearances: this.appearances.length,
-        disappearances: this.disappearances.length,
-        changes: this.recentChanges.length
+        current: this.aircraft ? this.aircraft.size : 0,
+        appearances: this.appearances ? this.appearances.length : 0,
+        disappearances: this.disappearances ? this.disappearances.length : 0,
+        changes: this.recentChanges ? this.recentChanges.length : 0
       },
       zones: {
-        total: this.zones.size,
-        active: Array.from(this.zones.values()).filter(z => z.active).length,
-        violations: this.performance.zoneViolations
+        total: this.zones ? this.zones.size : 0,
+        active: this.zones ? Array.from(this.zones.values()).filter(z => z.active).length : 0,
+        violations: this.performance ? this.performance.zoneViolations : 0
       },
       events: {
-        total: this.events.length,
-        emergency: this.emergencyEvents.length,
-        recent: this.events.slice(-10)
+        total: this.events ? this.events.length : 0,
+        emergency: this.emergencyEvents ? this.emergencyEvents.length : 0,
+        recent: this.events ? this.events.slice(-10) : []
       },
       baseStation: {
         enabled: this.enableBaseStationIntegration,
         connected: this.baseStationDb !== null,
-        registrySize: this.aircraftRegistry.size,
-        queries: this.performance.baseStationQueries,
-        cacheHits: this.performance.baseStationCacheHits,
-        cacheHitRate: this.performance.baseStationQueries > 0 ? 
+        registrySize: this.aircraftRegistry ? this.aircraftRegistry.size : 0,
+        queries: this.performance ? this.performance.baseStationQueries : 0,
+        cacheHits: this.performance ? this.performance.baseStationCacheHits : 0,
+        cacheHitRate: this.performance && this.performance.baseStationQueries > 0 ? 
           (this.performance.baseStationCacheHits / this.performance.baseStationQueries * 100).toFixed(2) + '%' : '0%'
       }
     };

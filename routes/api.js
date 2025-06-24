@@ -24,7 +24,7 @@ const logger = winston.createLogger({
 });
 
 // Import services (these will be injected from the main server)
-let eventProcessor, mqttBroker, cache, connectorRegistry, entityManager, analyticsEngine, dashboardService, flowOrchestrator;
+let eventProcessor, mqttBroker, cache, connectorRegistry, entityManager, analyticsEngine, dashboardService;
 
 // Middleware to inject services
 function injectServices(services) {
@@ -35,7 +35,6 @@ function injectServices(services) {
   entityManager = services.entityManager;
   analyticsEngine = services.analyticsEngine;
   dashboardService = services.dashboardService;
-  flowOrchestrator = services.flowOrchestrator;
 }
 
 // Health check
@@ -264,18 +263,130 @@ router.delete('/rules/:ruleId', (req, res) => {
   }
 });
 
-// Flows endpoints
-router.get('/flows', (req, res) => {
+// Import rules
+router.post('/rules/import', (req, res) => {
   try {
-    const flowOrchestrator = req.app.locals.flowOrchestrator;
-    if (!flowOrchestrator) {
-      return res.status(500).json({ success: false, error: 'Flow Orchestrator not initialized' });
+    const ruleEngine = req.app.locals.ruleEngine;
+    if (!ruleEngine) {
+      return res.status(500).json({ success: false, error: 'Rule Engine not initialized' });
     }
-    const flows = flowOrchestrator.getFlows();
-    res.json({ success: true, count: flows.length, data: flows });
+    
+    const rulesData = req.body;
+    if (!Array.isArray(rulesData)) {
+      return res.status(400).json({ success: false, error: 'Invalid rules data format' });
+    }
+    
+    const importedRules = [];
+    for (const ruleData of rulesData) {
+      try {
+        const rule = ruleEngine.createRule(ruleData);
+        importedRules.push(rule);
+      } catch (error) {
+        console.error('Error importing rule:', error);
+      }
+    }
+    
+    res.json({ 
+      success: true, 
+      message: `Imported ${importedRules.length} rules successfully`,
+      data: importedRules 
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
+});
+
+// Export rules
+router.get('/rules/export', (req, res) => {
+  try {
+    const ruleEngine = req.app.locals.ruleEngine;
+    if (!ruleEngine) {
+      return res.status(500).json({ success: false, error: 'Rule Engine not initialized' });
+    }
+    
+    const rules = ruleEngine.getRules();
+    res.json({ success: true, data: rules });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Toggle rule enabled/disabled
+router.post('/rules/:ruleId/toggle', (req, res) => {
+  try {
+    const ruleEngine = req.app.locals.ruleEngine;
+    if (!ruleEngine) {
+      return res.status(500).json({ success: false, error: 'Rule Engine not initialized' });
+    }
+    
+    const { ruleId } = req.params;
+    const { enabled } = req.body;
+    
+    const rule = ruleEngine.getRule(ruleId);
+    if (!rule) {
+      return res.status(404).json({ success: false, error: 'Rule not found' });
+    }
+    
+    rule.enabled = enabled;
+    ruleEngine.updateRule(ruleId, rule);
+    
+    res.json({ 
+      success: true, 
+      message: `Rule ${enabled ? 'enabled' : 'disabled'} successfully`,
+      data: rule 
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Test rule
+router.post('/rules/:ruleId/test', (req, res) => {
+  try {
+    const ruleEngine = req.app.locals.ruleEngine;
+    if (!ruleEngine) {
+      return res.status(500).json({ success: false, error: 'Rule Engine not initialized' });
+    }
+    
+    const { ruleId } = req.params;
+    const { testData } = req.body;
+    
+    const rule = ruleEngine.getRule(ruleId);
+    if (!rule) {
+      return res.status(404).json({ success: false, error: 'Rule not found' });
+    }
+    
+    // Create a test event
+    const testEvent = {
+      type: rule.eventType || 'test',
+      source: rule.source || 'test',
+      data: testData || {},
+      timestamp: Date.now()
+    };
+    
+    // Process the test event
+    const result = ruleEngine.processEvent(testEvent);
+    
+    res.json({ 
+      success: true, 
+      message: 'Rule test completed',
+      data: {
+        rule: rule,
+        testEvent: testEvent,
+        result: result
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Flows endpoints - DISABLED (legacy flowOrchestrator)
+router.get('/flows', (req, res) => {
+  res.status(501).json({ 
+    success: false, 
+    error: 'Flows functionality has been disabled - legacy flowOrchestrator removed' 
+  });
 });
 
 // Analytics endpoints
@@ -429,22 +540,6 @@ router.get('/discovered', async (req, res) => {
       }
     }
     
-    // Get discovered data from flow orchestrator
-    if (flowOrchestrator) {
-      const orchestratorEventTypes = flowOrchestrator.getDiscoveredEventTypes();
-      const orchestratorFields = flowOrchestrator.getDiscoveredFields();
-      const autoGeneratedRules = flowOrchestrator.getAutoGeneratedRules();
-      
-      discovered.eventTypes.push(...orchestratorEventTypes);
-      for (const [eventType, fields] of Object.entries(orchestratorFields)) {
-        if (!discovered.fields[eventType]) {
-          discovered.fields[eventType] = [];
-        }
-        discovered.fields[eventType].push(...fields);
-      }
-      discovered.autoGeneratedRules = autoGeneratedRules;
-    }
-    
     // Remove duplicates
     discovered.eventTypes = [...new Set(discovered.eventTypes)];
     for (const eventType in discovered.fields) {
@@ -458,19 +553,13 @@ router.get('/discovered', async (req, res) => {
   }
 });
 
-// Auto-generated rules
+// Auto-generated rules - DISABLED (legacy flowOrchestrator)
 router.get('/rules/auto-generated', async (req, res) => {
-  try {
-    if (!flowOrchestrator) {
-      return res.json({ success: true, data: [] });
-    }
-    
-    const autoGeneratedRules = flowOrchestrator.getAutoGeneratedRules();
-    res.json({ success: true, data: autoGeneratedRules });
-  } catch (error) {
-    logger.error('Error getting auto-generated rules:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
+  res.status(501).json({ 
+    success: false, 
+    error: 'Auto-generated rules functionality has been disabled - legacy flowOrchestrator removed',
+    data: []
+  });
 });
 
 // Event type capabilities

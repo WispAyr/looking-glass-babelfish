@@ -410,6 +410,17 @@
                 if (result.success && result.data) {
                     discoveredCameras = result.data;
                     console.log(`✅ Discovered ${discoveredCameras.length} cameras`);
+                    
+                    // Debug: Log camera structure to help identify hlsPath issues
+                    if (discoveredCameras.length > 0) {
+                        console.log('📷 First camera structure:', discoveredCameras[0]);
+                        discoveredCameras.forEach((camera, index) => {
+                            if (!camera.hlsPath || typeof camera.hlsPath !== 'string') {
+                                console.warn(`⚠️ Camera ${index} (${camera.id}) has invalid hlsPath:`, camera.hlsPath);
+                            }
+                        });
+                    }
+                    
                     updateCameraList();
                     return discoveredCameras;
                 } else {
@@ -575,9 +586,19 @@
                 cell.appendChild(type);
                 cameraGrid.appendChild(cell);
                 
-                // Load HLS stream
-                const hlsUrl = `http://localhost:3000${camera.hlsPath}`;
-                loadHLSStream(video, hlsUrl);
+                // Load HLS stream - add validation for hlsPath
+                if (camera.hlsPath && typeof camera.hlsPath === 'string') {
+                    const hlsUrl = `http://localhost:3000${camera.hlsPath}`;
+                    loadHLSStream(video, hlsUrl);
+                } else {
+                    console.warn(`Camera ${camera.id} (${camera.name}) has invalid hlsPath:`, camera.hlsPath);
+                    video.style.display = 'none';
+                    const errorDiv = document.createElement('div');
+                    errorDiv.style.color = '#ff6b6b';
+                    errorDiv.style.fontSize = '10px';
+                    errorDiv.textContent = 'No Stream';
+                    cell.appendChild(errorDiv);
+                }
             });
             
             // Fill remaining cells with placeholders if needed
@@ -604,32 +625,62 @@
             const cameraIndex = displayId - 1;
             const camera = activeCameras[cameraIndex] || activeCameras[0];
             
-            if (camera) {
+            if (camera && camera.hlsPath && typeof camera.hlsPath === 'string') {
                 const hlsUrl = `http://localhost:3000${camera.hlsPath}`;
                 loadHLSStream(video, hlsUrl);
+            } else {
+                console.warn(`No valid camera or hlsPath for display ${displayId}`);
+                video.style.display = 'none';
             }
         }
 
         function loadHLSStream(videoElement, hlsUrl) {
+            console.log(`🎥 Loading HLS stream: ${hlsUrl}`);
+            
             if (typeof Hls !== 'undefined' && Hls.isSupported()) {
                 const hls = new Hls();
                 hls.loadSource(hlsUrl);
                 hls.attachMedia(videoElement);
                 hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                    console.log(`✅ HLS stream loaded successfully: ${hlsUrl}`);
                     videoElement.play();
                 });
                 hls.on(Hls.Events.ERROR, (event, data) => {
-                    console.error('HLS Error:', data);
+                    console.error('❌ HLS Error:', data);
+                    console.error(`Failed to load stream: ${hlsUrl}`);
                     videoElement.style.display = 'none';
+                    
+                    // Show error message in the video container
+                    const errorDiv = document.createElement('div');
+                    errorDiv.style.color = '#ff6b6b';
+                    errorDiv.style.fontSize = '10px';
+                    errorDiv.style.textAlign = 'center';
+                    errorDiv.style.padding = '5px';
+                    errorDiv.textContent = 'Stream Error';
+                    videoElement.parentNode.appendChild(errorDiv);
                 });
             } else if (videoElement.canPlayType('application/vnd.apple.mpegurl')) {
                 videoElement.src = hlsUrl;
                 videoElement.addEventListener('loadedmetadata', () => {
+                    console.log(`✅ Native HLS stream loaded: ${hlsUrl}`);
                     videoElement.play();
                 });
+                videoElement.addEventListener('error', (e) => {
+                    console.error('❌ Native HLS Error:', e);
+                    videoElement.style.display = 'none';
+                });
             } else {
-                console.error('HLS not supported');
+                console.error('❌ HLS not supported by browser');
                 videoElement.style.display = 'none';
+                
+                // Show error message
+                const errorDiv = document.createElement('div');
+                errorDiv.style.color = '#ff6b6b';
+                errorDiv.style.fontSize = '10px';
+                errorDiv.style.textAlign = 'center';
+                errorDiv.style.padding = '5px';
+                errorDiv.textContent = 'HLS Not Supported';
+                videoElement.parentNode.appendChild(errorDiv);
             }
         }
 

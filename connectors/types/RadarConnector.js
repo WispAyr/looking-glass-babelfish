@@ -123,6 +123,28 @@ class RadarConnector extends BaseConnector {
     this.aircraftTrails = new Map();
     this.zoneData = new Map();
     this.coastlineData = new Map();
+    this.notamData = new Map();
+    
+    // NOTAM display settings
+    this.notamDisplay = {
+      showNotams: radarConfig.showNotams !== false,
+      notamOpacity: radarConfig.notamOpacity || 0.7,
+      notamBorderWidth: radarConfig.notamBorderWidth || 2,
+      showNotamLabels: radarConfig.showNotamLabels !== false,
+      notamLabelFontSize: radarConfig.notamLabelFontSize || 10,
+      notamColors: radarConfig.notamColors || {
+        active: '#ff4444',
+        warning: '#ffaa00',
+        info: '#4444ff',
+        expired: '#888888'
+      },
+      notamSymbols: radarConfig.notamSymbols || {
+        active: 'triangle',
+        warning: 'diamond',
+        info: 'circle',
+        expired: 'square'
+      }
+    };
     
     // Event tracking
     this.radarEvents = [];
@@ -258,6 +280,20 @@ class RadarConnector extends BaseConnector {
           alertType: { type: 'string', required: false },
           rule: { type: 'object', required: false }
         }
+      },
+      {
+        id: 'notam:display',
+        name: 'NOTAM Display',
+        description: 'Display NOTAMs on radar overlay',
+        category: 'notam',
+        operations: ['get', 'filter', 'highlight', 'configure'],
+        dataTypes: ['notam:item', 'notam:zone', 'notam:alert'],
+        events: ['notam:added', 'notam:updated', 'notam:expired'],
+        parameters: {
+          notamId: { type: 'string', required: false },
+          bounds: { type: 'object', required: false },
+          filter: { type: 'object', required: false }
+        }
       }
     ];
   }
@@ -279,6 +315,8 @@ class RadarConnector extends BaseConnector {
         return await this.executeRadarFilters(operation, parameters);
       case 'alerts:radar':
         return await this.executeRadarAlerts(operation, parameters);
+      case 'notam:display':
+        return await this.executeNotamDisplay(operation, parameters);
       default:
         throw new Error(`Unknown capability: ${capabilityId}`);
     }
@@ -395,11 +433,29 @@ class RadarConnector extends BaseConnector {
   }
   
   /**
+   * Execute NOTAM display operations
+   */
+  async executeNotamDisplay(operation, parameters) {
+    switch (operation) {
+      case 'get':
+        return this.getNotamData(parameters);
+      case 'filter':
+        return this.filterNotams(parameters);
+      case 'highlight':
+        return this.highlightNotam(parameters);
+      case 'configure':
+        return this.configureNotamDisplay(parameters);
+      default:
+        throw new Error(`Unknown NOTAM display operation: ${operation}`);
+    }
+  }
+  
+  /**
    * Connect to radar system
    */
   async performConnect() {
     try {
-      this.setStatus('connecting');
+      this.status = 'connecting';
       
       // Initialize dependencies if not already done
       if (!this.adsbConnector || !this.airportVectorService || !this.coastlineVectorService) {
@@ -414,11 +470,11 @@ class RadarConnector extends BaseConnector {
       // Initialize radar display
       await this.initializeRadarDisplay();
       
-      this.setStatus('connected');
+      this.status = 'connected';
       this.logger.info('Radar Connector connected successfully');
       return true;
     } catch (error) {
-      this.setStatus('error');
+      this.status = 'error';
       this.logger.error('Failed to connect radar', { error: error.message });
       throw error;
     }
@@ -429,8 +485,8 @@ class RadarConnector extends BaseConnector {
    */
   async performDisconnect() {
     try {
-      this.setStatus('disconnecting');
-      this.setStatus('disconnected');
+      this.status = 'disconnecting';
+      this.status = 'disconnected';
       this.logger.info('Radar Connector disconnected');
       
       // Stop sweep animation
@@ -578,6 +634,18 @@ class RadarConnector extends BaseConnector {
         bounds: coastlineData.bounds,
       };
     }
+
+    // Add NOTAM data if enabled
+    if (this.notamDisplay?.showNotams) {
+      const notams = Array.from(this.notamData.values());
+      display.notams = {
+        enabled: true,
+        notams: notams,
+        count: notams.length,
+        config: this.getNotamDisplayConfig()
+      };
+    }
+
     return display;
   }
   
@@ -665,12 +733,18 @@ class RadarConnector extends BaseConnector {
       this.updateCoastlineData(parameters.coastline);
     }
     
+    // Update NOTAM data
+    if (parameters.notams) {
+      this.updateNotamData(parameters.notams);
+    }
+    
     // Update performance metrics
     this.performance.lastUpdate = new Date().toISOString();
     this.performance.updateCount++;
     this.performance.aircraftCount = this.aircraftData.size;
     this.performance.zoneCount = this.zoneData.size;
     this.performance.coastlineSegments = this.coastlineData.size;
+    this.performance.notamCount = this.notamData.size;
     
     // Broadcast update to connected clients
     this.broadcastUpdate();
@@ -1299,9 +1373,10 @@ class RadarConnector extends BaseConnector {
   getStatus() {
     return {
       connected: true,
-      aircraftCount: this.aircraftData ? this.aircraftData.length : 0,
-      zoneCount: this.zoneData ? this.zoneData.length : 0,
-      coastlineSegments: this.coastlineData ? this.coastlineData.length : 0
+      aircraftCount: this.aircraftData ? this.aircraftData.size : 0,
+      zoneCount: this.zoneData ? this.zoneData.size : 0,
+      coastlineSegments: this.coastlineData ? this.coastlineData.size : 0,
+      notamCount: this.notamData ? this.notamData.size : 0
     };
   }
   
@@ -1320,8 +1395,139 @@ class RadarConnector extends BaseConnector {
         'zones:management',
         'coastline:management',
         'filters:radar',
-        'alerts:radar'
+        'alerts:radar',
+        'notam:display'
       ]
+    };
+  }
+
+  /**
+   * Get NOTAM data for radar display
+   */
+  getNotamData(parameters = {}) {
+    const { bounds, filter } = parameters;
+    let notams = Array.from(this.notamData.values());
+    
+    // Filter by bounds if provided
+    if (bounds) {
+      notams = notams.filter(notam => {
+        if (!notam.geometry) return false;
+        return this.boundsIntersect(bounds, notam.geometry.bounds);
+      });
+    }
+    
+    // Apply additional filters
+    if (filter) {
+      notams = this.applyNotamFilter(notams, filter);
+    }
+    
+    return {
+      notams,
+      count: notams.length,
+      display: this.notamDisplay
+    };
+  }
+
+  /**
+   * Filter NOTAMs based on criteria
+   */
+  filterNotams(parameters) {
+    const { filter } = parameters;
+    const notams = Array.from(this.notamData.values());
+    
+    return {
+      notams: this.applyNotamFilter(notams, filter),
+      filter,
+      count: notams.length
+    };
+  }
+
+  /**
+   * Apply NOTAM filter
+   */
+  applyNotamFilter(notams, filter) {
+    return notams.filter(notam => {
+      if (filter.status && notam.status !== filter.status) return false;
+      if (filter.type && notam.type !== filter.type) return false;
+      if (filter.priority && notam.priority !== filter.priority) return false;
+      if (filter.active && !notam.active) return false;
+      if (filter.expired && notam.expired) return false;
+      return true;
+    });
+  }
+
+  /**
+   * Highlight specific NOTAM
+   */
+  highlightNotam(parameters) {
+    const { notamId } = parameters;
+    const notam = this.notamData.get(notamId);
+    
+    if (!notam) {
+      throw new Error(`NOTAM not found: ${notamId}`);
+    }
+    
+    return {
+      notam,
+      highlighted: true,
+      display: this.notamDisplay
+    };
+  }
+
+  /**
+   * Configure NOTAM display settings
+   */
+  configureNotamDisplay(parameters) {
+    const { showNotams, opacity, colors, symbols } = parameters;
+    
+    if (showNotams !== undefined) {
+      this.notamDisplay.showNotams = showNotams;
+    }
+    
+    if (opacity !== undefined) {
+      this.notamDisplay.notamOpacity = opacity;
+    }
+    
+    if (colors) {
+      this.notamDisplay.notamColors = { ...this.notamDisplay.notamColors, ...colors };
+    }
+    
+    if (symbols) {
+      this.notamDisplay.notamSymbols = { ...this.notamDisplay.notamSymbols, ...symbols };
+    }
+    
+    return {
+      success: true,
+      display: this.notamDisplay
+    };
+  }
+
+  /**
+   * Update NOTAM data
+   */
+  updateNotamData(notams) {
+    for (const notam of notams) {
+      this.notamData.set(notam.id, {
+        ...notam,
+        lastUpdate: new Date().toISOString()
+      });
+    }
+    
+    this.logger.debug(`Updated ${notams.length} NOTAMs`);
+  }
+
+  /**
+   * Get NOTAM display configuration for frontend
+   */
+  getNotamDisplayConfig() {
+    return {
+      showNotams: this.notamDisplay.showNotams,
+      opacity: this.notamDisplay.notamOpacity,
+      borderWidth: this.notamDisplay.notamBorderWidth,
+      showLabels: this.notamDisplay.showNotamLabels,
+      labelFontSize: this.notamDisplay.notamLabelFontSize,
+      colors: this.notamDisplay.notamColors,
+      symbols: this.notamDisplay.notamSymbols
     };
   }
 }

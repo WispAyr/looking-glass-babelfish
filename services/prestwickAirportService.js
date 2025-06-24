@@ -54,7 +54,9 @@ class PrestwickAirportService {
       landing: [],
       takeoff: [],
       departure: [],
-      'notam:alert': []
+      en_route: [],
+      'notam:alert': [],
+      'notam:new': []
     };
 
     // Statistics
@@ -63,6 +65,7 @@ class PrestwickAirportService {
       totalLandings: 0,
       totalTakeoffs: 0,
       totalDepartures: 0,
+      totalEnRoute: 0,
       notamQueries: 0,
       notamAlerts: 0,
       lastUpdate: new Date().toISOString()
@@ -95,6 +98,10 @@ class PrestwickAirportService {
         })
       ]
     });
+
+    // New NOTAM monitoring state
+    this.seenNotams = new Set();
+    this.notamMonitoringInterval = null;
   }
 
   /**
@@ -268,6 +275,11 @@ class PrestwickAirportService {
   determineAircraftState(aircraftData, distance, runwayInfo) {
     const { altitude, speed, heading } = aircraftData;
     
+    // En route: High altitude, not in approach pattern (check this first)
+    if (altitude > 3000) {
+      return 'en_route';
+    }
+    
     // Approach: Aircraft descending and within approach radius
     if (altitude < 3000 && altitude > 500 && distance < this.config.approachRadius && speed > 50) {
       return 'approach';
@@ -283,14 +295,9 @@ class PrestwickAirportService {
       return 'takeoff';
     }
     
-    // Departure: Climbing away from airport
-    if (altitude > 1000 && distance > this.config.runwayThreshold && speed > 100) {
+    // Departure: Climbing away from airport (but not yet en route)
+    if (altitude > 1000 && altitude <= 3000 && distance > this.config.runwayThreshold && speed > 100) {
       return 'departure';
-    }
-    
-    // En route: High altitude, not in approach pattern
-    if (altitude > 3000) {
-      return 'en_route';
     }
     
     return 'unknown';
@@ -340,6 +347,9 @@ class PrestwickAirportService {
         break;
       case 'departure':
         this.stats.totalDepartures++;
+        break;
+      case 'en_route':
+        this.stats.totalEnRoute++;
         break;
     }
 
@@ -476,6 +486,7 @@ class PrestwickAirportService {
       totalLandings: 0,
       totalTakeoffs: 0,
       totalDepartures: 0,
+      totalEnRoute: 0,
       notamQueries: 0,
       notamAlerts: 0,
       lastUpdate: new Date().toISOString()
@@ -687,6 +698,148 @@ class PrestwickAirportService {
         return ['runway', 'takeoff', 'airport', 'navigation'];
       default:
         return [];
+    }
+  }
+
+  /**
+   * Monitor for new NOTAMs in Prestwick's airspace
+   */
+  async monitorPrestwickNotams() {
+    if (!this.notamConnector || !this.notamConfig.enabled) {
+      return [];
+    }
+
+    try {
+      // Query NOTAMs within Prestwick's airspace (50km radius)
+      const prestwickNotams = await this.queryNotams(
+        50, // 50km radius around Prestwick
+        null, // All categories
+        'medium', // Medium priority and above
+        { lat: this.config.latitude, lon: this.config.longitude }
+      );
+
+      // Filter for active NOTAMs that affect Prestwick operations
+      const activeNotams = prestwickNotams.filter(notam => {
+        const now = new Date();
+        
+        // Check if NOTAM is active
+        if (notam.endTime && now > notam.endTime) {
+          return false;
+        }
+        if (notam.startTime && now < notam.startTime) {
+          return false;
+        }
+
+        // Check if NOTAM is relevant to Prestwick operations
+        const relevantCategories = ['runway', 'approach', 'landing', 'takeoff', 'airport', 'navigation', 'airspace'];
+        if (relevantCategories.includes(notam.category)) {
+          return true;
+        }
+
+        // Check if NOTAM mentions Prestwick or EGPK
+        const description = (notam.description || '').toLowerCase();
+        const title = (notam.title || '').toLowerCase();
+        if (description.includes('prestwick') || description.includes('egpk') || 
+            title.includes('prestwick') || title.includes('egpk')) {
+          return true;
+        }
+
+        return false;
+      });
+
+      // Check for new NOTAMs (not previously seen)
+      const newNotams = activeNotams.filter(notam => {
+        return !this.seenNotams.has(notam.id);
+      });
+
+      // Add new NOTAMs to seen set
+      newNotams.forEach(notam => {
+        this.seenNotams.add(notam.id);
+      });
+
+      // Generate alarms for new NOTAMs
+      if (newNotams.length > 0) {
+        this.logger.info(`Found ${newNotams.length} new NOTAMs affecting Prestwick airspace`);
+        
+        const alarms = newNotams.map(notam => ({
+          type: 'notam:new',
+          notamId: notam.id,
+          notamNumber: notam.notamNumber,
+          title: notam.title,
+          description: notam.description,
+          priority: notam.priority,
+          category: notam.category,
+          distance: notam.distance,
+          startTime: notam.startTime,
+          endTime: notam.endTime,
+          affectedArea: notam.affectedArea,
+          airport: {
+            code: this.config.airportCode,
+            name: this.config.airportName,
+            latitude: this.config.latitude,
+            longitude: this.config.longitude
+          },
+          timestamp: new Date().toISOString()
+        }));
+
+        return alarms;
+      }
+
+      return [];
+
+    } catch (error) {
+      this.logger.error('Error monitoring Prestwick NOTAMs', { error: error.message });
+      return [];
+    }
+  }
+
+  /**
+   * Start NOTAM monitoring for Prestwick airspace
+   */
+  startNotamMonitoring() {
+    if (this.notamMonitoringInterval) {
+      clearInterval(this.notamMonitoringInterval);
+    }
+
+    // Check for new NOTAMs every 5 minutes
+    this.notamMonitoringInterval = setInterval(async () => {
+      try {
+        const newNotamAlarms = await this.monitorPrestwickNotams();
+        
+        if (newNotamAlarms.length > 0) {
+          // Emit events for each new NOTAM
+          newNotamAlarms.forEach(alarm => {
+            if (this.eventCallbacks['notam:new']) {
+              this.eventCallbacks['notam:new'].forEach(callback => {
+                try {
+                  callback({
+                    type: 'notam:new',
+                    data: alarm,
+                    timestamp: new Date().toISOString()
+                  });
+                } catch (error) {
+                  this.logger.error('Error in NOTAM new callback', { error: error.message });
+                }
+              });
+            }
+          });
+        }
+      } catch (error) {
+        this.logger.error('Error in NOTAM monitoring interval', { error: error.message });
+      }
+    }, 5 * 60 * 1000); // 5 minutes
+
+    this.logger.info('Started NOTAM monitoring for Prestwick airspace');
+  }
+
+  /**
+   * Stop NOTAM monitoring
+   */
+  stopNotamMonitoring() {
+    if (this.notamMonitoringInterval) {
+      clearInterval(this.notamMonitoringInterval);
+      this.notamMonitoringInterval = null;
+      this.logger.info('Stopped NOTAM monitoring for Prestwick airspace');
     }
   }
 }

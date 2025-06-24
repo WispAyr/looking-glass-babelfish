@@ -48,7 +48,10 @@ function getOverwatchConnector() {
 let wss = null;
 
 function setupWebSocketServer(server) {
-  wss = new WebSocket.Server({ server });
+  wss = new WebSocket.Server({ 
+    server,
+    path: '/api/overwatch/websocket'
+  });
   
   wss.on('connection', (ws, req) => {
     logger.info('WebSocket client connected to Overwatch');

@@ -443,31 +443,44 @@ router.get('/adsb/aircraft', async (req, res) => {
 // Get cameras for map using connector capabilities
 router.get('/cameras', async (req, res) => {
     try {
-        console.log('Map cameras endpoint called');
+        const logger = req.app.locals.logger || console;
+        logger.info('Map cameras endpoint called');
         const connectorRegistry = req.app.locals.connectorRegistry;
         
         if (!connectorRegistry) {
-            console.log('No connector registry available');
+            logger.warn('No connector registry available');
             return res.status(503).json({
                 success: false,
                 error: 'Connector registry not available'
             });
         }
 
-        console.log('Connector registry found, checking for UniFi connectors...');
+        logger.info('Connector registry found, checking for UniFi connectors...');
         const allCameras = [];
         const connectorResults = [];
 
+        // Debug: Log all connectors
+        logger.debug('All connectors in registry:');
+        for (const [connectorId, connector] of connectorRegistry.connectors.entries()) {
+            logger.debug(`  - ${connectorId}: type=${connector.type}, connected=${connector.isConnected}, status=${connector.status || 'unknown'}`);
+        }
+
         // Find all connectors with camera:management capability
         for (const [connectorId, connector] of connectorRegistry.connectors.entries()) {
-            console.log(`Checking connector: ${connectorId}, type: ${connector.type}, connected: ${connector.isConnected}`);
-            if (connector.type === 'unifi-protect' && connector.isConnected) {
-                console.log(`Found connected UniFi connector: ${connectorId}`);
+            logger.debug(`Checking connector: ${connectorId}, type: ${connector.type}, connected: ${connector.isConnected}, status: ${connector.status || 'unknown'}`);
+            
+            // Check if this is a UniFi Protect connector and is connected
+            const isUnifiProtect = connector.type === 'unifi-protect';
+            const isConnected = connector.isConnected || 
+                               connector.status === 'connected';
+            
+            if (isUnifiProtect && isConnected) {
+                logger.info(`Found connected UniFi connector: ${connectorId}`);
                 try {
                     // Use the capability system to get cameras
-                    console.log(`Executing camera:management capability on ${connectorId}`);
+                    logger.debug(`Executing camera:management capability on ${connectorId}`);
                     const result = await connector.executeCapability('camera:management', 'list', {});
-                    console.log(`Result from ${connectorId}:`, result.success, result.cameras ? result.cameras.length : 'no cameras');
+                    logger.debug(`Result from ${connectorId}:`, result.success, result.cameras ? result.cameras.length : 'no cameras');
                     
                     if (result.success && result.cameras) {
                         // Add connector information to each camera
@@ -513,7 +526,7 @@ router.get('/cameras', async (req, res) => {
                             status: 'success'
                         });
                     } else {
-                        console.log(`No cameras found in ${connectorId}:`, result);
+                        logger.debug(`No cameras found in ${connectorId}:`, result);
                         connectorResults.push({
                             connectorId,
                             connectorName: connector.name || connectorId,
@@ -523,7 +536,7 @@ router.get('/cameras', async (req, res) => {
                         });
                     }
                 } catch (error) {
-                    console.error(`Error getting cameras from connector ${connectorId}:`, error);
+                    logger.error(`Error getting cameras from connector ${connectorId}:`, error);
                     connectorResults.push({
                         connectorId,
                         connectorName: connector.name || connectorId,
@@ -535,8 +548,40 @@ router.get('/cameras', async (req, res) => {
             }
         }
 
-        console.log(`Total cameras found: ${allCameras.length}`);
-        console.log(`Connector results:`, connectorResults);
+        logger.info(`Total cameras found: ${allCameras.length}`);
+        logger.info(`Connector results:`, connectorResults);
+
+        // Dummy Prestwick locations for dev/testing
+        const DUMMY_LOCATIONS = [
+          { lat: 55.5094, lng: -4.5867, name: "Main Terminal" },
+          { lat: 55.5098, lng: -4.5872, name: "Terminal North" },
+          { lat: 55.5090, lng: -4.5862, name: "Terminal South" },
+          { lat: 55.5110, lng: -4.5850, name: "Runway 13" },
+          { lat: 55.5078, lng: -4.5884, name: "Runway 31" },
+          { lat: 55.5102, lng: -4.5878, name: "Apron East" },
+          { lat: 55.5086, lng: -4.5856, name: "Apron West" },
+          { lat: 55.5096, lng: -4.5848, name: "Main Gate" },
+          { lat: 55.5088, lng: -4.5890, name: "Security Checkpoint" },
+          { lat: 55.5108, lng: -4.5864, name: "Control Tower" },
+          { lat: 55.5082, lng: -4.5870, name: "Ground Control" },
+          { lat: 55.5112, lng: -4.5880, name: "Maintenance Hangar" },
+          { lat: 55.5074, lng: -4.5852, name: "Fuel Farm" },
+          { lat: 55.5092, lng: -4.5844, name: "Cargo Area" },
+          { lat: 55.5106, lng: -4.5892, name: "Staff Parking" },
+          { lat: 55.5080, lng: -4.5838, name: "Public Parking" },
+          { lat: 55.5114, lng: -4.5874, name: "Emergency Services" },
+          { lat: 55.5072, lng: -4.5868, name: "Air Traffic Control" }
+        ];
+        // Assign dummy locations to cameras missing lat/lng
+        allCameras.forEach((camera, i) => {
+          if (!camera.lat || !camera.lng) {
+            const loc = DUMMY_LOCATIONS[i % DUMMY_LOCATIONS.length];
+            camera.lat = loc.lat;
+            camera.lng = loc.lng;
+            camera.locationName = loc.name;
+            camera.hasLocation = true;
+          }
+        });
 
         // Filter cameras that have location data for map display
         const camerasWithLocation = allCameras.filter(camera => camera.hasLocation).map(camera => ({
@@ -561,7 +606,7 @@ router.get('/cameras', async (req, res) => {
             }
         }));
 
-        console.log(`Cameras with location: ${camerasWithLocation.length}`);
+        logger.info(`Cameras with location: ${camerasWithLocation.length}`);
 
         res.json({
             success: true,
@@ -572,7 +617,7 @@ router.get('/cameras', async (req, res) => {
             totalConnectors: connectorResults.length
         });
     } catch (error) {
-        console.error('Error fetching cameras:', error);
+        logger.error('Error fetching cameras:', error);
         res.status(500).json({
             success: false,
             error: 'Failed to fetch cameras'
@@ -808,46 +853,6 @@ router.post('/cache/clear', async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
-});
-
-// Get all cameras with their locations and status
-router.get('/cameras', async (req, res) => {
-    try {
-        const { connectorRegistry } = req.app.locals;
-        
-        if (!connectorRegistry) {
-            return res.status(503).json({ error: 'Connector registry not available' });
-        }
-
-        const cameras = [];
-        
-        // Get cameras from all connectors
-        for (const [connectorId, connector] of connectorRegistry.connectors.entries()) {
-            if (connector.type === 'unifi-protect' || connector.type === 'hikvision' || connector.type === 'ankke-dvr') {
-                try {
-                    const result = await connector.execute('camera:management', 'list');
-                    if (result.success && result.cameras) {
-                        cameras.push(...result.cameras.map(camera => ({
-                            ...camera,
-                            connectorId,
-                            connectorType: connector.type
-                        })));
-                    }
-                } catch (error) {
-                    console.warn(`Failed to get cameras from connector ${connectorId}:`, error);
-                }
-            }
-        }
-
-        res.json({
-            success: true,
-            cameras,
-            total: cameras.length
-        });
-    } catch (error) {
-        console.error('Error getting cameras:', error);
-        res.status(500).json({ error: 'Failed to get cameras' });
-    }
 });
 
 // Get camera details including line crossing configuration
