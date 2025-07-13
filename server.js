@@ -22,7 +22,8 @@ const { router: apiRouter, injectServices } = require('./routes/api');
 const EventBus = require('./services/eventBus');
 const RuleEngine = require('./services/ruleEngine');
 const ActionFramework = require('./services/actionFramework');
-// const FlowOrchestrator = require('./services/flowOrchestrator'); // TEMPORARILY DISABLED
+const FlowBuilder = require('./services/flowBuilder');
+const FlowOrchestrator = require('./services/flowOrchestrator'); // TEMPORARILY DISABLED
 const AnalyticsEngine = require('./services/analyticsEngine');
 const DashboardService = require('./services/dashboardService');
 const LayoutManager = require('./services/layoutManager');
@@ -145,7 +146,7 @@ const logger = winston.createLogger({
 let eventBus;
 let ruleEngine;
 let actionFramework;
-// let flowOrchestrator; // TEMPORARILY DISABLED
+let flowOrchestrator; // TEMPORARILY DISABLED
 let analyticsEngine;
 let dashboardService;
 let layoutManager;
@@ -164,7 +165,7 @@ let zoneManager;
 let speedCalculationService;
 
 // Global variables for layout and GUI
-// let flowBuilder; // TEMPORARILY DISABLED
+let flowBuilder; // TEMPORARILY DISABLED
 
 // Global variables for connectors and services
 let connectorRegistry;
@@ -1033,7 +1034,7 @@ async function startServer() {
     eventBus = new EventBus(config.eventBus || {}, logger);
     ruleEngine = new RuleEngine(config.rules || {}, logger);
     actionFramework = new ActionFramework(config.actions || {}, logger);
-    // flowOrchestrator = new FlowOrchestrator(config.flows || {}, logger); // TEMPORARILY DISABLED
+    flowOrchestrator = new FlowOrchestrator(config.flows || {}, logger); // TEMPORARILY DISABLED
 
     // Initialize entity manager
     entityManager = new EntityManager(config.entities || {}, logger);
@@ -1073,6 +1074,7 @@ async function startServer() {
     // Initialize layout and GUI services
     layoutManager = new LayoutManager(config.layouts || {}, logger);
     guiEditor = new GuiEditor(config.guiEditor || {}, logger);
+    flowBuilder = new FlowBuilder(config.flows || {}, logger);
 
     // Initialize map integration service
     mapIntegrationService = new MapIntegrationService(config.mapIntegration || {}, logger);
@@ -1406,7 +1408,7 @@ async function startServer() {
       get analyticsEngine() { return analyticsEngine; },
       get dashboardService() { return dashboardService; },
       get ruleEngine() { return ruleEngine; },
-      get flowOrchestrator() { return null; },
+      get flowOrchestrator() { return flowOrchestrator; },
       get mapIntegrationService() { return mapIntegrationService; },
       get layoutManager() { return layoutManager; },
       get guiEditor() { return guiEditor; },
@@ -1492,8 +1494,8 @@ async function startServer() {
     app.use('/radar', radarRouter);
     
     // Mount flow routes - TEMPORARILY DISABLED
-    // app.use('/api/flows', require('./routes/flows'));
-    // app.use('/flows', require('./routes/flows-gui'));
+    app.use('/api/flows', require('./routes/flows'));
+    app.use('/flows', require('./routes/flows-gui'));
 
     // Mount Overwatch routes
     app.use('/overwatch', overwatchRouter);
@@ -1665,7 +1667,8 @@ async function startServer() {
     app.locals.eventBus = eventBus;
     app.locals.ruleEngine = ruleEngine;
     app.locals.actionFramework = actionFramework;
-    app.locals.flowOrchestrator = null; // TEMPORARILY DISABLED
+    app.locals.flowOrchestrator = flowOrchestrator; // TEMPORARILY DISABLED
+    app.locals.flowBuilder = flowBuilder;
     app.locals.entityManager = entityManager;
     app.locals.analyticsEngine = analyticsEngine;
     app.locals.dashboardService = dashboardService;
@@ -1697,31 +1700,31 @@ async function startServer() {
     app.use(securityMiddleware.errorHandler());
     
     // Initialize Flow Builder - TEMPORARILY DISABLED
-    // await flowBuilder.initialize();
+    await flowBuilder.initialize();
 
     // Connect EventBus with Flow Builder - TEMPORARILY DISABLED
-    // eventBus.flowBuilder = flowBuilder;
-    // global.flowBuilder = flowBuilder;
+    eventBus.flowBuilder = flowBuilder;
+    global.flowBuilder = flowBuilder;
     global.actionFramework = actionFramework;
     global.eventBus = eventBus;
     global.connectorRegistry = connectorRegistry;
     global.broadcastAlert = broadcastAlert;
 
     // Set up event listeners for flow execution - TEMPORARILY DISABLED
-    // flowBuilder.on('action:execute', async (data) => {
-    //   const { actionType, parameters, nodeId, flowId } = data;
-    //   
-    //   try {
-    //     // Execute the action using the action framework
-    //     const actionFramework = app.locals.actionFramework;
-    //     if (actionFramework) {
-    //       const result = await actionFramework.executeAction(actionType, parameters);
-    //       console.log(`Flow ${flowId} executed action ${actionType}:`, result);
-    //     }
-    //   } catch (error) {
-    //     console.error(`Error executing flow action ${actionType}:`, error);
-    //   }
-    // });
+    flowBuilder.on('action:execute', async (data) => {
+      const { actionType, parameters, nodeId, flowId } = data;
+
+      try {
+        // Execute the action using the action framework
+        const actionFramework = app.locals.actionFramework;
+        if (actionFramework) {
+          const result = await actionFramework.executeAction(actionType, parameters);
+          console.log(`Flow ${flowId} executed action ${actionType}:`, result);
+        }
+      } catch (error) {
+        console.error(`Error executing flow action ${actionType}:`, error);
+      }
+    });
     
     // Start server
     const server = app.listen(config.server.port, config.server.host, () => {
