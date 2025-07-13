@@ -10,6 +10,7 @@ const winston = require('winston');
 const { v4: uuidv4 } = require('uuid');
 const moment = require('moment');
 const killPort = require('kill-port');
+const fetch = require('node-fetch');
 
 const config = require('./config/config');
 const UnifiProtectAPI = require('./services/unifiProtectAPI');
@@ -223,6 +224,7 @@ app.use(compression({
 app.use(cors(securityMiddleware.getCorsConfig()));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(express.static(path.join(__dirname, 'web')));
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(morgan('combined', { stream: { write: message => logger.info(message.trim()) } }));
 
@@ -1760,27 +1762,35 @@ async function startServer() {
   }
 }
 
+// Proxy /api/overwatch/status to /api/overwatch/system/health
+app.get('/api/overwatch/status', async (req, res) => {
+  try {
+    const response = await fetch(`http://localhost:${config.server.port}/api/overwatch/system/health`);
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Proxy /api/alarms to /alarms/api/events (recent alarms/events)
+app.get('/api/alarms', async (req, res) => {
+  try {
+    const response = await fetch(`http://localhost:${config.server.port}/alarms/api/events`);
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Graceful shutdown
 process.on('SIGTERM', async () => {
   logger.info('SIGTERM received, shutting down gracefully...');
-  
-  if (eventProcessor) {
-    eventProcessor.stop();
-  }
-  
-  if (dashboardService) {
-    dashboardService.cleanup();
-  }
-  
-  // Disconnect all connectors
-  if (connectorRegistry) {
-    await connectorRegistry.disconnectAll();
-  }
-  
-  if (mqttBroker) {
-    await mqttBroker.disconnect();
-  }
-  
+  if (eventProcessor) eventProcessor.stop();
+  if (dashboardService) dashboardService.cleanup();
+  if (connectorRegistry) await connectorRegistry.disconnectAll();
+  if (mqttBroker) await mqttBroker.disconnect();
   server.close(() => {
     logger.info('Server closed');
     process.exit(0);
@@ -1789,24 +1799,10 @@ process.on('SIGTERM', async () => {
 
 process.on('SIGINT', async () => {
   logger.info('SIGINT received, shutting down gracefully...');
-  
-  if (eventProcessor) {
-    eventProcessor.stop();
-  }
-  
-  if (dashboardService) {
-    dashboardService.cleanup();
-  }
-  
-  // Disconnect all connectors
-  if (connectorRegistry) {
-    await connectorRegistry.disconnectAll();
-  }
-  
-  if (mqttBroker) {
-    await mqttBroker.disconnect();
-  }
-  
+  if (eventProcessor) eventProcessor.stop();
+  if (dashboardService) dashboardService.cleanup();
+  if (connectorRegistry) await connectorRegistry.disconnectAll();
+  if (mqttBroker) await mqttBroker.disconnect();
   server.close(() => {
     logger.info('Server closed');
     process.exit(0);
