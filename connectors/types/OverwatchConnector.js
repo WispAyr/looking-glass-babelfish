@@ -42,6 +42,13 @@ class OverwatchConnector extends BaseConnector {
     
     // Initialize default filters
     this.initializeDefaultFilters();
+
+    this.webInterface = {
+      enabled: true,
+      route: '/overwatch',
+      port: 3000,
+      host: 'localhost'
+    };
   }
   
   /**

@@ -60,6 +60,14 @@ class RemotionConnector extends BaseConnector {
     
     // Set up event listeners for automated rendering
     this.setupEventListeners();
+
+    this.webInterface = {
+      enabled: true,
+      route: '/remotion',
+      port: 3000,
+      host: 'localhost'
+    };
+    this.config.webInterface = this.webInterface;
   }
 
   /**

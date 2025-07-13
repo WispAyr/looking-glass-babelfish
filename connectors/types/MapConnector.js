@@ -1560,6 +1560,109 @@ class MapConnector extends BaseConnector {
       this.logger.error('Failed to handle connector sync', error);
     }
   }
+
+  /**
+   * Perform connection to map system
+   */
+  async performConnect() {
+    try {
+      this.logger.info('Connecting to map system...');
+      
+      // Initialize spatial data structures
+      this.spatialData.clear();
+      this.spatialIndex.clear();
+      this.elementHistory = [];
+      this.historyIndex = -1;
+      
+      // Initialize web interface if enabled
+      if (this.webInterface.enabled) {
+        this.logger.info('Map web interface enabled', {
+          route: this.webInterface.route,
+          host: this.webInterface.host,
+          port: this.webInterface.port
+        });
+      }
+      
+      // Set up auto-registration if enabled
+      if (this.autoRegisterConnectors) {
+        this.logger.info('Auto-registration enabled for connectors');
+      }
+      
+      this.connected = true;
+      this.logger.info('Map Connector connected successfully');
+      
+      return true;
+    } catch (error) {
+      this.logger.error('Failed to connect map system:', error);
+      this.connected = false;
+      throw error;
+    }
+  }
+
+  /**
+   * Perform disconnection from map system
+   */
+  async performDisconnect() {
+    try {
+      this.logger.info('Disconnecting from map system...');
+      
+      // Clean up WebSocket connections
+      this.webSocketConnections.forEach(connection => {
+        try {
+          connection.close();
+        } catch (error) {
+          this.logger.warn('Error closing WebSocket connection:', error);
+        }
+      });
+      this.webSocketConnections.clear();
+      
+      // Clear spatial data
+      this.spatialData.clear();
+      this.spatialIndex.clear();
+      this.elementHistory = [];
+      this.historyIndex = -1;
+      
+      // Clear caches
+      this.spatialCache.clear();
+      
+      this.connected = false;
+      this.logger.info('Map Connector disconnected successfully');
+      
+      return true;
+    } catch (error) {
+      this.logger.error('Error during map disconnect:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Perform health check for map system
+   */
+  async performHealthCheck() {
+    try {
+      const health = {
+        connected: this.connected,
+        spatialElements: this.spatialData.size,
+        webSocketConnections: this.webSocketConnections.size,
+        cacheSize: this.spatialCache.size,
+        memoryUsage: process.memoryUsage(),
+        uptime: process.uptime()
+      };
+      
+      return {
+        healthy: this.connected,
+        details: health,
+        timestamp: Date.now()
+      };
+    } catch (error) {
+      this.logger.error('Health check failed:', error);
+      return {
+        healthy: false,
+        error: error.message,
+        timestamp: Date.now()
+      };
+    }
+  }
 }
 
 module.exports = MapConnector; 

@@ -5,13 +5,48 @@ document.addEventListener('DOMContentLoaded', () => {
     const alarmsBox = document.getElementById('alarms-placeholder');
     const mapBox = document.getElementById('map-placeholder');
 
+    // --- Map ---
+    let map;
+    function initMap() {
+        if (map) return;
+        mapBox.innerHTML = '';
+        map = L.map('map-placeholder').setView([54.5, -3], 6); // Center UK
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '© OpenStreetMap'
+        }).addTo(map);
+        // Demo marker
+        L.marker([51.5, -0.09]).addTo(map).bindPopup('London').openPopup();
+    }
+
     // --- Helper: Status Badge ---
     function statusBadge(status) {
         let color = '#888';
-        if (status === 'connected' || status === 'healthy') color = '#28a745';
-        else if (status === 'disconnected' || status === 'error') color = '#dc3545';
-        else if (status === 'degraded' || status === 'warning') color = '#ffc107';
-        return `<span style="display:inline-block;padding:2px 8px;border-radius:8px;font-size:0.9em;background:${color};color:#fff;margin-left:8px;">${status || 'unknown'}</span>`;
+        let text = 'unknown';
+        
+        // Handle different status structures
+        if (typeof status === 'string') {
+            text = status;
+        } else if (status && typeof status === 'object') {
+            // Check for status.status (standard structure)
+            if (status.status) {
+                text = status.status;
+            }
+            // Check for status.connected (boolean structure like radar)
+            else if (typeof status.connected === 'boolean') {
+                text = status.connected ? 'connected' : 'disconnected';
+            }
+            // Check for direct status object with properties
+            else if (status.connected !== undefined) {
+                text = status.connected ? 'connected' : 'disconnected';
+            }
+        }
+        
+        if (text === 'connected' || text === 'healthy') color = '#28a745';
+        else if (text === 'disconnected' || text === 'error') color = '#dc3545';
+        else if (text === 'connecting' || text === 'initializing') color = '#ffc107';
+        
+        return `<span style="background:${color};color:#fff;padding:2px 8px;border-radius:12px;font-size:0.8em;margin-left:8px;">${text}</span>`;
     }
 
     // --- Connectors ---
@@ -21,22 +56,90 @@ document.addEventListener('DOMContentLoaded', () => {
             connectorList.innerHTML = '<li>No connectors found.</li>';
             return;
         }
-        connectors.forEach(connector => {
-            const listItem = document.createElement('li');
-            listItem.innerHTML = `
-                <strong>${connector.name || connector.id}</strong>
-                <span style="color:#bb86fc;">(${connector.type})</span>
-                ${statusBadge(connector.status)}
-                <div style="font-size:0.9em;color:#aaa;">${connector.description || ''}</div>
-            `;
-            connectorList.appendChild(listItem);
+        
+        // Sort connectors: connected first, then by name
+        const sortedConnectors = connectors.sort((a, b) => {
+            const aConnected = isConnectorConnected(a);
+            const bConnected = isConnectorConnected(b);
+            if (aConnected && !bConnected) return -1;
+            if (!aConnected && bConnected) return 1;
+            return (a.name || a.id).localeCompare(b.name || b.id);
         });
+        
+        sortedConnectors.forEach(connector => {
+            try {
+                const listItem = document.createElement('li');
+                listItem.className = 'connector-list-item';
+                let webUiButtons = '';
+                
+                // Prefer status.webInterface, fallback to config.webInterface
+                const webInterface = connector.status && connector.status.webInterface
+                    ? connector.status.webInterface
+                    : connector.config && connector.config.webInterface;
+                
+                if (webInterface && webInterface.enabled) {
+                    // Multi-UI support: check for routes
+                    if (webInterface.routes && Object.keys(webInterface.routes).length > 0) {
+                        Object.entries(webInterface.routes).forEach(([routeName, routeConfig]) => {
+                            const host = routeConfig.host || webInterface.host || 'localhost';
+                            const port = routeConfig.port || webInterface.port || 3000;
+                            const url = `http://${host}:${port}${routeConfig.path || routeConfig.route || ''}`;
+                            webUiButtons += `<button class="web-ui-btn" onclick="window.open('${url}', '_blank')" title="${routeName}">🌐 ${routeName}</button>`;
+                        });
+                    } else if (webInterface.url) {
+                        webUiButtons = `<button class="web-ui-btn" onclick="window.open('${webInterface.url}', '_blank')" title="Web UI">🌐 Web UI</button>`;
+                    } else {
+                        const host = webInterface.host || 'localhost';
+                        const port = webInterface.port || 3000;
+                        const route = webInterface.route || '';
+                        const url = `http://${host}:${port}${route}`;
+                        webUiButtons = `<button class="web-ui-btn" onclick="window.open('${url}', '_blank')" title="Web UI">🌐 Web UI</button>`;
+                    }
+                }
+                
+                listItem.innerHTML = `
+                    <span><strong>${connector.name || connector.id}</strong> <span class="connector-type">(${connector.type})</span> ${statusBadge(connector.status)}</span>
+                    ${webUiButtons ? `<span class="web-ui-btns">${webUiButtons}</span>` : ''}
+                `;
+                connectorList.appendChild(listItem);
+            } catch (error) {
+                console.error('Error rendering connector:', connector.id, error);
+                const listItem = document.createElement('li');
+                listItem.innerHTML = `<span><strong>${connector.name || connector.id}</strong> <span class="connector-type">(${connector.type})</span> ${statusBadge('error')}</span>`;
+                connectorList.appendChild(listItem);
+            }
+        });
+    }
+    
+    // Helper function to check if connector is connected
+    function isConnectorConnected(connector) {
+        if (!connector.status) return false;
+        
+        // Handle different status structures
+        if (typeof connector.status === 'string') {
+            return connector.status === 'connected';
+        }
+        
+        if (connector.status.status) {
+            return connector.status.status === 'connected';
+        }
+        
+        if (typeof connector.status.connected === 'boolean') {
+            return connector.status.connected;
+        }
+        
+        // Check for connected property in custom status objects
+        if (connector.status.connected !== undefined) {
+            return connector.status.connected;
+        }
+        
+        return false;
     }
 
     // --- System Status ---
     function renderSystemStatus(data) {
-        if (!data) {
-            systemStatus.innerHTML = '<div>Unable to load system status.</div>';
+        if (!data || typeof data !== 'object') {
+            systemStatus.innerHTML = '<div class="status-error">No system status data available.</div>';
             return;
         }
         const sys = data.system || {};
@@ -54,13 +157,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- Alarms ---
-    function renderAlarms(alarms) {
-        alarmsBox.innerHTML = '';
-        if (!alarms || alarms.length === 0) {
-            alarmsBox.innerHTML = '<div>No active alarms.</div>';
+    function renderAlarms(data) {
+        if (!data || !Array.isArray(data) || data.length === 0) {
+            alarmsBox.innerHTML = '<div class="status-error">No alarms found.</div>';
             return;
         }
-        alarms.forEach(alarm => {
+        alarmsBox.innerHTML = '';
+        data.forEach(alarm => {
             const div = document.createElement('div');
             div.style.marginBottom = '12px';
             div.innerHTML = `
@@ -73,7 +176,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- Map Placeholder ---
     function renderMapPlaceholder() {
-        mapBox.innerHTML = '<div style="color:#888;text-align:center;padding:40px 0;">Map integration coming soon.<br>Contact admin to enable real-time map overlays.</div>';
+        initMap();
     }
 
     // --- Fetch and Render All ---
@@ -103,6 +206,26 @@ document.addEventListener('DOMContentLoaded', () => {
         renderMapPlaceholder();
     }
 
+    // --- Live Updates with Socket.IO ---
+    let socket;
+    function setupLiveUpdates() {
+        if (window.io) {
+            socket = io();
+            socket.on('connect', () => {
+                console.log('Live updates enabled');
+            });
+            socket.on('update', (payload) => {
+                if (payload.type === 'connectors') loadAll();
+                if (payload.type === 'system') loadAll();
+                if (payload.type === 'alarms') loadAll();
+            });
+            socket.on('disconnect', () => {
+                console.log('Live updates disconnected, falling back to polling');
+            });
+        }
+    }
+
     loadAll();
-    setInterval(loadAll, 30000); // Refresh every 30s
+    setupLiveUpdates();
+    setInterval(loadAll, 30000); // Fallback polling every 30s
 });

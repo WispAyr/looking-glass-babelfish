@@ -76,13 +76,78 @@ main {
     padding: 0;
 }
 
-.connectors li {
-    padding: 10px;
-    border-bottom: 1px solid #444;
+.connector-list-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 0 8px 0;
+    border-bottom: 1px solid #28242e;
+    margin-bottom: 2px;
 }
-
-.connectors li:last-child {
+.connector-list-item:last-child {
     border-bottom: none;
+}
+.web-ui-btns {
+    display: inline-block;
+    margin-left: 10px;
+}
+.web-ui-btn {
+    background: #bb86fc;
+    color: #fff;
+    border: none;
+    border-radius: 16px;
+    padding: 4px 14px;
+    margin-right: 6px;
+    font-size: 0.95em;
+    cursor: pointer;
+    transition: background 0.2s, box-shadow 0.2s;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+}
+.web-ui-btn:hover {
+    background: #a06be0;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+}
+.status-badge {
+    display: inline-block;
+    min-width: 60px;
+    padding: 2px 10px;
+    font-size: 0.85em;
+    border-radius: 12px;
+    font-weight: 500;
+    margin-left: 8px;
+    margin-right: 2px;
+    background: #222028;
+    color: #bbb;
+    text-align: center;
+    vertical-align: middle;
+}
+.status-badge.connected {
+    background: #2ecc40;
+    color: #fff;
+}
+.status-badge.disconnected {
+    background: #e74c3c;
+    color: #fff;
+}
+.status-badge.unknown {
+    background: #888;
+    color: #fff;
+}
+.status-badge.error {
+    background: #ff9800;
+    color: #fff;
+}
+.status-badge.initializing, .status-badge.connecting {
+    background: #f1c40f;
+    color: #222;
+}
+.status-error {
+    color: #ffb3b3;
+    background: #2a1a1a;
+    border-radius: 8px;
+    padding: 8px 12px;
+    margin: 8px 0;
+    font-size: 0.95em;
 }
 
 footer {

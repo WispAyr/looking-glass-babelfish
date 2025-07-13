@@ -50,6 +50,14 @@ class SpeedDetectionGuiConnector extends BaseConnector {
       ...config
     };
 
+    this.webInterface = {
+      enabled: true,
+      route: this.config.webInterface.route || '/speed-detection',
+      port: this.config.webInterface.port || 3000,
+      host: this.config.webInterface.host || 'localhost'
+    };
+    this.config.webInterface = this.webInterface;
+
     this.speedDetectionSystems = new Map(); // systemId -> system config
     this.activeConnections = new Map(); // connectorId -> connector
     this.cameraRegistry = new Map(); // cameraId -> camera info

@@ -70,6 +70,14 @@ class DisplayManagerConnector extends BaseConnector {
       blackoutEvents: 0
     };
 
+    this.webInterface = {
+      enabled: true,
+      route: '/display',
+      port: this.displayConfig.port || 3001,
+      host: this.displayConfig.host || 'localhost'
+    };
+    this.config.webInterface = this.webInterface;
+
     this.logger.info('Display Manager Connector initialized', {
       id: this.id,
       displayConfig: this.displayConfig,

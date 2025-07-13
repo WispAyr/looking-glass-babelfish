@@ -349,6 +349,13 @@ class AlarmManagerConnector extends BaseConnector {
     this.autoCleanupEnabled = config.autoCleanupEnabled !== false;
     this.cleanupInterval = config.cleanupInterval || 3600000; // 1 hour
     
+    this.webInterface = {
+      enabled: true,
+      route: '/alarms',
+      port: 3000,
+      host: 'localhost'
+    };
+    
     this.logger.info('Alarm Manager Connector initialized', {
       notificationChannels: this.notificationChannels,
       escalationEnabled: this.escalationEnabled,

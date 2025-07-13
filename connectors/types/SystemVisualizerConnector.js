@@ -34,6 +34,13 @@ class SystemVisualizerConnector extends BaseConnector {
       metrics: {},
       lastUpdate: null
     };
+    this.webInterface = {
+      enabled: true,
+      route: '/system-visualizer',
+      port: this.config.port || 3001,
+      host: this.config.host || 'localhost'
+    };
+    this.config.webInterface = this.webInterface;
   }
 
   static getCapabilityDefinitions() {
