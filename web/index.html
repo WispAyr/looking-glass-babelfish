@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Looking Glass - Command Center</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Looking Glass</h1>
+            <p>Real-time monitoring and control</p>
+        </header>
+        <main>
+            <div class="grid-container">
+                <div class="grid-item map">
+                    <h2>Map</h2>
+                    <div id="map-placeholder"></div>
+                </div>
+                <div class="grid-item connectors">
+                    <h2>Connectors</h2>
+                    <ul id="connector-list"></ul>
+                </div>
+                <div class="grid-item system-status">
+                    <h2>System Status</h2>
+                    <div id="system-status-placeholder"></div>
+                </div>
+                <div class="grid-item alarms">
+                    <h2>Alarms</h2>
+                    <div id="alarms-placeholder"></div>
+                </div>
+            </div>
+        </main>
+        <footer>
+            <p>Looking Glass Platform</p>
+        </footer>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>
