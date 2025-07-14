@@ -725,6 +725,26 @@
         ],
         "disabled": []
       }
+    },
+    {
+      "id": "airplaneslive-main",
+      "type": "airplaneslive",
+      "name": "Airplanes.Live ADSB",
+      "config": {
+        "lat": 55.509,
+        "lon": -4.586,
+        "radius": 50
+      }
+    },
+    {
+      "id": "adsbfi-main",
+      "type": "adsbfi",
+      "name": "OpenData ADSB.fi",
+      "config": {
+        "lat": 55.509,
+        "lon": -4.586,
+        "radius": 50
+      }
     }
   ]
 }

@@ -528,7 +528,9 @@ class ConnectorRegistry extends EventEmitter {
               'GuiDesigner': 'gui-designer',
               'Hikvision': 'hikvision',
               'SpeedDetectionGui': 'speed-detection-gui',
-              'PrestwickAirport': 'prestwick-airport'
+              'PrestwickAirport': 'prestwick-airport',
+              'AirplanesLive': 'airplaneslive',
+              'OpendataAdsbFi': 'adsbfi'
             };
             
             if (typeMappings[type]) {

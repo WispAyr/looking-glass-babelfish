@@ -168,6 +168,8 @@ class RadarConnector extends BaseConnector {
   
   initialize(services) {
     this.adsbConnector = services.adsbConnector;
+    this.adsbfiConnector = services.adsbfiConnector;
+    this.airplanesLiveConnector = services.airplanesLiveConnector;
     this.airportVectorService = services.airportVectorService;
     this.coastlineVectorService = services.coastlineVectorService;
     this.airspaceService = services.airspaceService;
@@ -534,9 +536,11 @@ class RadarConnector extends BaseConnector {
   /**
    * Get radar display (include coastline if enabled)
    */
-  getRadarDisplay() {
-    // Get aircraft data from ADSB connector if available
+  async getRadarDisplay() {
+    // Get aircraft data from multiple ADSB connectors if available
     let aircraft = [];
+    
+    // Try to get aircraft data from the main ADSB connector
     if (this.adsbConnector && this.adsbConnector.getAircraft) {
       try {
         const aircraftResult = this.adsbConnector.getAircraft();
@@ -564,11 +568,73 @@ class RadarConnector extends BaseConnector {
         }
       } catch (error) {
         this.logger.warn('Failed to get aircraft data from ADSB connector', { error: error.message });
-        // Fall back to cached data
-        aircraft = Array.from(this.aircraftData?.values?.() || []);
       }
-    } else {
-      // Use cached data if no ADSB connector
+    }
+    
+    // Try to get aircraft data from ADS-B.fi connector
+    if (this.adsbfiConnector && this.adsbfiConnector.fetchAircraft) {
+      try {
+        const adsbfiAircraft = await this.adsbfiConnector.fetchAircraft();
+        if (adsbfiAircraft && Array.isArray(adsbfiAircraft)) {
+          // Convert ADS-B.fi aircraft data to standard format
+          const convertedAircraft = adsbfiAircraft.map(ac => ({
+            icao24: ac.icao24,
+            callsign: ac.callsign || '',
+            lat: ac.lat,
+            lon: ac.lon,
+            altitude: ac.altitude || 0,
+            velocity: ac.velocity || 0,
+            track: ac.track || 0,
+            squawk: ac.squawk || '',
+            emergency: ac.emergency || false,
+            lastUpdate: ac.lastUpdate || new Date().toISOString(),
+            aircraftType: ac.aircraftType || '',
+            registration: ac.registration || '',
+            operator: ac.operator || ''
+          }));
+          
+          // Merge with existing aircraft data
+          aircraft = [...aircraft, ...convertedAircraft];
+          this.updateAircraftData(convertedAircraft);
+        }
+      } catch (error) {
+        this.logger.warn('Failed to get aircraft data from ADS-B.fi connector', { error: error.message });
+      }
+    }
+    
+    // Try to get aircraft data from Airplanes.Live connector
+    if (this.airplanesLiveConnector && this.airplanesLiveConnector.fetchAircraft) {
+      try {
+        const airplanesLiveAircraft = await this.airplanesLiveConnector.fetchAircraft();
+        if (airplanesLiveAircraft && Array.isArray(airplanesLiveAircraft)) {
+          // Convert Airplanes.Live aircraft data to standard format
+          const convertedAircraft = airplanesLiveAircraft.map(ac => ({
+            icao24: ac.icao24,
+            callsign: ac.callsign || '',
+            lat: ac.lat,
+            lon: ac.lon,
+            altitude: ac.altitude || 0,
+            velocity: ac.velocity || 0,
+            track: ac.track || 0,
+            squawk: ac.squawk || '',
+            emergency: ac.emergency || false,
+            lastUpdate: ac.lastUpdate || new Date().toISOString(),
+            aircraftType: ac.aircraftType || '',
+            registration: ac.registration || '',
+            operator: ac.operator || ''
+          }));
+          
+          // Merge with existing aircraft data
+          aircraft = [...aircraft, ...convertedAircraft];
+          this.updateAircraftData(convertedAircraft);
+        }
+      } catch (error) {
+        this.logger.warn('Failed to get aircraft data from Airplanes.Live connector', { error: error.message });
+      }
+    }
+    
+    // If no aircraft data from any connector, use cached data
+    if (aircraft.length === 0) {
       aircraft = Array.from(this.aircraftData?.values?.() || []);
     }
 

@@ -1892,11 +1892,28 @@ class PrestwickAirportConnector extends BaseConnector {
    * Initialize dependencies for Prestwick Airport Connector
    */
   initializeDependencies() {
-    // Declare critical dependency on ADSB connector
+    // Declare critical dependency on ADSB connector (support multiple ADSB sources)
     this.declareDependency('adsb-main', {
       required: true,
       critical: true,
       description: 'ADSB connector for aircraft data',
+      capabilities: ['aircraft:tracking'],
+      fallback: 'degraded_mode'
+    });
+    
+    // Also support the new ADS-B connectors
+    this.declareDependency('adsbfi-main', {
+      required: false,
+      critical: false,
+      description: 'ADS-B.fi connector for aircraft data',
+      capabilities: ['aircraft:tracking'],
+      fallback: 'degraded_mode'
+    });
+    
+    this.declareDependency('airplaneslive-main', {
+      required: false,
+      critical: false,
+      description: 'Airplanes.Live connector for aircraft data',
       capabilities: ['aircraft:tracking'],
       fallback: 'degraded_mode'
     });

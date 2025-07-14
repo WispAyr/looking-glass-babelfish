@@ -6,6 +6,7 @@ const morgan = require('morgan');
 const path = require('path');
 const http = require('http');
 const { Server } = require('socket.io');
+const WebSocket = require('ws');
 const winston = require('winston');
 const { v4: uuidv4 } = require('uuid');
 const moment = require('moment');
@@ -1198,10 +1199,16 @@ async function startServer() {
       }
     }
 
+    // Get the new ADS-B connectors
+    const adsbfiConnectorInstance = connectorRegistry.getConnector('adsbfi-main');
+    const airplanesLiveConnectorInstance = connectorRegistry.getConnector('airplaneslive-main');
+    
     // Initialize radar connector with its dependencies
-    if (radarConnectorInstance && adsbConnectorInstance && airportVectorService && coastlineVectorService) {
+    if (radarConnectorInstance && airportVectorService && coastlineVectorService) {
       radarConnectorInstance.initialize({
         adsbConnector: adsbConnectorInstance,
+        adsbfiConnector: adsbfiConnectorInstance,
+        airplanesLiveConnector: airplanesLiveConnectorInstance,
         airportVectorService: airportVectorService,
         coastlineVectorService: coastlineVectorService,
         airspaceService: airspaceService,
@@ -1437,6 +1444,8 @@ async function startServer() {
     injectRadarServices({
       radarConnector,
       adsbConnector: connectorRegistry.getConnector('adsb-main'),
+      adsbfiConnector: connectorRegistry.getConnector('adsbfi-main'),
+      airplanesLiveConnector: connectorRegistry.getConnector('airplaneslive-main'),
       connectorRegistry,
       airportVectorService,
       airspaceService,
@@ -1662,6 +1671,79 @@ async function startServer() {
     // Serve camera locations management page
     app.get(['/camera-locations', '/camera-locations/'], (req, res) => {
       res.sendFile(path.join(__dirname, 'public', 'camera-locations.html'));
+    });
+
+    // System Visualizer API routes
+    app.get('/api/system-data', (req, res) => {
+      try {
+        const systemVisualizer = connectorRegistry.getConnector('system-visualizer-main');
+        if (systemVisualizer && systemVisualizer.systemData) {
+          res.json({
+            success: true,
+            data: systemVisualizer.systemData
+          });
+        } else {
+          res.json({
+            success: true,
+            data: {
+              connectors: [],
+              relationships: [],
+              dataFlow: [],
+              metrics: {},
+              lastUpdate: null
+            }
+          });
+        }
+      } catch (error) {
+        res.status(500).json({
+          success: false,
+          error: error.message
+        });
+      }
+    });
+
+    app.get('/api/relationships', (req, res) => {
+      try {
+        const systemVisualizer = connectorRegistry.getConnector('system-visualizer-main');
+        if (systemVisualizer && systemVisualizer.analyzeConnectorRelationships) {
+          res.json({
+            success: true,
+            data: systemVisualizer.analyzeConnectorRelationships()
+          });
+        } else {
+          res.json({
+            success: true,
+            data: []
+          });
+        }
+      } catch (error) {
+        res.status(500).json({
+          success: false,
+          error: error.message
+        });
+      }
+    });
+
+    app.get('/api/metrics', (req, res) => {
+      try {
+        const systemVisualizer = connectorRegistry.getConnector('system-visualizer-main');
+        if (systemVisualizer && systemVisualizer.collectSystemMetrics) {
+          res.json({
+            success: true,
+            data: systemVisualizer.collectSystemMetrics()
+          });
+        } else {
+          res.json({
+            success: true,
+            data: {}
+          });
+        }
+      } catch (error) {
+        res.status(500).json({
+          success: false,
+          error: error.message
+        });
+      }
     });
 
     // Make services available to API routes via app.locals

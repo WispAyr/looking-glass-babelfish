@@ -22,12 +22,14 @@ const logger = winston.createLogger({
 });
 
 // Import services (these will be injected from the main server)
-let radarConnector, adsbConnector, connectorRegistry, airportVectorService, airspaceService, vectorOptimizationService;
+let radarConnector, adsbConnector, adsbfiConnector, airplanesLiveConnector, connectorRegistry, airportVectorService, airspaceService, vectorOptimizationService;
 
 // Middleware to inject services
 function injectServices(services) {
   radarConnector = services.radarConnector;
   adsbConnector = services.adsbConnector;
+  adsbfiConnector = services.adsbfiConnector;
+  airplanesLiveConnector = services.airplanesLiveConnector;
   connectorRegistry = services.connectorRegistry;
   airportVectorService = services.airportVectorService;
   airspaceService = services.airspaceService;
